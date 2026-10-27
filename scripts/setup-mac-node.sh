@@ -71,7 +71,10 @@ fi
 
 if [ "$BORE" = 1 ]; then
   step "SSH tunnel (bore)"
-  if command -v bore >/dev/null; then
+  if launchctl list | grep -q com.bap.bore; then
+    # Recreating it would change the public port and cut the SSH session running this script.
+    ok "already running: $(grep -o 'bore.pub:[0-9]*' "$HOME/bore.log" 2>/dev/null | tail -1 || echo 'see ~/bore.log')"
+  elif command -v bore >/dev/null; then
     # No fixed port: bore.pub keeps a dropped port for ~15 min after a reboot.
     run launchctl bootout "$UID_GUI/com.bap.bore" 2>/dev/null || true
     run rm -f "$BORE_PLIST"
