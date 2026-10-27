@@ -1,0 +1,17 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: eslint
+      glob: "*.{ts,js}"
+      run: pnpm exec eslint {staged_files}
+    - name: markdownlint
+      glob: "*.md"
+      run: pnpm exec markdownlint-cli2 {staged_files}
+    - name: docs-check
+      glob: "docs/**"
+      run: pnpm docs:check
+
+pre-push:
+  jobs:
+    - name: verify
+      run: pnpm verify

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>BAP test site</title>
+    <style>
+      body { font: 16px/1.4 system-ui, sans-serif; margin: 40px; background: #fff; color: #111; }
+      output { font-size: 48px; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <h1>BAP test site</h1>
+    <p>Визиты в этом профиле: <output id="visits">0</output></p>
+    <script>
+      const n = Number(localStorage.getItem("visits") ?? 0) + 1;
+      localStorage.setItem("visits", String(n));
+      document.getElementById("visits").textContent = String(n);
+    </script>
+  </body>
+</html>

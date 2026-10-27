@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools/*
+allowBuilds:
+  lefthook: true
+  cpu-features: false
+  protobufjs: false
+  ssh2: false

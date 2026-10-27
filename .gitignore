@@ -1,0 +1,10 @@
+node_modules/
+reports/
+coverage/
+test-results/
+playwright-report/
+.DS_Store
+
+# private, kept in a separate repository
+docs/
+CLAUDE.md

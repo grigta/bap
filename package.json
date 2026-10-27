@@ -1,0 +1,38 @@
+{
+  "name": "bap",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint": "eslint . && markdownlint-cli2",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run --project unit --coverage --reporter=default --reporter=junit --outputFile.junit=reports/junit/unit.xml",
+    "test:integration": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --project integration --reporter=default --reporter=junit --outputFile.junit=reports/junit/integration.xml",
+    "test:e2e": "playwright test",
+    "test:e2e:update-linux": "scripts/e2e-linux.sh",
+    "docs:check": "node tools/docs-check/src/cli.ts",
+    "docs:status": "node tools/docs-check/src/cli.ts --write-status",
+    "verify:code": "rm -rf reports && pnpm lint && pnpm typecheck && pnpm test:unit && pnpm test:integration && pnpm test:e2e",
+    "verify": "pnpm verify:code && pnpm docs:status"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
+    "@testcontainers/postgresql": "^12.2.1",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "@vitest/coverage-v8": "^5.0.5",
+    "eslint": "^10.13.0",
+    "lefthook": "^2.2.2",
+    "markdownlint-cli2": "^0.24.0",
+    "minio": "^8.0.7",
+    "pg": "^8.23.1",
+    "testcontainers": "^12.2.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  }
+}

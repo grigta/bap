@@ -1,0 +1,12 @@
+{
+  "config": {
+    "default": true,
+    "MD013": false,  // long lines are normal in Russian prose and tables
+    "MD024": { "siblings_only": true },
+    "MD025": { "front_matter_title": "" },  // stage frontmatter has title, the page still has its own H1
+    "MD033": false,  // <br> in generated STATUS.md tables
+    "MD060": false   // compact tables
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["**/node_modules/**", "playwright-report/**", "test-results/**"]
+}

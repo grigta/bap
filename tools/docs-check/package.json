@@ -1,0 +1,13 @@
+{
+  "name": "@bap/docs-check",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.2",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  }
+}
