@@ -66,6 +66,7 @@ if (command === "enroll") {
         : new LinkenSphereProvider({ apiUrl: lsApiUrl }),
     providerName: local ? "local-chromium" : "linken-sphere",
     maxSessions: Number(process.env.BAP_MAX_SESSIONS ?? 2),
+    dataDir: dataDir(),
   });
   console.log(`agent ${config.name} → ${config.serverUrl}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => agent.stop());

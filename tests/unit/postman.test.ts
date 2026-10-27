@@ -2,8 +2,9 @@ import { createDb } from "@bap/database";
 import { afterAll, expect, test } from "vitest";
 import { buildApp } from "../../apps/control-plane/src/app.ts";
 import { POSTMAN_SCHEMA, buildPostmanCollection } from "../../apps/control-plane/src/postman.ts";
+import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 
-const app = buildApp({ db: createDb("postgres://unused@127.0.0.1/unused") });
+const app = buildApp({ db: createDb("postgres://unused@127.0.0.1/unused"), store: memoryStore() });
 afterAll(() => app.close());
 
 test("[REQ-API-001] Postman collection v2.1 describes every /api/v1 route", async () => {

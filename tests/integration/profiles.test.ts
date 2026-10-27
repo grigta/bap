@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type RunningAgent, startAgent } from "../../apps/mac-agent/src/agent.ts";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
+import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 import { PROFILE_NOT_FOUND_MESSAGE } from "../../apps/control-plane/src/profiles.ts";
 
 const FLEET = { heartbeatIntervalMs: 200, suspectAfterMs: 1000, offlineAfterMs: 2000, enrollmentTtlMs: 60_000 };
@@ -37,7 +38,7 @@ async function until<T>(what: string, read: () => Promise<T>, ok: (v: T) => bool
   }
 }
 
-const connect = () => startAgent({ serverUrl: baseUrl, agentKey, provider, providerName: "local-chromium", maxSessions: 2, log: () => {} });
+const connect = () => startAgent({ serverUrl: baseUrl, agentKey, provider, providerName: "local-chromium", maxSessions: 2, dataDir: tmpdir(), log: () => {} });
 
 beforeAll(async () => {
   for (const id of ["shop-1", "shop-2", "doomed"]) provider.createProfile(id);
@@ -45,7 +46,7 @@ beforeAll(async () => {
   db = createDb(postgres.getConnectionUri());
   await migrateToLatest(db);
   await ensureOperator(db, "operator", "pw");
-  app = buildApp({ db, secureCookies: false, fleet: FLEET });
+  app = buildApp({ db, store: memoryStore(), secureCookies: false, fleet: FLEET });
   baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });
   cookie = (await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { login: "operator", password: "pw" } })).cookies[0]!.value;
   const { token } = (await api("POST", "/api/v1/agents/enrollments")).json();
@@ -92,7 +93,7 @@ describe("import", () => {
   test("an agent without a browser provider answers with PROVIDER_UNAVAILABLE", async () => {
     const { token } = (await api("POST", "/api/v1/agents/enrollments")).json();
     const bare = (await app.inject({ method: "POST", url: "/api/v1/agents/enroll", payload: { token, name: "mac-bare", platform: "darwin", architecture: "arm64" } })).json();
-    const running = startAgent({ serverUrl: baseUrl, agentKey: bare.agentKey, provider: null, providerName: "none", maxSessions: 1, log: () => {} });
+    const running = startAgent({ serverUrl: baseUrl, agentKey: bare.agentKey, provider: null, providerName: "none", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
     await until("bare agent online", async () => (await api("GET", `/api/v1/agents/${bare.agentId}`)).json(), (a) => a.connection === "ONLINE" && a.maxSessions === 1);
     const res = await api("GET", `/api/v1/agents/${bare.agentId}/provider-profiles`);
     running.stop();

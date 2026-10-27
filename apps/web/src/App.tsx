@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Agents } from "./Agents.tsx";
 import { Profiles } from "./Profiles.tsx";
+import { Runs } from "./Runs.tsx";
 import { HttpError, api } from "./api.ts";
 
 // Polling every 2 s with a 1.5 s timeout keeps the indicator within the 5 s budget.
@@ -77,7 +78,7 @@ function Shell({ login }: { login: string }) {
       </nav>
       <main>
         <h1>{section}</h1>
-        {section === "Agents" ? <Agents /> : section === "Profiles" ? <Profiles /> : <p className="empty">Пока пусто.</p>}
+        {section === "Agents" ? <Agents /> : section === "Profiles" ? <Profiles /> : <Runs />}
       </main>
     </>
   );

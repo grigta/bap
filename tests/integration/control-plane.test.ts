@@ -5,6 +5,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
+import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 import { buildPostmanCollection } from "../../apps/control-plane/src/postman.ts";
 
 let postgres: StartedPostgreSqlContainer;
@@ -16,7 +17,7 @@ beforeAll(async () => {
   db = createDb(postgres.getConnectionUri());
   await migrateToLatest(db);
   await ensureOperator(db, "operator", "s3cret-pass");
-  app = buildApp({ db, secureCookies: true });
+  app = buildApp({ db, store: memoryStore(), secureCookies: true });
 });
 
 afterAll(async () => {
@@ -77,7 +78,7 @@ describe("operator authentication", () => {
   });
 
   test("[REQ-SEC-011] expired sessions are rejected", async () => {
-    const shortLived = buildApp({ db, sessionTtlMs: -1 });
+    const shortLived = buildApp({ db, store: memoryStore(), sessionTtlMs: -1 });
     const res = await shortLived.inject({ method: "POST", url: "/api/v1/auth/login", payload: { login: "operator", password: "s3cret-pass" } });
     const me = await shortLived.inject({ method: "GET", url: "/api/v1/auth/me", cookies: { bap_session: sessionCookie(res).value } });
     expect(me.statusCode).toBe(401);
@@ -107,12 +108,12 @@ describe("operator authentication", () => {
 });
 
 test("[REQ-API-001] the generated Postman collection runs in Newman against a live Control Plane", async () => {
-  const live = buildApp({ db, secureCookies: false });
+  const live = buildApp({ db, store: memoryStore(), secureCookies: false });
   const baseUrl = await live.listen({ host: "127.0.0.1", port: 0 });
   const cookie = sessionCookie(await login()).value;
   const { token } = (await app.inject({ method: "POST", url: "/api/v1/auth/tokens", cookies: { bap_session: cookie }, payload: { name: "newman" } })).json();
 
-  const collection = await buildPostmanCollection(buildApp({ db }));
+  const collection = await buildPostmanCollection(buildApp({ db, store: memoryStore() }));
   const summary = await new Promise<newman.NewmanRunSummary>((resolve, reject) =>
     newman.run(
       {

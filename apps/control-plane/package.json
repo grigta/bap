@@ -9,6 +9,7 @@
     "dev": "BAP_SECURE_COOKIES=false node --watch src/main.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1157.0",
     "@bap/database": "workspace:*",
     "@bap/protocol": "workspace:*",
     "@fastify/cookie": "^11.1.3",

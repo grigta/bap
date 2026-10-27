@@ -1,6 +1,7 @@
 import { createDb, migrateToLatest } from "@bap/database";
 import { buildApp } from "./app.ts";
 import { ensureOperator } from "./auth.ts";
+import { s3Store } from "./storage.ts";
 
 const env = (name: string, fallback?: string) => {
   const value = process.env[name] ?? fallback;
@@ -12,5 +13,11 @@ const db = createDb(env("DATABASE_URL", "postgres://bap:bap@127.0.0.1:5432/bap")
 await migrateToLatest(db);
 if (process.env.BAP_OPERATOR_PASSWORD) await ensureOperator(db, env("BAP_OPERATOR_LOGIN", "operator"), process.env.BAP_OPERATOR_PASSWORD);
 
-const app = buildApp({ db, secureCookies: env("BAP_SECURE_COOKIES", "true") === "true", logger: true });
+const store = await s3Store({
+  endpoint: env("S3_ENDPOINT", "http://127.0.0.1:8333"),
+  bucket: env("S3_BUCKET", "bap"),
+  accessKeyId: env("S3_ACCESS_KEY_ID", "bap"),
+  secretAccessKey: env("S3_SECRET_ACCESS_KEY", "bap"),
+});
+const app = buildApp({ db, store, secureCookies: env("BAP_SECURE_COOKIES", "true") === "true", logger: true });
 await app.listen({ host: env("HOST", "127.0.0.1"), port: Number(env("PORT", "3000")) });

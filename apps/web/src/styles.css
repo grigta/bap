@@ -50,3 +50,30 @@ table.agents th { font-weight: 500; color: #555; font-size: 13px; }
 .profile-NEEDS_REVIEW { background: #fff3d6; color: #8a5a00; }
 .profile-DISABLED { background: #eceef1; color: #555; }
 .error-text { color: #a11a1a; font-size: 13px; max-width: 260px; }
+.new-run { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; max-width: 760px; margin: 0 0 16px; }
+.new-run h2 { grid-column: 1 / -1; margin: 0; font-size: 17px; }
+.new-run label { display: grid; gap: 4px; font-size: 13px; }
+.new-run select, .new-run input, .new-run textarea { padding: 6px 8px; border: 1px solid #c9ccd1; border-radius: 6px; font: inherit; }
+.new-run textarea { font-family: ui-monospace, monospace; font-size: 12px; }
+.new-run button[type=submit] { grid-column: 1 / -1; justify-self: start; padding: 8px 18px; border: 0; border-radius: 6px; background: #1b4fd6; color: #fff; cursor: pointer; }
+.new-run [role=alert] { grid-column: 1 / -1; }
+.filters { margin: 8px 0; }
+.run-QUEUED, .run-ASSIGNED, .run-ACCEPTED { background: #eceef1; color: #444; }
+.run-RUNNING { background: #e8eefc; color: #1b4fd6; }
+.run-SUCCEEDED { background: #e3f6e8; color: #116b2c; }
+.run-FAILED { background: #fde7e7; color: #a11a1a; }
+.run-NEEDS_REVIEW { background: #fff3d6; color: #8a5a00; }
+.run-CANCELLED { background: #eceef1; color: #555; }
+.run-detail header { display: flex; justify-content: space-between; align-items: center; }
+.run-detail h2 { margin: 0; font-size: 17px; }
+.run-detail h3 { font-size: 14px; margin: 16px 0 6px; }
+.steps { list-style: none; padding: 0; display: grid; gap: 10px; }
+.steps li { border: 1px solid #e3e5e8; border-left: 4px solid #2e9d4e; border-radius: 8px; padding: 10px; }
+.steps li.failed { border-left-color: #d33; }
+.steps li.unverified { border-left-color: #e0a100; }
+.steps .head { display: flex; gap: 8px; align-items: center; }
+.steps .head span:last-child { margin-left: auto; color: #666; }
+.steps .tag { font-size: 12px; background: #eef; padding: 1px 6px; border-radius: 4px; }
+.steps .error { white-space: pre-wrap; background: #fff5f5; color: #a11a1a; padding: 8px; border-radius: 6px; font-size: 12px; }
+.steps img { max-width: 420px; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: block; }
+.transitions { list-style: none; padding: 0; margin: 0; font-size: 13px; display: grid; gap: 2px; }

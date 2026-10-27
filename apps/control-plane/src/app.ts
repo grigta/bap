@@ -9,6 +9,8 @@ import { SESSION_COOKIE, checkPassword, hashToken, newToken, requireOperator } f
 import { errorSchema, sendError } from "./errors.ts";
 import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
 import { registerProfiles } from "./profiles.ts";
+import { registerRuns } from "./runs.ts";
+import type { ObjectStore } from "./storage.ts";
 
 export interface AppOptions {
   db: Db;
@@ -17,6 +19,7 @@ export interface AppOptions {
   sessionTtlMs?: number;
   logger?: boolean;
   fleet?: Partial<FleetConfig>;
+  store: ObjectStore;
 }
 
 export interface RegisteredRoute {
@@ -27,7 +30,7 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, store }: AppOptions) {
   const app = Fastify({ logger, genReqId: () => randomUUID() }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -103,6 +106,7 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     const fleetConfig = { ...DEFAULT_FLEET, ...fleet };
     const agents = registerFleet(scoped as unknown as App, db, fleetConfig, auth);
     registerProfiles(scoped as unknown as App, db, agents, fleetConfig, auth);
+    registerRuns(scoped as unknown as App, { db, fleet: agents, store, operatorAuth: auth });
   });
 
   return app;

@@ -15,6 +15,7 @@ import { startAgent } from "../../apps/mac-agent/src/agent.ts";
 import { launchAgentPlist } from "../../apps/mac-agent/src/launchagent.ts";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
+import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 
 const FLEET = { heartbeatIntervalMs: 200, suspectAfterMs: 1000, offlineAfterMs: 2000, enrollmentTtlMs: 60_000 };
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -31,7 +32,7 @@ beforeAll(async () => {
   db = createDb(postgres.getConnectionUri());
   await migrateToLatest(db);
   await ensureOperator(db, "operator", "pw");
-  app = buildApp({ db, secureCookies: false, fleet: FLEET });
+  app = buildApp({ db, store: memoryStore(), secureCookies: false, fleet: FLEET });
   baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });
   const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { login: "operator", password: "pw" } });
   cookie = login.cookies.find((c) => c.name === "bap_session")!.value;
@@ -141,7 +142,7 @@ describe("connection", () => {
 
   test("heartbeats carry metrics and the agent card returns their history", async () => {
     const agent = await newAgent("mac-metrics");
-    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 3, log: () => {} });
+    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 3, dataDir: tmpdir(), log: () => {} });
     const view = await until("3 heartbeats", () => agentView(agent.agentId), (a) => a.heartbeats.length >= 3);
     running.stop();
     expect(view).toMatchObject({ agentVersion: "0.1.0", maxSessions: 3, heartbeat: { activeSessions: 0, lsAvailable: false } });
@@ -151,7 +152,7 @@ describe("connection", () => {
 
   test("revoking an agent closes its socket and its credentials stop working", async () => {
     const agent = await newAgent("mac-revoked");
-    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 1, log: () => {} });
+    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
     await until("ONLINE", () => agentView(agent.agentId), (a) => a.connection === "ONLINE");
     expect((await api("POST", `/api/v1/agents/${agent.agentId}/revoke`)).json().status).toBe("REVOKED");
     expect(await running.stopped).toBe("revoked");
@@ -217,7 +218,7 @@ describe("Linken Sphere availability", () => {
 
   test("[REQ-AGENT-003] every heartbeat reports whether the Local API answers", async () => {
     const agent = await newAgent("mac-ls");
-    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: new LinkenSphereProvider({ apiUrl: stubUrl }), providerName: "linken-sphere", maxSessions: 1, log: () => {} });
+    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: new LinkenSphereProvider({ apiUrl: stubUrl }), providerName: "linken-sphere", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
     await until("LS up", () => agentView(agent.agentId), (a) => a.heartbeat?.lsAvailable === true);
     await new Promise((r) => stub.close(r));
     stub.closeAllConnections();

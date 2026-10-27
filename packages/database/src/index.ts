@@ -71,6 +71,90 @@ export interface ProfilesTable {
   updated_at: Timestamp;
 }
 
+export type RunStatus =
+  | "QUEUED" | "ASSIGNED" | "ACCEPTED" | "RUNNING" | "CANCEL_REQUESTED" | "RECOVERY_PENDING"
+  | "NEEDS_REVIEW" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+
+export interface ScenariosTable {
+  id: string;
+  created_at: Timestamp;
+}
+
+export interface ScenarioVersionsTable {
+  scenario_id: string;
+  version: string;
+  sha256: string;
+  bundle_key: string;
+  created_at: Timestamp;
+}
+
+export interface RunsTable {
+  id: Generated<string>;
+  scenario_id: string;
+  scenario_version: string;
+  profile_id: string;
+  agent_id: string;
+  input: unknown;
+  timeout_ms: number;
+  status: ColumnType<RunStatus, RunStatus | undefined, RunStatus>;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  started_at: Timestamp | null;
+  finished_at: Timestamp | null;
+}
+
+export interface RunTransitionsTable {
+  id: Generated<string>;
+  run_id: string;
+  from_status: RunStatus | null;
+  to_status: RunStatus;
+  reason: string | null;
+  at: Timestamp;
+}
+
+export interface RunAssignmentsTable {
+  id: Generated<string>;
+  run_id: string;
+  agent_id: string;
+  status: Generated<string>;
+  attempt: Generated<number>;
+  assigned_at: Timestamp;
+  acknowledged_at: Timestamp | null;
+  finished_at: Timestamp | null;
+}
+
+export interface ArtifactsTable {
+  id: Generated<string>;
+  run_id: string;
+  name: string;
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+  storage_key: string;
+  created_at: Timestamp;
+}
+
+export interface RunStepsTable {
+  run_id: string;
+  sequence: number;
+  step_id: string;
+  mutating: boolean;
+  status: "passed" | "failed" | "unverified";
+  started_at: Timestamp;
+  duration_ms: number;
+  error: string | null;
+  screenshot_artifact_id: string | null;
+}
+
+export interface IdempotencyKeysTable {
+  key: string;
+  request_hash: string;
+  run_id: string;
+  created_at: Timestamp;
+}
+
 export interface OperatorsTable {
   id: Generated<string>;
   login: string;
@@ -102,6 +186,14 @@ export interface Database {
   agent_capabilities: AgentCapabilitiesTable;
   agent_events: AgentEventsTable;
   profiles: ProfilesTable;
+  scenarios: ScenariosTable;
+  scenario_versions: ScenarioVersionsTable;
+  runs: RunsTable;
+  run_transitions: RunTransitionsTable;
+  run_assignments: RunAssignmentsTable;
+  artifacts: ArtifactsTable;
+  run_steps: RunStepsTable;
+  idempotency_keys: IdempotencyKeysTable;
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   api_tokens: ApiTokensTable;

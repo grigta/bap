@@ -3,6 +3,7 @@ import { arch, cpus, freemem, platform, totalmem } from "node:os";
 import { type BrowserProvider, ProfileNotFoundError } from "@bap/browser-adapters";
 import { AGENT_SOCKET_PATH, type AgentEvent, type AgentRequestPayload, type HeartbeatPayload, message, serverMessage } from "@bap/protocol";
 import WebSocket from "ws";
+import { type EmitRunEvent, executeRun } from "./runner.ts";
 
 export const AGENT_VERSION = "0.1.0";
 
@@ -21,6 +22,8 @@ export interface AgentOptions {
   provider: BrowserProvider | null;
   providerName: string;
   maxSessions: number;
+  /** Bundles, checkpoints and per-run artifacts. */
+  dataDir: string;
   log?: (line: string) => void;
   maxReconnectDelayMs?: number;
 }
@@ -86,7 +89,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     cpuPercent: cpu(),
     memoryPercent: memoryPercent(),
     lsAvailable: opts.provider ? await opts.provider.isAvailable() : false,
-    activeSessions: 0,
+    activeSessions,
   });
 
   const handleRequest = async (req: AgentRequestPayload, requestId: string): Promise<unknown> => {
@@ -104,6 +107,12 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     log(`verified profile ${req.externalId}`);
     return { verified: true };
   };
+
+  let activeSessions = 0;
+  let agentId = "";
+  // Run events go out on whichever connection is current; while disconnected they are dropped (buffering: S7).
+  let currentSend: ((event: Omit<AgentEvent, "v" | "id" | "ts" | "seq">) => void) | null = null;
+  const emit: EmitRunEvent = (event) => (currentSend ? currentSend(event) : log(`not connected, dropped ${event.type} for ${event.payload.runId}`));
 
   const connect = () => {
     let seq = 0;
@@ -123,11 +132,21 @@ export function startAgent(opts: AgentOptions): RunningAgent {
       const msg = serverMessage.parse(JSON.parse(String(raw)));
       if (msg.type === "server.welcome") {
         delay = 1000;
+        agentId = msg.payload.agentId;
+        currentSend = send;
         log(`connected: epoch ${msg.payload.epoch}, heartbeat every ${msg.payload.heartbeatIntervalMs} ms`);
         send({ type: "agent.capabilities", payload: { providers: opts.provider ? [opts.providerName] : [], maxSessions: opts.maxSessions } });
         const beat = async () => send({ type: "agent.heartbeat", payload: await heartbeat() });
         await beat();
         heartbeatTimer = setInterval(() => void beat().catch((e) => log(`heartbeat failed: ${e}`)), msg.payload.heartbeatIntervalMs);
+      } else if (msg.type === "run.assign") {
+        const provider = opts.provider;
+        if (!provider) {
+          emit({ type: "run.failed", payload: { runId: msg.payload.runId, status: "FAILED", errorCode: "PROVIDER_UNAVAILABLE", message: "this agent has no browser provider" } });
+          return;
+        }
+        activeSessions++;
+        void executeRun(msg.payload, { serverUrl: opts.serverUrl, agentKey: opts.agentKey, agentId, provider, dataDir: opts.dataDir, emit, log }).finally(() => activeSessions--);
       } else if (msg.type === "server.request") {
         const respond = (payload: { ok: boolean; result?: unknown; error?: { code: string; message: string } }) =>
           ws.send(JSON.stringify(message({ type: "agent.response", payload: { requestId: msg.id, ...payload } })));
@@ -141,6 +160,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     });
     ws.on("error", (e) => log(`connection error: ${e.message}`));
     ws.on("close", (code, reason) => {
+      if (currentSend === send) currentSend = null;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
       if (finished) return;

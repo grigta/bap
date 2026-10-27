@@ -179,3 +179,49 @@ describe("bap-agent CLI", () => {
     expect(res.stdout).toMatch(/✓ open-home {2}\d+ ms\n {2}✓ open-wizard {2}\d+ ms\n {2}✓ open-orders {2}\d+ ms\nSUCCEEDED · report .*run-report\.html/);
   });
 });
+
+describe("session start", () => {
+  const scenario = defineScenario({ id: "one-step", version: "1.0.0", inputSchema: z.object({}), autoResume: true, initialState: () => ({}), steps: [{ id: "noop", run: async () => {} }] });
+  /** Wraps the real provider so that attach fails a given number of times. */
+  const flaky = (failures: number) => {
+    let attempts = 0;
+    return {
+      get attempts() {
+        return attempts;
+      },
+      provider: {
+        isAvailable: () => provider.isAvailable(),
+        listProfiles: () => provider.listProfiles(),
+        openSession: async (id: string, runId: string) => {
+          const session = await provider.openSession(id, runId);
+          const attach = session.attach.bind(session);
+          session.attach = async () => {
+            attempts++;
+            if (attempts <= failures) throw new Error(`cdp refused (attempt ${attempts})`);
+            return attach();
+          };
+          return session;
+        },
+      },
+    };
+  };
+  const runWith = (p: Parameters<typeof runScenario>[0]["provider"], profileId = "p1") =>
+    runScenario({ scenario, input: {}, provider: p, profileId, runId: `run-${++runs}`, agentId: "a", artifactsDir: join(work, "artifacts", `s-${runs}`), checkpoints, sessionRetryDelayMs: 10 });
+
+  test("[REQ-LS-008] a session that fails to start is retried a limited number of times", async () => {
+    const twice = flaky(2);
+    expect((await runWith(twice.provider)).status).toBe("SUCCEEDED");
+    expect(twice.attempts).toBe(3);
+
+    const never = flaky(99);
+    const result = await runWith(never.provider);
+    expect(never.attempts).toBe(3);
+    expect(result).toMatchObject({ status: "FAILED", errorCode: "SESSION_START_FAILED", steps: [] });
+    expect(result.errorMessage).toMatch(/did not start after 3 attempts: cdp refused \(attempt 3\)/);
+  });
+
+  test("[REQ-LS-008] a missing profile is a configuration error and is not retried", async () => {
+    const result = await runWith(provider, "no-such-profile");
+    expect(result).toMatchObject({ status: "FAILED", errorCode: "PROFILE_NOT_FOUND" });
+  });
+});

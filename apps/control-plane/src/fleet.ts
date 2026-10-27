@@ -1,6 +1,6 @@
 import type { Db } from "@bap/database";
 import { sql } from "kysely";
-import { AGENT_SOCKET_PATH, type AgentMessage, type AgentRequestPayload, type ServerMessage, agentMessage, heartbeatPayload, message } from "@bap/protocol";
+import { AGENT_SOCKET_PATH, type AgentMessage, type AgentRequestPayload, type RunEvent, type ServerMessage, agentMessage, heartbeatPayload, message } from "@bap/protocol";
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { WebSocket } from "ws";
 import { z } from "zod";
@@ -65,11 +65,21 @@ export interface Fleet {
   /** Sends a request to a connected agent; rejects with AgentRequestError (AGENT_UNAVAILABLE when not connected). */
   request(agentId: string, payload: AgentRequestPayload, timeoutMs?: number): Promise<unknown>;
   isConnected(agentId: string): boolean;
+  /** Sends to the agent's live connection; false when it is not connected. */
+  send(agentId: string, msg: ServerMessage): boolean;
+  /** Authenticates agent HTTP calls by the agent key; sets request.agentId. */
+  agentAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+  /** Set by the run coordinator. */
+  handlers: {
+    onRunEvent?: (agentId: string, event: RunEvent) => Promise<void>;
+    onConnected?: (agentId: string) => Promise<void>;
+  };
 }
 
 export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAuth: preHandlerAsyncHookHandler): Fleet {
   const sockets = new Map<string, Set<WebSocket>>();
   const pending = new Map<string, { socket: WebSocket; resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+  const handlers: Fleet["handlers"] = {};
   const unauthorized = { 401: errorSchema };
 
   const listAgents = async (id?: string) => {
@@ -242,7 +252,10 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
           .returning("current_epoch")
           .executeTakeFirstOrThrow();
         epoch = Number(row.current_epoch);
-        return send(message({ type: "server.welcome", payload: { agentId, epoch, heartbeatIntervalMs: config.heartbeatIntervalMs } }));
+        send(message({ type: "server.welcome", payload: { agentId, epoch, heartbeatIntervalMs: config.heartbeatIntervalMs } }));
+        // Runs queued while the agent was away go out now.
+        await handlers.onConnected?.(agentId);
+        return;
       }
       if (epoch === null) return protocolError("HELLO_REQUIRED", "agent.hello must be the first message");
       if (msg.type === "agent.response") {
@@ -267,11 +280,13 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
           await db.updateTable("agents").set({ last_seen_at: now, last_heartbeat: JSON.stringify(msg.payload) }).where("id", "=", agentId).execute();
         else {
           await db.updateTable("agents").set({ last_seen_at: now }).where("id", "=", agentId).execute();
-          await db
-            .insertInto("agent_capabilities")
-            .values({ agent_id: agentId, payload: JSON.stringify(msg.payload) })
-            .onConflict((oc) => oc.column("agent_id").doUpdateSet({ payload: JSON.stringify(msg.payload), updated_at: now }))
-            .execute();
+          if (msg.type === "agent.capabilities")
+            await db
+              .insertInto("agent_capabilities")
+              .values({ agent_id: agentId, payload: JSON.stringify(msg.payload) })
+              .onConflict((oc) => oc.column("agent_id").doUpdateSet({ payload: JSON.stringify(msg.payload), updated_at: now }))
+              .execute();
+          else await handlers.onRunEvent?.(agentId, msg);
         }
       }
       send(message({ type: "server.ack", payload: { id: msg.id, duplicate } }));
@@ -295,7 +310,15 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
   const liveSocket = (agentId: string) => [...(sockets.get(agentId) ?? [])].filter((s) => s.readyState === s.OPEN).at(-1);
 
   return {
+    agentAuth,
+    handlers,
     isConnected: (agentId) => liveSocket(agentId) !== undefined,
+    send(agentId, msg) {
+      const socket = liveSocket(agentId);
+      if (!socket) return false;
+      socket.send(JSON.stringify(msg));
+      return true;
+    },
     request(agentId, payload, timeoutMs = 120_000) {
       const socket = liveSocket(agentId);
       if (!socket) return Promise.reject(new AgentRequestError("AGENT_UNAVAILABLE", "The agent is not connected"));
