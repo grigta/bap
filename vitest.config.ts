@@ -12,6 +12,16 @@ export default defineConfig({
         },
       },
       {
+        // Real Linken Sphere: local only, run by `pnpm test:ls`, never in CI
+        test: {
+          name: "ls",
+          include: ["tests/ls/**/*.test.ts"],
+          testTimeout: 180_000,
+          hookTimeout: 120_000,
+          fileParallelism: false,
+        },
+      },
+      {
         test: {
           name: "integration",
           include: ["tests/integration/**/*.test.ts"],

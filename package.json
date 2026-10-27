@@ -9,8 +9,9 @@
   "scripts": {
     "lint": "eslint . && markdownlint-cli2",
     "typecheck": "tsc --noEmit",
-    "test": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --coverage --reporter=default --reporter=junit --outputFile.junit=reports/junit/vitest.xml",
+    "test": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --project unit --project integration --coverage --reporter=default --reporter=junit --outputFile.junit=reports/junit/vitest.xml",
     "test:unit": "vitest run --project unit",
+    "test:ls": "vitest run --project ls --reporter=default --reporter=junit --outputFile.junit=reports/junit/ls.xml",
     "test:integration": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --project integration",
     "test:e2e": "playwright test",
     "test:e2e:update-linux": "scripts/e2e-linux.sh",
@@ -20,9 +21,10 @@
     "docs:check": "node tools/docs-check/src/cli.ts",
     "docs:status": "node tools/docs-check/src/cli.ts --write-status",
     "verify:code": "rm -rf reports && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e",
-    "verify": "pnpm verify:code && pnpm docs:status"
+    "verify": "pnpm verify:code && pnpm test:ls && pnpm docs:status"
   },
   "devDependencies": {
+    "@bap/browser-adapters": "workspace:*",
     "@bap/database": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.64.1",
@@ -38,6 +40,7 @@
     "minio": "^8.0.7",
     "newman": "^6.2.3",
     "pg": "^8.23.1",
+    "playwright-core": "1.64.1",
     "testcontainers": "^12.2.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",

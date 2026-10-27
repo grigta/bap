@@ -166,6 +166,9 @@ importers:
 
   .:
     devDependencies:
+      '@bap/browser-adapters':
+        specifier: workspace:*
+        version: link:packages/browser-adapters
       '@bap/database':
         specifier: workspace:*
         version: link:packages/database
@@ -211,6 +214,9 @@ importers:
       pg:
         specifier: ^8.23.1
         version: 8.23.1
+      playwright-core:
+        specifier: 1.64.1
+        version: 1.64.1
       testcontainers:
         specifier: ^12.2.1
         version: 12.2.1
@@ -278,6 +284,12 @@ importers:
       vite:
         specifier: ^8.3.5
         version: 8.3.5(@types/node@26.6.5)(yaml@2.9.1)
+
+  packages/browser-adapters:
+    dependencies:
+      playwright-core:
+        specifier: 1.64.1
+        version: 1.64.1
 
   packages/database:
     dependencies:
