@@ -1,0 +1,17 @@
+:root { font: 15px/1.4 system-ui, sans-serif; color: #111; background: #f6f7f9; }
+body { margin: 0; }
+header, nav { display: flex; align-items: center; gap: 12px; padding: 10px 20px; background: #fff; border-bottom: 1px solid #e3e5e8; }
+nav button { border: 0; background: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+nav button.active { background: #e8eefc; color: #1b4fd6; }
+.spacer { flex: 1; }
+main { padding: 20px; }
+.empty { color: #666; }
+.health { margin-left: auto; padding: 3px 10px; border-radius: 999px; font-size: 13px; }
+.health.online { background: #e3f6e8; color: #116b2c; }
+.health.offline { background: #fde7e7; color: #a11a1a; }
+.login { display: grid; gap: 12px; width: 280px; margin: 80px auto; padding: 24px; background: #fff; border-radius: 10px; border: 1px solid #e3e5e8; }
+.login h1 { margin: 0; font-size: 20px; }
+.login label { display: grid; gap: 4px; }
+.login input { padding: 7px 9px; border: 1px solid #c9ccd1; border-radius: 6px; }
+.login button { padding: 8px; border: 0; border-radius: 6px; background: #1b4fd6; color: #fff; cursor: pointer; }
+[role="alert"] { color: #a11a1a; margin: 0; }

@@ -1,0 +1,12 @@
+{
+  "name": "@bap/database",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "kysely": "^0.29.7",
+    "pg": "^8.23.1"
+  }
+}

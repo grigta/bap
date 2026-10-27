@@ -22,9 +22,10 @@ export default defineConfig({
     ],
     coverage: {
       provider: "v8",
+      // Unit and integration projects together. The web app is covered by e2e;
+      // entry points (main.ts, *cli.ts) run as subprocesses, which v8 coverage does not see.
       include: ["{apps,packages,tools}/*/src/**/*.ts"],
-      // cli.ts is exercised as a subprocess in tests/harness, which v8 coverage does not see
-      exclude: ["**/*.test.ts", "tools/docs-check/src/cli.ts"],
+      exclude: ["**/*.test.ts", "apps/web/**", "**/main.ts", "**/*cli.ts"],
       thresholds: coverageThresholds,
     },
   },

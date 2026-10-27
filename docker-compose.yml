@@ -1,0 +1,28 @@
+# Local infrastructure for development. Control Plane runs on the host (`pnpm dev`).
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: bap
+      POSTGRES_PASSWORD: bap
+      POSTGRES_DB: bap
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "bap"]
+      interval: 2s
+      retries: 30
+
+  s3:
+    image: chrislusf/seaweedfs:4.50
+    command: server -s3 -dir=/data
+    ports: ["127.0.0.1:8333:8333"]
+    volumes: [s3:/data]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8333/"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  postgres:
+  s3:
