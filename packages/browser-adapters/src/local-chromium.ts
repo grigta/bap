@@ -51,12 +51,17 @@ class LocalChromiumSession extends CdpSession {
     rmSync(portFile, { force: true });
     const args = [`--user-data-dir=${this.userDataDir}`, "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check"];
     if (this.headless) args.push("--headless=new");
-    this.process = spawn(chromium.executablePath(), [...args, "about:blank"], { stdio: "ignore" });
+    // Ubuntu 24.04 blocks the unprivileged user namespaces the sandbox needs; Playwright does the same.
+    if (process.platform === "linux") args.push("--no-sandbox");
+    const proc = spawn(chromium.executablePath(), [...args, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    proc.stderr!.on("data", (chunk) => (stderr = (stderr + chunk).slice(-2000)));
+    this.process = proc;
     for (let i = 0; i < 100; i++) {
       if (existsSync(portFile)) return (this.cdpPort = Number(readFileSync(portFile, "utf8").split("\n")[0]));
       await sleep(100);
     }
-    throw new Error(`Chromium for profile ${this.profileId} did not open a CDP port`);
+    throw new Error(`Chromium for profile ${this.profileId} did not open a CDP port:\n${stderr}`);
   }
 
   protected async stop(): Promise<void> {
