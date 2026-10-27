@@ -1,9 +1,15 @@
 {
   "name": "@bap/mac-agent",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "dependencies": {
     "@bap/browser-adapters": "workspace:*",
-    "@bap/engine": "workspace:*"
+    "@bap/engine": "workspace:*",
+    "@bap/protocol": "workspace:*",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2"
   }
 }

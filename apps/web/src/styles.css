@@ -15,3 +15,26 @@ main { padding: 20px; }
 .login input { padding: 7px 9px; border: 1px solid #c9ccd1; border-radius: 6px; }
 .login button { padding: 8px; border: 0; border-radius: 6px; background: #1b4fd6; color: #fff; cursor: pointer; }
 [role="alert"] { color: #a11a1a; margin: 0; }
+.invite { margin-bottom: 16px; }
+.invite button, .actions button, .card button { padding: 5px 10px; border: 1px solid #c9ccd1; border-radius: 6px; background: #fff; cursor: pointer; }
+.invite button:disabled, .actions button:disabled { opacity: .4; cursor: default; }
+.invite pre { background: #fff; border: 1px solid #e3e5e8; border-radius: 6px; padding: 10px; white-space: pre-wrap; word-break: break-all; }
+table.agents { border-collapse: collapse; width: 100%; background: #fff; border: 1px solid #e3e5e8; border-radius: 8px; }
+table.agents th, table.agents td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eef0f2; }
+table.agents th { font-weight: 500; color: #555; font-size: 13px; }
+.actions { display: flex; gap: 6px; }
+.link { border: 0; background: none; color: #1b4fd6; cursor: pointer; padding: 0; font: inherit; }
+.badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.status-ACTIVE { background: #e8eefc; color: #1b4fd6; }
+.status-DRAINING { background: #fff3d6; color: #8a5a00; }
+.status-DISABLED, .status-REVOKED { background: #eceef1; color: #555; }
+.status-REVOKED { text-decoration: line-through; }
+.conn-ONLINE { background: #e3f6e8; color: #116b2c; }
+.conn-SUSPECT { background: #fff3d6; color: #8a5a00; }
+.conn-OFFLINE { background: #eceef1; color: #666; }
+.card { margin-top: 16px; background: #fff; border: 1px solid #e3e5e8; border-radius: 8px; padding: 14px; }
+.card header { display: flex; justify-content: space-between; align-items: center; }
+.card h2 { margin: 0; font-size: 17px; }
+.spark { display: inline-block; margin: 10px 24px 0 0; color: #1b4fd6; }
+.spark figcaption { font-size: 13px; color: #333; }
+.muted { color: #666; font-size: 13px; }

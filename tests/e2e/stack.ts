@@ -7,7 +7,7 @@ import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { createServer as createViteServer } from "vite";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
-import { E2E_OPERATOR, STACK_PORTS } from "./stack-config.ts";
+import { E2E_OPERATOR, STACK_FLEET, STACK_PORTS } from "./stack-config.ts";
 
 const postgres = await new PostgreSqlContainer("postgres:17-alpine").start();
 const db = createDb(postgres.getConnectionUri());
@@ -17,7 +17,7 @@ await ensureOperator(db, E2E_OPERATOR.login, E2E_OPERATOR.password);
 let app: App | null = null;
 async function startControlPlane() {
   if (app) return;
-  app = buildApp({ db, secureCookies: false });
+  app = buildApp({ db, secureCookies: false, fleet: STACK_FLEET });
   await app.listen({ host: "127.0.0.1", port: STACK_PORTS.controlPlane });
 }
 async function stopControlPlane() {

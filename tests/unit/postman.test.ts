@@ -11,7 +11,7 @@ test("[REQ-API-001] Postman collection v2.1 describes every /api/v1 route", asyn
   expect(collection.info.schema).toBe(POSTMAN_SCHEMA);
 
   const described = collection.item.flatMap((folder) => folder.item.map((i) => i.name)).sort();
-  const registered = app.registeredRoutes.filter((r) => r.url.startsWith("/api/v1/")).map((r) => `${r.method} ${r.url}`).sort();
+  const registered = app.registeredRoutes.filter((r) => r.url.startsWith("/api/v1/") && !r.websocket).map((r) => `${r.method} ${r.url}`).sort();
   expect(registered.length).toBeGreaterThan(0);
   expect(described).toEqual(registered);
 });

@@ -6,6 +6,8 @@ const testSitePort = 4310;
 export default defineConfig({
   testDir: "tests/e2e",
   forbidOnly: !!process.env.CI,
+  // One shared stack; some tests stop the Control Plane, so files must not run in parallel.
+  workers: 1,
   reporter: [["list"], ["junit", { outputFile: "reports/junit/e2e.xml" }], ["html", { open: "never" }]],
   use: { baseURL: `http://127.0.0.1:${STACK_PORTS.web}`, trace: "retain-on-failure" },
   expect: { toHaveScreenshot: { maxDiffPixelRatio: 0.01 } },

@@ -1,20 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { E2E_OPERATOR, STACK_PORTS } from "./stack-config.ts";
-
-const control = (action: "stop" | "start") =>
-  fetch(`http://127.0.0.1:${STACK_PORTS.control}/control-plane/${action}`, { method: "POST" });
+import { control, logIn } from "./helpers.ts";
 
 test.afterEach(async () => {
   await control("start");
 });
-
-async function logIn(page: import("@playwright/test").Page, password: string = E2E_OPERATOR.password) {
-  await page.goto("/");
-  await page.getByLabel("Логин").fill(E2E_OPERATOR.login);
-  await page.getByLabel("Пароль").fill(password);
-  await page.getByRole("button", { name: "Войти" }).click();
-}
 
 test("[REQ-UI-001] health indicator turns offline within 5 s after the Control Plane stops and recovers", async ({ page }) => {
   await logIn(page);

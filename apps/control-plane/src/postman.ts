@@ -25,7 +25,7 @@ export async function buildPostmanCollection(app: App): Promise<PostmanCollectio
   const variables = new Set(["baseUrl", "token"]);
   const folders = new Map<string, PostmanRequestItem[]>();
 
-  for (const route of app.registeredRoutes.filter((r) => r.url.startsWith("/api/v1/"))) {
+  for (const route of app.registeredRoutes.filter((r) => r.url.startsWith("/api/v1/") && !r.websocket)) {
     const path = route.url.split("/").filter(Boolean);
     const header = [{ key: "Content-Type", value: "application/json" }];
     if (route.auth) header.push({ key: "Authorization", value: "Bearer {{token}}" });

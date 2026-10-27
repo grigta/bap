@@ -15,14 +15,51 @@ export interface AgentsTable {
   current_epoch: Generated<string>;
   agent_version: string | null;
   last_seen_at: Timestamp | null;
-  created_at: Generated<Timestamp>;
+  last_heartbeat: unknown | null;
+  created_at: Timestamp;
+}
+
+export interface AgentEnrollmentsTable {
+  id: Generated<string>;
+  token_hash: string;
+  expires_at: Timestamp;
+  used_at: Timestamp | null;
+  agent_id: string | null;
+  created_by: string;
+  created_at: Timestamp;
+}
+
+export interface AgentCredentialsTable {
+  id: Generated<string>;
+  agent_id: string;
+  key_hash: string;
+  created_at: Timestamp;
+  revoked_at: Timestamp | null;
+}
+
+export interface AgentCapabilitiesTable {
+  agent_id: string;
+  payload: unknown;
+  updated_at: Timestamp;
+}
+
+export interface AgentEventsTable {
+  id: Generated<string>;
+  agent_id: string;
+  epoch: string | number;
+  sequence: string | number;
+  message_id: string;
+  event_type: string;
+  payload: unknown;
+  sent_at: Timestamp;
+  received_at: Timestamp;
 }
 
 export interface OperatorsTable {
   id: Generated<string>;
   login: string;
   password_hash: string;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface OperatorSessionsTable {
@@ -30,7 +67,7 @@ export interface OperatorSessionsTable {
   operator_id: string;
   token_hash: string;
   expires_at: Timestamp;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface ApiTokensTable {
@@ -38,12 +75,16 @@ export interface ApiTokensTable {
   operator_id: string;
   name: string;
   token_hash: string;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
   revoked_at: Timestamp | null;
 }
 
 export interface Database {
   agents: AgentsTable;
+  agent_enrollments: AgentEnrollmentsTable;
+  agent_credentials: AgentCredentialsTable;
+  agent_capabilities: AgentCapabilitiesTable;
+  agent_events: AgentEventsTable;
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   api_tokens: ApiTokensTable;

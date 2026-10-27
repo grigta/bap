@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import cookie from "@fastify/cookie";
+import websocket from "@fastify/websocket";
 import type { Db } from "@bap/database";
 import Fastify, { type FastifySchema } from "fastify";
 import { hasZodFastifySchemaValidationErrors, serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { SESSION_COOKIE, checkPassword, hashToken, newToken, requireOperator } from "./auth.ts";
 import { errorSchema, sendError } from "./errors.ts";
+import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
 
 export interface AppOptions {
   db: Db;
@@ -13,6 +15,7 @@ export interface AppOptions {
   secureCookies?: boolean;
   sessionTtlMs?: number;
   logger?: boolean;
+  fleet?: Partial<FleetConfig>;
 }
 
 export interface RegisteredRoute {
@@ -20,18 +23,20 @@ export interface RegisteredRoute {
   url: string;
   schema?: FastifySchema;
   auth: boolean;
+  websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet }: AppOptions) {
   const app = Fastify({ logger, genReqId: () => randomUUID() }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.register(cookie);
+  app.register(websocket);
 
   const routes: RegisteredRoute[] = [];
   app.addHook("onRoute", (r) => {
     for (const method of [r.method].flat()) {
-      if (method !== "HEAD") routes.push({ method, url: r.url, schema: r.schema, auth: r.preHandler !== undefined });
+      if (method !== "HEAD") routes.push({ method, url: r.url, schema: r.schema, auth: r.preHandler !== undefined, websocket: r.websocket === true });
     }
   });
   app.decorate("registeredRoutes", routes);
@@ -92,22 +97,8 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     },
   );
 
-  app.get(
-    "/api/v1/agents",
-    {
-      preHandler: auth,
-      schema: {
-        response: {
-          200: z.array(z.object({ id: z.string(), name: z.string(), status: z.string(), lastSeenAt: z.string().nullable() })),
-          ...unauthorized,
-        },
-      },
-    },
-    async () => {
-      const rows = await db.selectFrom("agents").select(["id", "name", "status", "last_seen_at"]).orderBy("name").execute();
-      return rows.map((r) => ({ id: r.id, name: r.name, status: r.status, lastSeenAt: r.last_seen_at?.toISOString() ?? null }));
-    },
-  );
+  // Registered as a plugin so it loads after @fastify/websocket, which websocket routes require.
+  app.register(async (scoped) => registerFleet(scoped as unknown as App, db, { ...DEFAULT_FLEET, ...fleet }, auth));
 
   return app;
 }
