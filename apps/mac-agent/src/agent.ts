@@ -1,16 +1,25 @@
 import { execFileSync } from "node:child_process";
 import { arch, cpus, freemem, platform, totalmem } from "node:os";
-import { LinkenSphereProvider } from "@bap/browser-adapters";
-import { AGENT_SOCKET_PATH, type AgentEvent, type HeartbeatPayload, message, serverMessage } from "@bap/protocol";
+import { type BrowserProvider, ProfileNotFoundError } from "@bap/browser-adapters";
+import { AGENT_SOCKET_PATH, type AgentEvent, type AgentRequestPayload, type HeartbeatPayload, message, serverMessage } from "@bap/protocol";
 import WebSocket from "ws";
 
 export const AGENT_VERSION = "0.1.0";
 
+class CodedError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 export interface AgentOptions {
   serverUrl: string;
   agentKey: string;
-  /** Linken Sphere Local API; null when this Mac has none. */
-  lsApiUrl: string | null;
+  /** Browser provider on this Mac (Linken Sphere in production); null when there is none. */
+  provider: BrowserProvider | null;
+  providerName: string;
   maxSessions: number;
   log?: (line: string) => void;
   maxReconnectDelayMs?: number;
@@ -54,7 +63,6 @@ export function memoryPercent(vmStat = platform() === "darwin" ? execFileSync("v
 /** Connects out to the Control Plane (no listening ports) and keeps reconnecting until stopped or revoked. */
 export function startAgent(opts: AgentOptions): RunningAgent {
   const log = opts.log ?? ((line: string) => console.log(line));
-  const ls = opts.lsApiUrl ? new LinkenSphereProvider({ apiUrl: opts.lsApiUrl, timeoutMs: 2000 }) : null;
   const cpu = cpuSampler();
   const url = opts.serverUrl.replace(/^http/, "ws") + AGENT_SOCKET_PATH;
   let socket: WebSocket | null = null;
@@ -77,9 +85,25 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   const heartbeat = async (): Promise<HeartbeatPayload> => ({
     cpuPercent: cpu(),
     memoryPercent: memoryPercent(),
-    lsAvailable: ls ? await ls.isAvailable() : false,
+    lsAvailable: opts.provider ? await opts.provider.isAvailable() : false,
     activeSessions: 0,
   });
+
+  const handleRequest = async (req: AgentRequestPayload, requestId: string): Promise<unknown> => {
+    const provider = opts.provider;
+    if (!provider) throw new CodedError("PROVIDER_UNAVAILABLE", "this agent has no browser provider");
+    if (req.method === "profiles.list") return provider.listProfiles();
+    // Verify: the profile must open and close cleanly; the window appears briefly on this Mac.
+    const session = await provider.openSession(req.externalId, `verify-${requestId}`);
+    try {
+      await session.attach();
+      await session.getPage();
+    } finally {
+      await session.closeSession();
+    }
+    log(`verified profile ${req.externalId}`);
+    return { verified: true };
+  };
 
   const connect = () => {
     let seq = 0;
@@ -100,10 +124,19 @@ export function startAgent(opts: AgentOptions): RunningAgent {
       if (msg.type === "server.welcome") {
         delay = 1000;
         log(`connected: epoch ${msg.payload.epoch}, heartbeat every ${msg.payload.heartbeatIntervalMs} ms`);
-        send({ type: "agent.capabilities", payload: { providers: ls ? ["linken-sphere"] : [], maxSessions: opts.maxSessions } });
+        send({ type: "agent.capabilities", payload: { providers: opts.provider ? [opts.providerName] : [], maxSessions: opts.maxSessions } });
         const beat = async () => send({ type: "agent.heartbeat", payload: await heartbeat() });
         await beat();
         heartbeatTimer = setInterval(() => void beat().catch((e) => log(`heartbeat failed: ${e}`)), msg.payload.heartbeatIntervalMs);
+      } else if (msg.type === "server.request") {
+        const respond = (payload: { ok: boolean; result?: unknown; error?: { code: string; message: string } }) =>
+          ws.send(JSON.stringify(message({ type: "agent.response", payload: { requestId: msg.id, ...payload } })));
+        try {
+          respond({ ok: true, result: await handleRequest(msg.payload, msg.id) });
+        } catch (e) {
+          const code = e instanceof ProfileNotFoundError ? "PROFILE_NOT_FOUND" : e instanceof CodedError ? e.code : "PROVIDER_ERROR";
+          respond({ ok: false, error: { code, message: e instanceof Error ? e.message : String(e) } });
+        }
       } else if (msg.type === "server.error") log(`server error ${msg.payload.code}: ${msg.payload.message}`);
     });
     ws.on("error", (e) => log(`connection error: ${e.message}`));

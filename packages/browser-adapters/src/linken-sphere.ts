@@ -1,5 +1,5 @@
 import { CdpSession } from "./cdp-session.ts";
-import { type BrowserProvider, ProfileNotFoundError } from "./types.ts";
+import { type BrowserProvider, ProfileNotFoundError, type ProfileSummary } from "./types.ts";
 
 /**
  * Linken Sphere 2 Local API (checked against 2.26.10). The API listens on 127.0.0.1 only,
@@ -26,11 +26,11 @@ export class LinkenSphereApi {
     this.timeoutMs = timeoutMs;
   }
 
-  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async request<T>(method: string, path: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<T> {
     const res = await fetch(`${this.apiUrl}${path}`, {
       method,
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
     if (!res.ok) throw new Error(`Linken Sphere ${method} ${path}: HTTP ${res.status} ${text}`);
@@ -59,11 +59,16 @@ export class LinkenSphereProvider implements BrowserProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      await this.api.listSessions();
+      // Short timeout: this runs in every heartbeat.
+      await this.api.request("GET", "/sessions", undefined, 3000);
       return true;
     } catch {
       return false;
     }
+  }
+
+  async listProfiles(): Promise<ProfileSummary[]> {
+    return (await this.api.listSessions()).map((s) => ({ id: s.uuid, name: s.name }));
   }
 
   async openSession(profileId: string, runId: string): Promise<LinkenSphereSession> {

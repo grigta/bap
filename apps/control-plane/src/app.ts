@@ -8,6 +8,7 @@ import { z } from "zod";
 import { SESSION_COOKIE, checkPassword, hashToken, newToken, requireOperator } from "./auth.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
+import { registerProfiles } from "./profiles.ts";
 
 export interface AppOptions {
   db: Db;
@@ -98,7 +99,11 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
   );
 
   // Registered as a plugin so it loads after @fastify/websocket, which websocket routes require.
-  app.register(async (scoped) => registerFleet(scoped as unknown as App, db, { ...DEFAULT_FLEET, ...fleet }, auth));
+  app.register(async (scoped) => {
+    const fleetConfig = { ...DEFAULT_FLEET, ...fleet };
+    const agents = registerFleet(scoped as unknown as App, db, fleetConfig, auth);
+    registerProfiles(scoped as unknown as App, db, agents, fleetConfig, auth);
+  });
 
   return app;
 }

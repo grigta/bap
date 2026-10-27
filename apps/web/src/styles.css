@@ -38,3 +38,15 @@ table.agents th { font-weight: 500; color: #555; font-size: 13px; }
 .spark { display: inline-block; margin: 10px 24px 0 0; color: #1b4fd6; }
 .spark figcaption { font-size: 13px; color: #333; }
 .muted { color: #666; font-size: 13px; }
+.import { margin: 0 0 16px; }
+.import select { margin-left: 6px; padding: 4px 6px; }
+.provider-profiles { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; max-width: 520px; }
+.provider-profiles li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.provider-profiles button { padding: 4px 10px; border: 1px solid #c9ccd1; border-radius: 6px; background: #fff; cursor: pointer; }
+.provider-profiles button:disabled { opacity: .5; cursor: default; }
+.profile-AVAILABLE { background: #e3f6e8; color: #116b2c; }
+.profile-VERIFYING, .profile-RESERVED { background: #e8eefc; color: #1b4fd6; }
+.profile-IN_USE { background: #ede3fb; color: #5b2ab5; }
+.profile-NEEDS_REVIEW { background: #fff3d6; color: #8a5a00; }
+.profile-DISABLED { background: #eceef1; color: #555; }
+.error-text { color: #a11a1a; font-size: 13px; max-width: 260px; }

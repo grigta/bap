@@ -1,6 +1,6 @@
 import type { Db } from "@bap/database";
 import { sql } from "kysely";
-import { AGENT_SOCKET_PATH, type AgentMessage, type ServerMessage, agentMessage, heartbeatPayload, message } from "@bap/protocol";
+import { AGENT_SOCKET_PATH, type AgentMessage, type AgentRequestPayload, type ServerMessage, agentMessage, heartbeatPayload, message } from "@bap/protocol";
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { WebSocket } from "ws";
 import { z } from "zod";
@@ -53,8 +53,23 @@ declare module "fastify" {
   }
 }
 
-export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAuth: preHandlerAsyncHookHandler) {
+export class AgentRequestError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export interface Fleet {
+  /** Sends a request to a connected agent; rejects with AgentRequestError (AGENT_UNAVAILABLE when not connected). */
+  request(agentId: string, payload: AgentRequestPayload, timeoutMs?: number): Promise<unknown>;
+  isConnected(agentId: string): boolean;
+}
+
+export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAuth: preHandlerAsyncHookHandler): Fleet {
   const sockets = new Map<string, Set<WebSocket>>();
+  const pending = new Map<string, { socket: WebSocket; resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   const unauthorized = { 401: errorSchema };
 
   const listAgents = async (id?: string) => {
@@ -230,6 +245,15 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         return send(message({ type: "server.welcome", payload: { agentId, epoch, heartbeatIntervalMs: config.heartbeatIntervalMs } }));
       }
       if (epoch === null) return protocolError("HELLO_REQUIRED", "agent.hello must be the first message");
+      if (msg.type === "agent.response") {
+        const waiting = pending.get(msg.payload.requestId);
+        if (!waiting) return;
+        pending.delete(msg.payload.requestId);
+        clearTimeout(waiting.timer);
+        if (msg.payload.ok) waiting.resolve(msg.payload.result);
+        else waiting.reject(new AgentRequestError(msg.payload.error?.code ?? "AGENT_ERROR", msg.payload.error?.message ?? "agent request failed"));
+        return;
+      }
 
       const inserted = await db
         .insertInto("agent_events")
@@ -256,6 +280,34 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     socket.on("message", (raw) => {
       queue = queue.then(() => handle(String(raw))).catch((e) => request.log.error(e));
     });
-    socket.on("close", () => sockets.get(agentId)?.delete(socket));
+    socket.on("close", () => {
+      sockets.get(agentId)?.delete(socket);
+      for (const [id, waiting] of pending)
+        if (waiting.socket === socket) {
+          pending.delete(id);
+          clearTimeout(waiting.timer);
+          waiting.reject(new AgentRequestError("AGENT_UNAVAILABLE", "The agent disconnected before answering"));
+        }
+    });
   });
+
+  // The newest connection is the live one; older sockets are about to close.
+  const liveSocket = (agentId: string) => [...(sockets.get(agentId) ?? [])].filter((s) => s.readyState === s.OPEN).at(-1);
+
+  return {
+    isConnected: (agentId) => liveSocket(agentId) !== undefined,
+    request(agentId, payload, timeoutMs = 120_000) {
+      const socket = liveSocket(agentId);
+      if (!socket) return Promise.reject(new AgentRequestError("AGENT_UNAVAILABLE", "The agent is not connected"));
+      const msg = message({ type: "server.request" as const, payload });
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(msg.id);
+          reject(new AgentRequestError("AGENT_TIMEOUT", `The agent did not answer ${payload.method} within ${timeoutMs} ms`));
+        }, timeoutMs);
+        pending.set(msg.id, { socket, resolve, reject, timer });
+        socket.send(JSON.stringify(msg));
+      });
+    },
+  };
 }

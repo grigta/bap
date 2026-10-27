@@ -33,7 +33,7 @@ describe("defineScenario", () => {
 describe("runScenario", () => {
   test("[REQ-RUN-010] invalid input is rejected before any browser session is opened", async () => {
     const openSession = vi.fn();
-    const provider: BrowserProvider = { isAvailable: async () => true, openSession };
+    const provider: BrowserProvider = { isAvailable: async () => true, listProfiles: async () => [], openSession };
     const scenario = defineScenario({ ...base, steps: [{ id: "a", run: noop }] });
     const checkpoints = new CheckpointStore(":memory:");
     await expect(

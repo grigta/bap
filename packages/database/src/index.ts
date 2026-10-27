@@ -55,6 +55,22 @@ export interface AgentEventsTable {
   received_at: Timestamp;
 }
 
+export type ProfileStatus = "AVAILABLE" | "RESERVED" | "IN_USE" | "VERIFYING" | "NEEDS_REVIEW" | "DISABLED";
+
+export interface ProfilesTable {
+  id: Generated<string>;
+  provider: string;
+  external_profile_id: string;
+  name: string;
+  agent_id: string;
+  status: ColumnType<ProfileStatus, ProfileStatus | undefined, ProfileStatus>;
+  active_run_id: string | null;
+  last_error: string | null;
+  last_verified_at: Timestamp | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface OperatorsTable {
   id: Generated<string>;
   login: string;
@@ -85,6 +101,7 @@ export interface Database {
   agent_credentials: AgentCredentialsTable;
   agent_capabilities: AgentCapabilitiesTable;
   agent_events: AgentEventsTable;
+  profiles: ProfilesTable;
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   api_tokens: ApiTokensTable;

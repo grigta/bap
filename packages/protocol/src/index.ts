@@ -32,9 +32,28 @@ export type HeartbeatPayload = z.infer<typeof heartbeatPayload>;
 
 export const agentHeartbeat = z.object({ ...event, type: z.literal("agent.heartbeat"), payload: heartbeatPayload });
 
-export const agentMessage = z.discriminatedUnion("type", [agentHello, agentCapabilities, agentHeartbeat]);
+/** Server → agent request; the agent answers with agent.response carrying the same requestId. */
+export const agentRequestPayload = z.discriminatedUnion("method", [
+  z.object({ method: z.literal("profiles.list") }),
+  z.object({ method: z.literal("profiles.verify"), externalId: z.string().min(1) }),
+]);
+export type AgentRequestPayload = z.infer<typeof agentRequestPayload>;
+
+export const agentResponse = z.object({
+  ...envelope,
+  type: z.literal("agent.response"),
+  payload: z.object({
+    requestId: z.uuid(),
+    ok: z.boolean(),
+    result: z.unknown().optional(),
+    error: z.object({ code: z.string(), message: z.string() }).optional(),
+  }),
+});
+
+export const agentMessage = z.discriminatedUnion("type", [agentHello, agentCapabilities, agentHeartbeat, agentResponse]);
 export type AgentMessage = z.infer<typeof agentMessage>;
-export type AgentEvent = Exclude<AgentMessage, z.infer<typeof agentHello>>;
+/** Messages that are logged and deduplicated by (epoch, sequence). */
+export type AgentEvent = z.infer<typeof agentCapabilities> | z.infer<typeof agentHeartbeat>;
 
 export const serverWelcome = z.object({
   ...envelope,
@@ -44,7 +63,9 @@ export const serverWelcome = z.object({
 export const serverAck = z.object({ ...envelope, type: z.literal("server.ack"), payload: z.object({ id: z.uuid(), duplicate: z.boolean() }) });
 export const serverError = z.object({ ...envelope, type: z.literal("server.error"), payload: z.object({ code: z.string(), message: z.string() }) });
 
-export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError]);
+export const serverRequest = z.object({ ...envelope, type: z.literal("server.request"), payload: agentRequestPayload });
+
+export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest]);
 export type ServerMessage = z.infer<typeof serverMessage>;
 
 /** Builds a message with a fresh envelope. */

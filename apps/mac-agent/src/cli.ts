@@ -54,10 +54,17 @@ if (command === "enroll") {
   }
 } else if (command === "start") {
   const config = loadConfig();
+  // BAP_PROVIDER=local runs on plain Chromium (tests, machines without Linken Sphere).
+  const local = process.env.BAP_PROVIDER === "local";
   const agent = startAgent({
     serverUrl: config.serverUrl,
     agentKey: config.agentKey,
-    lsApiUrl: process.env.BAP_LS_API_URL === "" ? null : lsApiUrl,
+    provider: local
+      ? new LocalChromiumProvider({ profilesDir: join(dataDir(), "profiles"), headless: process.env.BAP_HEADLESS !== "false" })
+      : process.env.BAP_LS_API_URL === ""
+        ? null
+        : new LinkenSphereProvider({ apiUrl: lsApiUrl }),
+    providerName: local ? "local-chromium" : "linken-sphere",
     maxSessions: Number(process.env.BAP_MAX_SESSIONS ?? 2),
   });
   console.log(`agent ${config.name} → ${config.serverUrl}`);

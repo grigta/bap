@@ -17,8 +17,15 @@ export interface BrowserSession {
   closeSession(): Promise<void>;
 }
 
+/** What a provider reveals about a stored profile: no cookies, storage or credentials. */
+export interface ProfileSummary {
+  id: string;
+  name: string;
+}
+
 export interface BrowserProvider {
   isAvailable(): Promise<boolean>;
+  listProfiles(): Promise<ProfileSummary[]>;
   openSession(profileId: string, runId: string): Promise<BrowserSession>;
 }
 

@@ -34,8 +34,11 @@ export function browserProviderContract(target: ContractTarget) {
     await site.stop();
   });
 
-  test(`${target.tags.contract} ${target.name}: is available and rejects unknown profiles`, async () => {
+  test(`${target.tags.contract} ${target.name}: is available, lists the profile and rejects unknown profiles`, async () => {
     expect(await target.provider.isAvailable()).toBe(true);
+    const listed = await target.provider.listProfiles();
+    expect(listed).toContainEqual({ id: profileId, name: expect.any(String) });
+    for (const p of listed) expect(Object.keys(p).sort()).toEqual(["id", "name"]);
     await expect(target.provider.openSession("00000000-0000-0000-0000-000000000000", "run-x")).rejects.toBeInstanceOf(ProfileNotFoundError);
   });
 

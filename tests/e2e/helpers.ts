@@ -9,4 +9,6 @@ export async function logIn(page: Page, password: string = E2E_OPERATOR.password
   await page.getByLabel("Логин").fill(E2E_OPERATOR.login);
   await page.getByLabel("Пароль").fill(password);
   await page.getByRole("button", { name: "Войти" }).click();
+  // Wait for the outcome: API calls made right after must carry the session cookie.
+  await page.getByRole("button", { name: "Выйти" }).or(page.getByRole("alert")).waitFor();
 }
