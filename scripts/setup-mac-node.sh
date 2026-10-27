@@ -56,7 +56,8 @@ fi
 
 step "Linken Sphere"
 if [ -d "$LS_APP" ]; then
-  if osascript -e 'tell application "System Events" to get the name of every login item' | grep -q "Linken Sphere 2"; then
+  # No `| grep -q` under pipefail: an early grep exit fails the pipeline with SIGPIPE.
+  if [[ "$(osascript -e 'tell application "System Events" to get the name of every login item')" == *"Linken Sphere 2"* ]]; then
     ok "already a login item"
   else
     run osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$LS_APP\", hidden:true}"
@@ -71,7 +72,7 @@ fi
 
 if [ "$BORE" = 1 ]; then
   step "SSH tunnel (bore)"
-  if launchctl list | grep -q com.bap.bore; then
+  if launchctl list com.bap.bore >/dev/null 2>&1; then
     # Recreating it would change the public port and cut the SSH session running this script.
     ok "already running: $(grep -o 'bore.pub:[0-9]*' "$HOME/bore.log" 2>/dev/null | tail -1 || echo 'see ~/bore.log')"
   elif command -v bore >/dev/null; then
