@@ -46,7 +46,7 @@ describe("database", () => {
 });
 
 describe("operator authentication", () => {
-  test("[REQ-SEC-011] protected routes answer 401 without authentication, in the PRD error format", async () => {
+  test("[REQ-SEC-011] protected routes answer 401 without authentication, in the standard error format", async () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/agents" });
     expect(res.statusCode).toBe(401);
     expect(res.json()).toEqual({ error: { code: "UNAUTHORIZED", message: "Authentication required", requestId: expect.any(String) } });
