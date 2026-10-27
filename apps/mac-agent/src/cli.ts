@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -78,7 +78,11 @@ if (command === "enroll") {
   );
   execFileSync("plutil", ["-lint", plist], { stdio: "inherit" });
   const load = ["bootstrap", `gui/${process.getuid!()}`, plist];
-  if (values.load) execFileSync("launchctl", load, { stdio: "inherit" });
+  if (values.load) {
+    // Re-running must replace an already loaded agent: bootstrap alone fails when the label exists.
+    spawnSync("launchctl", ["bootout", `gui/${process.getuid!()}/com.bap.agent`], { stdio: "ignore" });
+    execFileSync("launchctl", load, { stdio: "inherit" });
+  }
   else console.log(`load with: launchctl ${load.join(" ")}`);
 } else if (command === "run") {
   await runCommand(positionals[1]);
