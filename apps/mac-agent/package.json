@@ -1,0 +1,9 @@
+{
+  "name": "@bap/mac-agent",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@bap/browser-adapters": "workspace:*",
+    "@bap/engine": "workspace:*"
+  }
+}

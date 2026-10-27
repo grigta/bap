@@ -1,0 +1,9 @@
+{
+  "name": "@bap/scenarios",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@bap/scenario-sdk": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

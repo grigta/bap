@@ -8,3 +8,5 @@ playwright-report/
 # private, kept in a separate repository
 docs/
 CLAUDE.md
+dist/
+artifacts/

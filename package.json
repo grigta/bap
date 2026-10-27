@@ -17,15 +17,19 @@
     "test:e2e:update-linux": "scripts/e2e-linux.sh",
     "evidence": "BAP_EVIDENCE=1 playwright test",
     "api:postman": "node apps/control-plane/src/postman-cli.ts",
+    "scenarios:build": "node packages/engine/src/build-cli.ts",
+    "bap-agent": "node apps/mac-agent/src/cli.ts",
     "dev": "docker compose up -d --wait && pnpm --parallel --filter @bap/control-plane --filter @bap/web dev",
     "docs:check": "node tools/docs-check/src/cli.ts",
     "docs:status": "node tools/docs-check/src/cli.ts --write-status",
-    "verify:code": "rm -rf reports && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e",
+    "verify:code": "rm -f reports/junit/vitest.xml reports/junit/e2e.xml && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e",
     "verify": "pnpm verify:code && pnpm test:ls && pnpm docs:status"
   },
   "devDependencies": {
     "@bap/browser-adapters": "workspace:*",
     "@bap/database": "workspace:*",
+    "@bap/engine": "workspace:*",
+    "@bap/scenario-sdk": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.64.1",
     "@testcontainers/postgresql": "^12.2.1",
@@ -45,6 +49,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
     "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "zod": "^4.6.7"
   }
 }

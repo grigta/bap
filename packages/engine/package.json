@@ -1,0 +1,15 @@
+{
+  "name": "@bap/engine",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@bap/browser-adapters": "workspace:*",
+    "@bap/scenario-sdk": "workspace:*",
+    "esbuild": "^0.28.2",
+    "playwright-core": "1.64.1",
+    "zod": "^4.6.7"
+  }
+}

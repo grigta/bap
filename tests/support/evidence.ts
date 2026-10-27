@@ -16,3 +16,8 @@ export async function pageEvidence(page: Page, stage: string, name: string): Pro
 export function jsonEvidence(stage: string, name: string, data: unknown): void {
   if (process.env.BAP_EVIDENCE) writeFileSync(`${dir(stage)}/${name}.json`, JSON.stringify(data, null, 2) + "\n");
 }
+
+/** Evidence directory for a stage, or null when evidence is not being collected. */
+export function evidenceDir(stage: string): string | null {
+  return process.env.BAP_EVIDENCE ? dir(stage) : null;
+}

@@ -2,8 +2,10 @@ packages:
   - apps/*
   - packages/*
   - tools/*
+  - scenarios
 allowBuilds:
   lefthook: true
   cpu-features: false
   protobufjs: false
   ssh2: false
+  esbuild: true
