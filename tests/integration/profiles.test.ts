@@ -89,6 +89,18 @@ describe("import", () => {
       db.insertInto("profiles").values({ provider: "local-chromium", external_profile_id: "shop-2", name: "x", agent_id: agentId }).execute(),
     ).rejects.toThrow(/profiles_provider_external_profile_id_key/);
   });
+  test("an agent without a browser provider answers with PROVIDER_UNAVAILABLE", async () => {
+    const { token } = (await api("POST", "/api/v1/agents/enrollments")).json();
+    const bare = (await app.inject({ method: "POST", url: "/api/v1/agents/enroll", payload: { token, name: "mac-bare", platform: "darwin", architecture: "arm64" } })).json();
+    const running = startAgent({ serverUrl: baseUrl, agentKey: bare.agentKey, provider: null, providerName: "none", maxSessions: 1, log: () => {} });
+    await until("bare agent online", async () => (await api("GET", `/api/v1/agents/${bare.agentId}`)).json(), (a) => a.connection === "ONLINE" && a.maxSessions === 1);
+    const res = await api("GET", `/api/v1/agents/${bare.agentId}/provider-profiles`);
+    running.stop();
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("PROVIDER_UNAVAILABLE");
+    const imported = await api("POST", "/api/v1/profiles/import", { agentId: bare.agentId, externalProfileId: "x", name: "x" });
+    expect(imported.json().error.code).toBe("PROVIDER_UNAVAILABLE");
+  });
 });
 
 describe("verification", () => {
