@@ -108,7 +108,7 @@ describe("docs:check", () => {
     expect(status).toContain("Требований: 3, покрыто прошедшими тестами: 1.");
     expect(status).toContain("| [S0](./stages/S00-first.md) | Stage S0 | done | 1/1 | [1 файл(ов)](./evidence/S0/) |");
     expect(status).toContain("| [S1](./stages/S01-second.md) | Stage S1 | planned | 0/2 | — |");
-    expect(status).toContain("| [REQ-A-001](./prd/01-a.md) | S0 | [REQ-A-001] a<br>[REQ-A-001] b |");
+    expect(status).toContain("| [REQ-A-001](./prd/01-a.md) | S0 | `[REQ-A-001] a`<br>`[REQ-A-001] b` |");
     expect(status).toContain("| [REQ-B-001](./prd/02-b.md) | S1 | — |");
     expect(renderStatus(check(root))).toBe(status);
   });

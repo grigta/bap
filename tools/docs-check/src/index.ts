@@ -158,7 +158,7 @@ export function renderStatus(report: Report): string {
     ...requirements.map((r) => {
       const st = stages.filter((s) => s.reqs.includes(r.id)).map((s) => s.id).join(", ");
       const t = passed(r.id);
-      return `| [${r.id}](./prd/${basename(r.file)}) | ${st} | ${t.length ? t.map((x) => x.replace(/\|/g, "\\|")).join("<br>") : "—"} |`;
+      return `| [${r.id}](./prd/${basename(r.file)}) | ${st} | ${t.length ? t.map((x) => `\`${x.replace(/\|/g, "\\|")}\``).join("<br>") : "—"} |`;
     }),
     "",
   ];

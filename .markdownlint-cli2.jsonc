@@ -8,5 +8,5 @@
     "MD060": false   // compact tables
   },
   "globs": ["**/*.md"],
-  "ignores": ["**/node_modules/**", "playwright-report/**", "test-results/**"]
+  "ignores": ["**/node_modules/**", "playwright-report/**", "test-results/**", "docs/STATUS.md"]  // generated; format covered by tests/harness
 }
