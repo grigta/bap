@@ -15,7 +15,7 @@
     "test:integration": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --project integration",
     "test:e2e": "playwright test",
     "test:e2e:update-linux": "scripts/e2e-linux.sh",
-    "evidence": "BAP_EVIDENCE=1 playwright test",
+    "evidence": "BAP_EVIDENCE=1 BAP_JUNIT=reports/junit/e2e-evidence.xml playwright test",
     "api:postman": "node apps/control-plane/src/postman-cli.ts",
     "scenarios:build": "node packages/engine/src/build-cli.ts",
     "scenarios:publish": "node packages/engine/src/publish-cli.ts",
@@ -23,7 +23,7 @@
     "dev": "docker compose up -d --wait && pnpm --parallel --filter @bap/control-plane --filter @bap/web dev",
     "docs:check": "node tools/docs-check/src/cli.ts",
     "docs:status": "node tools/docs-check/src/cli.ts --write-status",
-    "verify:code": "rm -f reports/junit/vitest.xml reports/junit/e2e.xml && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e",
+    "verify:code": "rm -f reports/junit/vitest.xml reports/junit/e2e*.xml && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e",
     "verify": "pnpm verify:code && pnpm test:ls && pnpm docs:status"
   },
   "devDependencies": {
