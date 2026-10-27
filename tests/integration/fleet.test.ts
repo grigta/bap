@@ -225,7 +225,8 @@ describe("Linken Sphere availability", () => {
   });
 });
 
-test("[REQ-AGENT-002] the LaunchAgent starts the agent at login and restarts it after a crash", () => {
+// plutil and launchd exist only on macOS; CI runs on Linux.
+test.skipIf(process.platform !== "darwin")("[REQ-AGENT-002] the LaunchAgent starts the agent at login and restarts it after a crash", () => {
   const dir = mkdtempSync(join(tmpdir(), "bap-plist-"));
   const path = join(dir, "com.bap.agent.plist");
   writeFileSync(path, launchAgentPlist({ node: "/opt/homebrew/bin/node", cli: "/opt/bap/cli.ts", logFile: "/tmp/agent.log", env: { BAP_LS_API_URL: "http://127.0.0.1:41234" } }));
