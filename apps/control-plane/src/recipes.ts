@@ -305,7 +305,7 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
         params: z.object({ id: z.uuid() }),
         body: z.union([
           z.object({ poll: z.literal(true) }),
-          z.object({ snapshot: snapshotSchema, screenshot: z.string().regex(/^[\w.-]+$/), last: z.object({ ok: z.boolean(), error: z.string().optional(), requests: z.array(z.object({ method: z.string(), url: z.string(), status: z.number().int() })).optional() }).nullable() }),
+          z.object({ snapshot: snapshotSchema, screenshot: z.string().regex(/^[\w.-]+$/), last: z.object({ ok: z.boolean(), action: z.string().optional(), error: z.string().optional(), requests: z.array(z.object({ method: z.string(), url: z.string(), status: z.number().int() })).optional() }).nullable() }),
         ]),
         // RecordDecision from @bap/recipe: act, wait, done or fail.
         response: { 200: z.looseObject({ type: z.enum(["act", "wait", "done", "fail"]) }), 404: errorSchema, 409: errorSchema },
@@ -327,7 +327,7 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
       }
       if ("poll" in request.body) return answer({ type: "fail", code: "NOTHING_PENDING", message: "no action is waiting; send an observation" });
 
-      const { snapshot, screenshot, last } = request.body as { snapshot: PageSnapshot; screenshot: string; last: { ok: boolean; error?: string; requests?: { method: string; url: string; status: number }[] } | null };
+      const { snapshot, screenshot, last } = request.body as { snapshot: PageSnapshot; screenshot: string; last: { ok: boolean; action?: string; error?: string; requests?: { method: string; url: string; status: number }[] } | null };
       const inputs = inputsOf(run.inputs);
       const input = (run.input ?? {}) as Record<string, unknown>;
       const steps = rec.steps as DraftStep[];
@@ -341,7 +341,7 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
       const proof = last?.ok && lastStep?.mutating ? last.requests?.find((r) => r.status >= 200 && r.status < 400) : undefined;
       if (proof && lastStep && !lastStep.postcondition?.request)
         lastStep.postcondition = { ...lastStep.postcondition, request: { method: proof.method, path: pathPattern(new URL(proof.url).pathname), status: statusClass(proof.status) as "2xx" | "3xx" } };
-      if (last && !last.ok && lastStep) {
+      if (last && !last.ok && lastStep && last.action !== "scroll") {
         steps.pop(); // a failed action is not part of the solution
         history.push(`  ↳ failed: ${last.error ?? "unknown error"}`);
       }
@@ -423,6 +423,12 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
       }
 
       const action = decision.action!;
+      if (action.kind === "scroll") {
+        // Looking further down is not part of the solution: on replay targets are looked for by scrolling anyway.
+        history.push("   (прокрутка вниз)");
+        await save();
+        return answer({ type: "act", stepId: `look-${history.length}`, intent: "Прокрутить вниз", action: "scroll", mutating: false, confirmed: false });
+      }
       const open = openValues(inputs, input);
       const el = action.ref ? snapshot.elements.find((e) => e.ref === action.ref) : undefined;
       const value = action.value === undefined ? undefined : templateValue(action.value, open);
@@ -545,10 +551,12 @@ function checkDecision(d: ModelDecision, snapshot: PageSnapshot): string | undef
   const a = d.action;
   if (!a) return "decision act needs an action";
   if (a.kind === "press") return a.value ? undefined : "press needs a key in value";
+  if (a.kind === "scroll") return undefined;
   const el = snapshot.elements.find((e) => e.ref === a.ref);
   if (!el) return `ref ${a.ref} is not in the list`;
   if (!el.visible) return `${a.ref} is not visible`;
-  if ((a.kind === "fill" || a.kind === "select") && a.value === undefined) return `${a.kind} needs a value`;
+  if ((a.kind === "fill" || a.kind === "select" || a.kind === "upload") && a.value === undefined) return `${a.kind} needs a value`;
+  if (el.states.includes("disabled")) return `${a.ref} is disabled`;
   return undefined;
 }
 

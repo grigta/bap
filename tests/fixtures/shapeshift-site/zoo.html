@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Зоопарк DOM</title>
+<!-- One page with every kind of node and control a recipe may meet; each control reports what was done to it in #log. -->
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  section { border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin: 10px 0; }
+  .icon-delete::before { content: "Удалить"; }
+  .next::after { content: "Далее →"; }
+  .menu { position: relative; display: inline-block; }
+  .menu .sub { display: none; position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #ccc; padding: 6px; }
+  .menu:hover .sub { display: block; }
+  #feed { height: 160px; overflow: auto; border: 1px solid #ccc; }
+  #feed .row { height: 30px; }
+  #banner { position: fixed; left: 0; right: 0; bottom: 0; height: 90px; background: #222; color: #fff; padding: 10px; }
+  #under { position: fixed; bottom: 30px; left: 30px; }
+  [inert] { opacity: .6; }
+</style>
+</head>
+<body>
+<h1>Зоопарк DOM</h1>
+<p>Последнее действие: <output id="log">нет</output></p>
+
+<section aria-label="Псевдоэлементы">
+  <button class="icon-delete" onclick="log('удалено')"></button>
+  <a class="next" href="#next" onclick="log('далее')"></a>
+</section>
+
+<section aria-label="SVG">
+  <div class="cart-icon" onclick="log('корзина svg')"><svg width="24" height="24"><title>Корзина</title><rect width="24" height="24" fill="#888"/></svg></div>
+  <svg role="button" tabindex="0" aria-label="Закрыть" width="24" height="24" onclick="log('закрыто')"><circle cx="12" cy="12" r="10" fill="#c33"/></svg>
+</section>
+
+<section aria-label="Раскрывающиеся">
+  <details><summary>Подробнее</summary><button onclick="log('скрытая кнопка')">Кнопка внутри</button></details>
+  <button onclick="document.getElementById('dlg').showModal()">Открыть окно</button>
+  <dialog id="dlg"><label>Название <input name="title"></label> <button onclick="log('сохранено: ' + this.previousElementSibling.querySelector('input').value); this.closest('dialog').close()">Сохранить</button></dialog>
+  <button popovertarget="pop">Меню</button>
+  <div id="pop" popover><button onclick="log('пункт меню')">Пункт меню</button></div>
+</section>
+
+<section aria-label="Поля">
+  <label>Почта <input type="email" name="email"></label>
+  <label>Телефон <input type="tel" name="tel"></label>
+  <label>Сайт <input type="url" name="url"></label>
+  <label>Количество <input type="number" name="qty" min="1" max="9" value="1"></label>
+  <label>Громкость <input type="range" name="vol" min="0" max="10" value="5" oninput="log('громкость ' + this.value)"></label>
+  <label>Дата <input type="date" name="date" onchange="log('дата ' + this.value)"></label>
+  <label>Время <input type="time" name="time" onchange="log('время ' + this.value)"></label>
+  <label>Цвет <input type="color" name="color" value="#ff0000"></label>
+  <label><input type="checkbox" name="news" onchange="log('рассылка ' + this.checked)"> Рассылка</label>
+  <fieldset><legend>Оплата</legend>
+    <label><input type="radio" name="pay" value="card" onchange="log('оплата картой')"> Картой</label>
+    <label><input type="radio" name="pay" value="cash" onchange="log('оплата наличными')"> Наличными</label>
+  </fieldset>
+  <label>Файл <input type="file" name="doc" onchange="log('файл ' + this.files[0].name)"></label>
+  <label>Город <input name="city" list="cities"></label><datalist id="cities"><option>Москва</option><option>Казань</option></datalist>
+  <label>Отзыв <textarea name="review"></textarea></label>
+  <div contenteditable="true" role="textbox" aria-label="Заметка" oninput="log('заметка ' + this.textContent)"></div>
+  <input type="hidden" name="secret" value="hidden-value">
+  <input type="image" alt="Отправить картинкой" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20" onclick="log('картинка'); return false">
+  <meter value="0.6">60%</meter> <progress value="30" max="100">30%</progress>
+  <button disabled>Недоступно</button>
+</section>
+
+<section aria-label="Таблица">
+  <table><tr><th>Товар</th><th></th></tr>
+    <tr><td>Чайник</td><td><button onclick="log('изменить чайник')">Изменить</button></td></tr>
+    <tr><td>Тостер</td><td><button onclick="log('изменить тостер')">Изменить</button></td></tr>
+  </table>
+  <a href="#logo" onclick="log('логотип')"><img alt="На главную" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20"></a>
+</section>
+
+<section aria-label="Наведение и щелчки">
+  <div class="menu"><span>Каталог</span><div class="sub"><a href="#laptops" onclick="log('ноутбуки')">Ноутбуки</a></div></div>
+  <span ondblclick="log('переименовать')">Дважды щёлкните, чтобы переименовать</span>
+  <span oncontextmenu="log('контекстное меню'); return false">Правый щелчок здесь</span>
+</section>
+
+<section aria-label="Длинный список">
+  <div id="feed"></div>
+</section>
+
+<section aria-label="Компоненты">
+  <x-card><button slot="action" onclick="log('из слота')">Кнопка в слоте</button></x-card>
+  <iframe title="Встроенный" srcdoc="<button onclick=&quot;parent.log('кнопка во фрейме')&quot;>Кнопка во фрейме</button>" style="height:50px"></iframe>
+  <template><button>Шаблон не виден</button></template>
+  <!-- комментарий не виден -->
+  <div inert><button onclick="log('не должно')">Неактивная кнопка</button></div>
+</section>
+
+<div style="height: 300px"></div>
+<button id="under" onclick="log('под баннером')">Купить под баннером</button>
+<div id="banner">Мы используем cookies <button onclick="document.getElementById('banner').remove(); log('cookies приняты')">Принять</button></div>
+
+<script>
+  function log(text) { document.getElementById("log").textContent = text; }
+  customElements.define("x-card", class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<div>Карточка: <slot name='action'></slot></div>"; }
+  });
+  // A virtualized feed: only the rows in view exist in the DOM.
+  const feed = document.getElementById("feed");
+  const inner = document.createElement("div");
+  inner.style.height = 100 * 30 + "px";
+  inner.style.position = "relative";
+  feed.appendChild(inner);
+  function render() {
+    const first = Math.floor(feed.scrollTop / 30);
+    inner.innerHTML = "";
+    for (let i = first; i < Math.min(100, first + 7); i++) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.style.position = "absolute";
+      row.style.top = i * 30 + "px";
+      row.innerHTML = "Товар " + (i + 1) + " <button>Выбрать</button>";
+      row.querySelector("button").onclick = () => log("выбран товар " + (i + 1));
+      inner.appendChild(row);
+    }
+  }
+  feed.addEventListener("scroll", render);
+  render();
+</script>
+</body>
+</html>

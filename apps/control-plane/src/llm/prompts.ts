@@ -17,7 +17,12 @@ Rules:
 - A check's text is words a person sees on the page (a heading, a message, a field's value, a button's name),
   never the list's own notation: write Option 2, not value="Option 2".
 - decision "fail" with a reason when the goal cannot be reached (login wall, captcha, missing product…).
-- Do not navigate by typing addresses; move through the site like a person.`;
+- Do not navigate by typing addresses; move through the site like a person.
+- Actions: click, dblclick, rightclick (a context menu), hover (menus that open on hover; the menu items appear
+  on the next look), fill, select (a <select>), upload (a file input; value is the file input's placeholder),
+  press (a key), scroll (more of a list or the page; only to look further down, it is not a step of the result).
+- If the last action failed because something covers the element (a cookie banner, a dialog), deal with that
+  first (accept, close) and then retry.`;
 
 export const recordSchema = {
   type: "object",
@@ -31,9 +36,9 @@ export const recordSchema = {
       additionalProperties: false,
       required: ["kind", "intent", "mutating"],
       properties: {
-        kind: { type: "string", enum: ["click", "fill", "select", "press"] },
+        kind: { type: "string", enum: ["click", "dblclick", "rightclick", "hover", "fill", "select", "upload", "press", "scroll"] },
         ref: { type: "string", description: "Element ref for click, fill and select." },
-        value: { type: "string", description: "fill/select: value or {{input.name}}; press: key name such as Enter." },
+        value: { type: "string", description: "fill/select: value or {{input.name}}; upload: {{input.<file input>}}; press: key name such as Enter." },
         intent: { type: "string" },
         mutating: { type: "boolean" },
       },
@@ -54,7 +59,7 @@ export const recordSchema = {
 export interface RecordDecision {
   thought: string;
   decision: "act" | "done" | "fail";
-  action?: { kind: "click" | "fill" | "select" | "press"; ref?: string; value?: string; intent: string; mutating: boolean };
+  action?: { kind: "click" | "dblclick" | "rightclick" | "hover" | "fill" | "select" | "upload" | "press" | "scroll"; ref?: string; value?: string; intent: string; mutating: boolean };
   previousCheck?: { text?: string; url?: string };
   result?: { text?: string; url?: string };
   reason?: string;

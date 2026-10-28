@@ -44,6 +44,8 @@ export interface SnapshotElement {
 
 export interface PageSnapshot {
   url: string;
+  /** The page itself can scroll further down (more content below the viewport). */
+  canScrollDown?: boolean;
   title: string;
   viewport: { width: number; height: number };
   elements: SnapshotElement[];
@@ -63,6 +65,8 @@ export interface NodeHandle {
 export interface Snapshot {
   page: PageSnapshot;
   handles: Map<string, NodeHandle>;
+  /** Visible containers with their own scrolling (lists, feeds) that are not scrolled to the end. */
+  scrollables: NodeHandle[];
   /** Detaches the CDP sessions behind the handles. */
   dispose(): Promise<void>;
 }
@@ -115,7 +119,7 @@ interface RawDocument {
     contentDocumentIndex?: { index: number[]; value: number[] };
     isClickable?: { index: number[] };
   };
-  layout: { nodeIndex: number[]; styles: number[][]; bounds: number[][]; clientRects?: number[][] };
+  layout: { nodeIndex: number[]; styles: number[][]; bounds: number[][]; clientRects?: number[][]; scrollRects?: number[][] };
 }
 interface AxNode {
   ignored: boolean;
@@ -135,7 +139,7 @@ interface PlacedDocument {
   top: boolean;
 }
 
-const STYLES = ["visibility", "opacity", "display"];
+const STYLES = ["visibility", "opacity", "display", "overflow-y"];
 
 /**
  * Builds a snapshot through CDP only (DOMSnapshot + Accessibility): nothing runs in the page's main world
@@ -175,9 +179,11 @@ export async function captureSnapshot(page: Page, opts: SnapshotOptions = {}): P
       const raw = (await session.send("DOMSnapshot.captureSnapshot", { computedStyles: STYLES, includeDOMRects: true })) as unknown as RawSnapshot;
       placeDocuments(session, raw, offset, [{ session: parentSession, backendNodeId: owner.backendNodeId }, ...(parent?.owners ?? [])], placed, false);
     }
-    const metrics = (await main.send("Page.getLayoutMetrics")) as { cssLayoutViewport: { clientWidth: number; clientHeight: number } };
+    const metrics = (await main.send("Page.getLayoutMetrics")) as { cssLayoutViewport: { clientWidth: number; clientHeight: number; pageY: number }; cssContentSize: { height: number } };
     const viewport = { width: metrics.cssLayoutViewport.clientWidth, height: metrics.cssLayoutViewport.clientHeight };
-    return { ...(await buildSnapshot(page.url(), viewport, placed, opts)), dispose };
+    const built = await buildSnapshot(page.url(), viewport, placed, opts);
+    built.page.canScrollDown = metrics.cssLayoutViewport.pageY + viewport.height < metrics.cssContentSize.height - 2;
+    return { ...built, dispose };
   } catch (e) {
     await dispose();
     throw e;
@@ -218,6 +224,7 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
   const mask = (s: string) => secrets.reduce((acc, secret) => acc.split(secret).join(MASK), s);
   const elements: SnapshotElement[] = [];
   const handles = new Map<string, NodeHandle>();
+  const scrollables: NodeHandle[] = [];
   const pageText: string[] = [];
   const raw: { order: number; element: SnapshotElement; handle: NodeHandle }[] = [];
   let order = 0;
@@ -249,7 +256,8 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       if (p.top) return "";
       try {
         const u = new URL(s(doc.documentURL));
-        return `${u.origin}${u.pathname}`;
+        // about:srcdoc and about:blank frames have no origin: their address is the whole URL.
+        return u.origin === "null" ? `${u.protocol}${u.pathname}` : `${u.origin}${u.pathname}`;
       } catch {
         return s(doc.documentURL);
       }
@@ -295,8 +303,8 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
     const style = (i: number) => {
       const li = layoutOf.get(i);
       if (li === undefined) return null;
-      const [visibility, opacity] = (doc.layout.styles[li] ?? []).map((v) => s(v));
-      return { visibility, opacity, bounds: doc.layout.bounds[li]! };
+      const [visibility, opacity, , overflowY] = (doc.layout.styles[li] ?? []).map((v) => s(v));
+      return { visibility, opacity, overflowY, bounds: doc.layout.bounds[li]!, client: doc.layout.clientRects?.[li], scroll: doc.layout.scrollRects?.[li] };
     };
     const transparent = new Uint8Array(count);
     for (let i = 0; i < count; i++) {
@@ -362,6 +370,37 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       return "";
     };
 
+    // `inert` subtrees are shown but cannot be used.
+    const inert = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+      const parent = n.parentIndex[i]!;
+      if (parent >= 0) inert[i] = inert[parent]!;
+      if (n.nodeType[i] === 1 && "inert" in attrs(i)) inert[i] = 1;
+    }
+    /** What an icon says: an SVG <title>, or aria-label / title / alt below the element. */
+    const iconLabel = (i: number, depth = 0): string => {
+      for (const c of children[i]!) {
+        if (n.nodeType[c] !== 1) continue;
+        if (tag(c) === "title" && depth > 0) return collapse(children[c]!.map((x) => s(n.nodeValue[x])).join(" "));
+        const a = attrs(c);
+        const own = a["aria-label"] || a.title || a.alt;
+        if (own) return collapse(own);
+        if (depth < 4) {
+          const deeper = iconLabel(c, depth + 1);
+          if (deeper) return deeper;
+        }
+      }
+      return "";
+    };
+    // Lists and feeds that scroll on their own and are not at their end: a target may be further down.
+    for (let i = 0; i < count; i++) {
+      const st = n.nodeType[i] === 1 && !hidden[i] ? style(i) : null;
+      if (!st || !["auto", "scroll"].includes(st.overflowY ?? "") || !isVisible(i) || ["html", "body"].includes(tag(i))) continue;
+      const [, top = 0, , height = 0] = st.scroll ?? [];
+      const clientHeight = st.client?.[3] ?? 0;
+      if (height - top - clientHeight > 2) scrollables.push({ session: p.session, backendNodeId: n.backendNodeId[i]!, frameId: p.doc.frameId >= 0 ? s(p.doc.frameId) : "", owners: p.owners });
+    }
+
     for (let i = 0; i < count; i++) {
       if (n.nodeType[i] !== 1 || hidden[i]) continue;
       const t = tag(i);
@@ -370,13 +409,16 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       const node = ax.get(n.backendNodeId[i]!);
       const axRole = node && !node.ignored ? (node.role?.value ?? "") : "";
       const formField = (t === "input" && a.type !== "hidden") || t === "select" || t === "textarea" || t === "button";
+      const icon = clickable.has(i) && text[i]!.length === 0 ? iconLabel(i) : "";
       const interactive =
-        formField ||
-        (t === "a" && "href" in a) ||
-        INTERACTIVE_ROLES.has(axRole) ||
-        (clickable.has(i) && text[i]!.length > 0 && text[i]!.length <= 80) ||
-        (a.tabindex !== undefined && a.tabindex !== "-1") ||
-        a.contenteditable === "true";
+        !inert[i] &&
+        (formField ||
+          (t === "a" && "href" in a) ||
+          INTERACTIVE_ROLES.has(axRole) ||
+          (clickable.has(i) && text[i]!.length > 0 && text[i]!.length <= 80) ||
+          icon !== "" ||
+          (a.tabindex !== undefined && a.tabindex !== "-1") ||
+          a.contenteditable === "true");
       const heading = /^h[1-6]$/.test(t) || axRole === "heading";
       const textual = !interactive && (heading || axRole === "alert" || axRole === "status" || (own[i]!.length > 0 && own[i]!.length <= 200));
       if (!interactive && !textual) continue;
@@ -385,7 +427,7 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
 
       const bounds = style(i)?.bounds ?? [0, 0, 0, 0];
       const states: string[] = [];
-      if ("disabled" in a) states.push("disabled");
+      if ("disabled" in a || inert[i]) states.push("disabled");
       if (checked.has(i)) states.push("checked");
       if (selected.has(i)) states.push("selected");
       if ("required" in a) states.push("required");
@@ -405,10 +447,10 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       let value = chosen !== undefined ? collapse(text[chosen]!) : (inputValue.get(i) ?? textValue.get(i));
       if (value !== undefined) value = isPassword && value ? MASK : mask(cut(value, 200));
       const options = t === "select" ? children[i]!.filter((c) => tag(c) === "option").map((c) => mask(collapse(text[c]!))) : undefined;
-      const name = mask(cut(collapse(node?.name?.value ?? ""), 120));
+      const name = mask(cut(collapse(node?.name?.value || icon), 120));
       const element: SnapshotElement = {
         ref: "",
-        role: heading ? "heading" : axRole && axRole !== "generic" && axRole !== "none" && axRole !== "StaticText" ? axRole : interactive ? defaultRole(t, a) : "text",
+        role: heading ? "heading" : axRole && axRole !== "generic" && axRole !== "none" && axRole !== "StaticText" ? axRole : interactive ? (icon ? "button" : defaultRole(t, a)) : "text",
         name,
         tag: t,
         text: mask(cut(text[i]!, 120)),
@@ -451,6 +493,7 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       text: mask(cut(pageText.join(" "), 50_000)),
     },
     handles,
+    scrollables,
   };
 }
 

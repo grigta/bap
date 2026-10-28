@@ -6,6 +6,7 @@
 // consent in a cross-origin iframe, pickup in a same-origin iframe) → "Оформить заказ" (mutating) → order page.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const port = Number(process.env.PORT ?? 4320);
 let layout = { seed: Number(process.env.SEED ?? 1), wording: 0, failOrder: false };
@@ -228,6 +229,7 @@ createServer(async (req, res) => {
     const s = shaper("order");
     return send(res, 200, doc(`Заказ №${order.id} ${W().done}`, s.wrap(`<p class="${s.cls()}">Доставка: ${esc(order.delivery)}, ${esc(order.address)}</p>`), s));
   }
+  if (route === "GET /zoo") return send(res, 200, readFileSync(new URL("./zoo.html", import.meta.url), "utf8"));
   if (route === "GET /help") return send(res, 200, doc("Помощь", "<p>Пишите в поддержку.</p>", shaper("help")));
   if (route === "GET /consent-frame") return send(res, 200, consentFrame(url.searchParams.get("sid") ?? ""));
   if (route === "POST /consent") {

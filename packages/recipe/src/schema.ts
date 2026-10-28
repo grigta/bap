@@ -37,8 +37,10 @@ export const postconditionSchema = z
   })
   .refine((p) => p.url !== undefined || p.text !== undefined || p.request !== undefined, "a postcondition needs url, text or request");
 
-export const RECIPE_ACTIONS = ["click", "fill", "select", "press", "navigate", "wait", "extract"] as const;
-const TARGETED = new Set(["click", "fill", "select", "extract"]);
+export const RECIPE_ACTIONS = ["click", "dblclick", "rightclick", "hover", "fill", "select", "upload", "press", "navigate", "wait", "extract"] as const;
+const TARGETED = new Set(["click", "dblclick", "rightclick", "hover", "fill", "select", "upload", "extract"]);
+/** Actions that need nothing but their target. */
+const POINTER = new Set(["click", "dblclick", "rightclick", "hover"]);
 
 export const recipeStepSchema = z
   .object({
@@ -48,8 +50,8 @@ export const recipeStepSchema = z
     action: z.enum(RECIPE_ACTIONS),
     target: fingerprintSchema.optional(),
     /**
-     * fill/select: the value template ("{{input.name}}"); press: the key; navigate: the URL template;
-     * wait: milliseconds; extract: the output name.
+     * fill/select: the value template ("{{input.name}}"); upload: a file path on the Mac (template);
+     * press: the key; navigate: the URL template; wait: milliseconds; extract: the output name.
      */
     value: z.string().optional(),
     /** Changes site data: never repeated blindly, proven by its postcondition. */
@@ -58,8 +60,8 @@ export const recipeStepSchema = z
     /** Screenshot taken while recording (artifact name of the recording run). */
     screenshot: z.string().optional(),
   })
-  .refine((s) => !TARGETED.has(s.action) || s.target !== undefined, "click, fill, select and extract need a target")
-  .refine((s) => s.action === "click" || s.value !== undefined, "this action needs a value")
+  .refine((s) => !TARGETED.has(s.action) || s.target !== undefined, "this action needs a target")
+  .refine((s) => POINTER.has(s.action) || s.value !== undefined, "this action needs a value")
   .refine((s) => !s.mutating || s.postcondition !== undefined, "a mutating step needs a postcondition to prove its effect");
 
 export const recipeInputSchema = z.object({

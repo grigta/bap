@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { type PageSnapshot, type Resolution, type Snapshot, act, captureSnapshot, pageHasText, renderFingerprint, renderTemplate, resolve, settle } from "@bap/dom-snapshot";
+import { type ElementAction, type PageSnapshot, type Resolution, type Snapshot, act, captureSnapshot, pageHasText, renderFingerprint, renderTemplate, resolve, scrollFurther, settle } from "@bap/dom-snapshot";
 import { type Step, type StepContext, defineScenario } from "@bap/scenario-sdk";
 import { z } from "zod";
 import { type SeenRequest, navigation, watchChanges } from "./record.ts";
@@ -40,6 +40,17 @@ interface RecipeState {
 
 export class RecipeStepError extends Error {}
 
+/** How many wheel turns a target is looked for further down before it counts as missing. */
+const MAX_SCROLL_TURNS = 60;
+
+/** The browser action of a recipe step on its target. */
+export function elementAction(action: RecipeStep["action"], value: string): ElementAction {
+  if (action === "fill" || action === "select") return { kind: action, value };
+  if (action === "upload") return { kind: "upload", files: value.split("\n").filter(Boolean) };
+  if (action === "dblclick" || action === "rightclick" || action === "hover") return { kind: action };
+  return { kind: "click" };
+}
+
 type Ctx = StepContext<Record<string, unknown>, RecipeState>;
 
 /**
@@ -64,8 +75,17 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
   const locate = async (ctx: Ctx, step: RecipeStep): Promise<{ snap: Snapshot; ref: string; score: number } | { snap: Snapshot; reason: HealReason; detail: string }> => {
     const fp = renderFingerprint(step.target!, ctx.input);
     let found: Resolution | null = null;
-    const { snap } = await settle(ctx.page, { secrets: secretsOf(ctx), deadline: ctx.deadline, until: (s) => (found = resolve(fp, s.page)).kind === "found" });
-    const result = found ?? resolve(fp, snap.page);
+    const look = () => settle(ctx.page, { secrets: secretsOf(ctx), deadline: ctx.deadline, until: (s) => (found = resolve(fp, s.page)).kind === "found" });
+    let { snap } = await look();
+    let result = found ?? resolve(fp, snap.page);
+    // Not found, or only look-alikes (other rows of a list): the right one may be further down.
+    for (let turn = 0; result.kind !== "found" && turn < MAX_SCROLL_TURNS && (ctx.deadline === undefined || Date.now() < ctx.deadline); turn++) {
+      if (!(await scrollFurther(ctx.page, snap))) break;
+      await snap.dispose();
+      found = null;
+      ({ snap } = await look());
+      result = found ?? resolve(fp, snap.page);
+    }
     if (result.kind === "found") return { snap, ref: result.ref, score: result.score };
     const detail =
       result.kind === "missing"
@@ -145,7 +165,7 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
         return;
       }
       const value = renderTemplate(step.value ?? "", ctx.input);
-      await act(ctx.page, handle, step.action === "fill" ? { kind: "fill", value } : step.action === "select" ? { kind: "select", value } : { kind: "click" });
+      await act(ctx.page, handle, elementAction(step.action, value));
     } finally {
       await located.snap.dispose();
     }
@@ -168,7 +188,7 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
       try {
         const healed = await heal(ctx, step, snap, "postcondition", "postcondition did not hold after the action");
         ctx.annotate?.({ resolution: "healed", note: healed.note });
-        await act(ctx.page, healed.handle, step.action === "fill" || step.action === "select" ? { kind: step.action, value: renderTemplate(step.value ?? "", ctx.input) } : { kind: "click" });
+        await act(ctx.page, healed.handle, elementAction(step.action, renderTemplate(step.value ?? "", ctx.input)));
       } finally {
         await snap.dispose();
       }

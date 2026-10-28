@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { type PageSnapshot, ActionError, act, renderTemplate, settle } from "@bap/dom-snapshot";
+import { type PageSnapshot, ActionError, act, renderTemplate, scrollFurther, settle } from "@bap/dom-snapshot";
+import { elementAction } from "./interpret.ts";
 import type { Page } from "playwright-core";
 
 /** The server's answer to an observation during a recording (REQ-DOM-004). */
@@ -8,7 +9,8 @@ export type RecordDecision =
       type: "act";
       stepId: string;
       intent: string;
-      action: "click" | "fill" | "select" | "press";
+      /** scroll is exploration while recording (a list further down); it never becomes a recipe step. */
+      action: "click" | "dblclick" | "rightclick" | "hover" | "fill" | "select" | "upload" | "press" | "scroll";
       /** Element of the observed snapshot; none for press. */
       ref?: string;
       /** Template: {{input.key}} is filled in here, on the agent; secrets never travel back. */
@@ -26,7 +28,7 @@ export interface Observation {
   snapshot: PageSnapshot;
   screenshot: Buffer;
   /** Outcome of the previous action; null before the first one. */
-  last: { ok: boolean; error?: string; requests?: SeenRequest[] } | null;
+  last: { ok: boolean; action?: string; error?: string; requests?: SeenRequest[] } | null;
 }
 
 /** A request that changes data (not GET) and its answer, seen while the page settled after an action. */
@@ -141,14 +143,16 @@ export async function recordTask(opts: RecordOptions): Promise<RecordOutcome> {
       const value = renderTemplate(decision.value ?? "", opts.input);
       try {
         if (decision.action === "press") await page.keyboard.press(value);
-        else {
+        else if (decision.action === "scroll") {
+          if (!(await scrollFurther(page, snap))) throw new ActionError("nothing further down to scroll to");
+        } else {
           const handle = decision.ref ? snap.handles.get(decision.ref) : undefined;
           if (!handle) throw new ActionError(`element ${decision.ref} is not on the page`);
-          await act(page, handle, decision.action === "click" ? { kind: "click" } : { kind: decision.action, value });
+          await act(page, handle, elementAction(decision.action, value));
         }
-        last = { ok: true };
+        last = { ok: true, action: decision.action };
       } catch (e) {
-        last = { ok: false, error: e instanceof Error ? e.message : String(e) };
+        last = { ok: false, action: decision.action, error: e instanceof Error ? e.message : String(e) };
       }
       await opts.onStep({
         sequence,

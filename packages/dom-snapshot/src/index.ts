@@ -1,4 +1,4 @@
-export { ActionError, type ElementAction, act } from "./act.ts";
+export { ActionError, type ElementAction, act, scrollFurther } from "./act.ts";
 export {
   type Candidate, DEFAULT_MARGIN, DEFAULT_THRESHOLD, type Fingerprint, type Resolution, type ResolveOptions,
   fingerprintOf, pageHasText, renderFingerprint, renderTemplate, resolve, score, similarity, templatize, words,
