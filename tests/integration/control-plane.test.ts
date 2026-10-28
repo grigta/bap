@@ -113,7 +113,9 @@ test("[REQ-API-001] the generated Postman collection runs in Newman against a li
   const cookie = sessionCookie(await login()).value;
   const { token } = (await app.inject({ method: "POST", url: "/api/v1/auth/tokens", cookies: { bap_session: cookie }, payload: { name: "newman" } })).json();
 
-  const collection = await buildPostmanCollection(buildApp({ db, store: memoryStore() }));
+  const described = buildApp({ db, store: memoryStore() });
+  const collection = await buildPostmanCollection(described);
+  await described.close();
   const summary = await new Promise<newman.NewmanRunSummary>((resolve, reject) =>
     newman.run(
       {
