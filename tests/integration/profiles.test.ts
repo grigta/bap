@@ -141,6 +141,37 @@ describe("verification", () => {
   });
 });
 
+describe("deleting", () => {
+  test("[REQ-DB-002] a profile not in use is removed from the panel, its history stays, and it can be imported again", async () => {
+    const del = (id: string) => app.inject({ method: "DELETE", url: `/api/v1/profiles/${id}`, cookies: { bap_session: cookie } });
+    const insert = (external: string, status: "AVAILABLE" | "IN_USE" | "DISABLED") =>
+      db.insertInto("profiles").values({ provider: "local-chromium", external_profile_id: external, name: external, agent_id: agentId, status }).returning("id").executeTakeFirstOrThrow();
+
+    // In use: refused, the browser may still be running on it.
+    const busy = await insert("del-busy", "IN_USE");
+    expect((await del(busy.id)).json().error.code).toBe("PROFILE_IN_USE");
+
+    // A run still waiting for it: refused, the run would wait forever.
+    const waited = await insert("del-waited", "AVAILABLE");
+    await db.insertInto("scenarios").values({ id: "del-scenario" }).onConflict((oc) => oc.doNothing()).execute();
+    await db.insertInto("scenario_versions").values({ scenario_id: "del-scenario", version: "1.0.0", sha256: "x", bundle_key: "x" }).onConflict((oc) => oc.doNothing()).execute();
+    const run = await db.insertInto("runs").values({ scenario_id: "del-scenario", scenario_version: "1.0.0", profile_id: waited.id, agent_id: agentId, input: "{}", timeout_ms: 1000 }).returning("id").executeTakeFirstOrThrow();
+    expect((await del(waited.id)).json().error.code).toBe("PROFILE_IN_USE");
+    await db.updateTable("runs").set({ status: "CANCELLED" }).where("id", "=", run.id).execute();
+
+    // Disabled or finished with: gone from the panel, kept for the run that used it.
+    for (const id of [waited.id, (await insert("del-disabled", "DISABLED")).id]) {
+      expect((await app.inject({ method: "DELETE", url: `/api/v1/profiles/${id}` })).statusCode).toBe(401);
+      expect((await del(id)).statusCode).toBe(204);
+      expect((await api("GET", "/api/v1/profiles")).json().map((p: { id: string }) => p.id)).not.toContain(id);
+      expect((await del(id)).statusCode).toBe(404);
+    }
+    expect((await api("GET", `/api/v1/runs/${run.id}`)).json()).toMatchObject({ profileId: waited.id, status: "CANCELLED" });
+    // The same provider profile can be imported again.
+    await insert("del-disabled", "AVAILABLE");
+  });
+});
+
 describe("agent offline", () => {
   test("[REQ-PROF-005] when the agent goes OFFLINE the profile keeps its status but stops being assignable", async () => {
     const id = (await api("GET", "/api/v1/profiles")).json().find((p: { externalProfileId: string }) => p.externalProfileId === "shop-2").id;

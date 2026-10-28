@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { UserRound, WifiOff } from "lucide-react";
 import { useState } from "react";
+import { useConfirm } from "@/components/confirm";
 import { type Column, DataTable, columns } from "@/components/data-table";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
@@ -84,12 +85,29 @@ function Import() {
 
 export function ProfilesPage() {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const profiles = useQuery({ queryKey: ["profiles"], queryFn: () => api<Profile[]>("/profiles"), refetchInterval: POLL_MS });
   const act = useMutation({
     mutationFn: ({ id, action }: { id: string; action: Action }) => api(`/profiles/${id}/${action}`, { method: "POST" }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["profiles"] }),
     onError: notifyError("Действие с профилем"),
   });
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/profiles/${id}`, { method: "DELETE" }),
+    onSettled: () => queryClient.invalidateQueries(),
+    onError: notifyError("Удаление профиля"),
+  });
+  const removeProfile = async (p: Profile) => {
+    if (
+      await confirm({
+        title: `Удалить профиль ${p.name}?`,
+        description: "Профиль исчезнет из панели, в Linken Sphere ничего не удаляется. История заданий и скриншоты сохранятся, профиль можно будет импортировать снова.",
+        action: "Удалить",
+        destructive: true,
+      })
+    )
+      remove.mutate(p.id);
+  };
 
   const c = columns<Profile>();
   const cols: Column<Profile>[] = [
@@ -157,6 +175,11 @@ export function ProfilesPage() {
                 {a.label}
               </Button>
             ))}
+            {!["RESERVED", "IN_USE", "VERIFYING"].includes(p.status) && (
+              <Button size="xs" variant="destructive" onClick={() => removeProfile(p)}>
+                Удалить
+              </Button>
+            )}
           </div>
         );
       },

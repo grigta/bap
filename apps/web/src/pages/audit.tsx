@@ -24,6 +24,7 @@ const ACTIONS: Record<string, string> = {
   "POST /api/v1/agents/:id/activate": "Activate агента",
   "POST /api/v1/agents/:id/revoke": "Revoke агента",
   "DELETE /api/v1/agents/:id": "Удаление агента",
+  "DELETE /api/v1/profiles/:id": "Удаление профиля",
   "POST /api/v1/agents/:id/rotate-key": "Ротация ключа (запрос)",
   "agent key rotated": "Ротация ключа (агент сменил ключ)",
   "POST /api/v1/agents/me/key": "Смена ключа агентом",

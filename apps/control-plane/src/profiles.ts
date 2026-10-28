@@ -144,6 +144,27 @@ export function registerProfiles(app: App, db: Db, fleet: Fleet, config: FleetCo
     return profile ?? sendError(reply, request, 404, "NOT_FOUND", "Profile not found");
   });
 
+  // Removing a profile from the panel: its rows stay for the runs that used it (REQ-DB-002), and the
+  // provider profile can be imported again. Not while a browser may hold it or a run still waits for it.
+  app.delete(
+    "/api/v1/profiles/:id",
+    { preHandler: operatorAuth, schema: { params: idParams, response: { 204: z.null(), ...responses, 409: errorSchema } } },
+    async (request, reply) => {
+      const profile = await db.selectFrom("profiles").select(["id", "status"]).where("id", "=", request.params.id).where("archived_at", "is", null).executeTakeFirst();
+      if (!profile) return sendError(reply, request, 404, "NOT_FOUND", "Profile not found");
+      const waiting = await db
+        .selectFrom("runs")
+        .select("id")
+        .where("profile_id", "=", profile.id)
+        .where("status", "not in", ["SUCCEEDED", "FAILED", "CANCELLED", "NEEDS_REVIEW"])
+        .executeTakeFirst();
+      if (["RESERVED", "IN_USE", "VERIFYING"].includes(profile.status) || waiting)
+        return sendError(reply, request, 409, "PROFILE_IN_USE", waiting ? `Run ${waiting.id} still waits for this profile: cancel it first` : `The profile is ${profile.status}: wait until it is released`);
+      await db.updateTable("profiles").set({ archived_at: new Date() }).where("id", "=", profile.id).execute();
+      return reply.code(204).send(null);
+    },
+  );
+
   app.post("/api/v1/profiles/:id/verify", { preHandler: operatorAuth, schema: { params: idParams, response: { 202: profileSchema, ...responses } } }, (request, reply) =>
     startVerify(request, reply, request.params.id, ["AVAILABLE", "NEEDS_REVIEW"], "verify"),
   );
