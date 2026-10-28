@@ -159,9 +159,10 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
   };
 
   const checking = new Set<string>();
+  let stopped = false;
   /** VERIFYING after a run: the owner agent confirms the browser let go of the profile (ADR-0008). */
   const verifyReleased = async (profileId: string) => {
-    if (checking.has(profileId)) return;
+    if (checking.has(profileId) || stopped) return;
     const lease = await db
       .selectFrom("profile_leases")
       .innerJoin("profiles", "profiles.id", "profile_leases.profile_id")
@@ -232,7 +233,6 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
 
   // Ticks are serialized: the capacity count and reservations assume one scheduler pass at a time.
   let queue = Promise.resolve();
-  let stopped = false;
   const tick = () => (queue = queue.then(async () => {
     if (stopped) return; // e.g. a heartbeat arriving while the app shuts down
     await maintenance();
@@ -246,7 +246,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       // An unconfirmed change keeps the profile blocked until an operator looks at it.
       await moveProfile(db, run.profile_id, ["VERIFYING"], "NEEDS_REVIEW", { active_run_id: null, last_error: lastError });
       await db.deleteFrom("profile_leases").where("profile_id", "=", run.profile_id).execute();
-    } else void verifyReleased(run.profile_id).catch((e) => console.error("verify after run failed", e)); // never await an agent request inside its socket handler
+    } else void verifyReleased(run.profile_id).catch((e) => stopped || console.error("verify after run failed", e)); // never await an agent request inside its socket handler
     await db.updateTable("run_assignments").set({ status: "FINISHED", finished_at: new Date() }).where("run_id", "=", runId).execute();
   };
 
@@ -265,7 +265,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
         await db.updateTable("run_assignments").set({ status: "ACCEPTED", acknowledged_at: new Date() }).where("run_id", "=", runId).where("acknowledged_at", "is", null).execute();
         break;
       case "run.started":
-        await transitionRun(runId, ["ACCEPTED"], "RUNNING", "browser session started", { started_at: new Date() });
+        await transitionRun(runId, ["ACCEPTED"], "RUNNING", "agent started the scenario", { started_at: new Date() });
         break;
       case "run.progress": {
         const step = event.payload.step;
