@@ -201,9 +201,9 @@ describe("connection", () => {
     running.stop();
     expect(view).toMatchObject({ agentVersion: "0.1.0", maxSessions: 3, heartbeat: { activeSessions: 0, lsAvailable: false } });
     expect(view.heartbeat.memoryPercent).toBeGreaterThan(0);
-    // Power comes from pmset: a real reading on macOS, null elsewhere (CI runs on Linux).
+    // Power comes from pmset, read in the background: by the latest heartbeat a real reading on macOS; null elsewhere (CI runs on Linux).
     const power = process.platform === "darwin" ? { source: expect.stringMatching(/^(ac|battery|unknown)$/), batteryPercent: expect.toBeOneOf([null, expect.any(Number)]), charging: expect.toBeOneOf([null, expect.any(Boolean)]), sleepPrevented: expect.toBeOneOf([null, expect.any(Boolean)]) } : null;
-    expect(view.heartbeats[0]).toEqual({ cpuPercent: expect.any(Number), memoryPercent: expect.any(Number), lsAvailable: false, activeSessions: 0, power, at: expect.any(String) });
+    expect(view.heartbeats.at(-1)).toEqual({ cpuPercent: expect.any(Number), memoryPercent: expect.any(Number), lsAvailable: false, activeSessions: 0, power, at: expect.any(String) });
   });
 
   test("[REQ-SEC-005] revoking an agent closes its socket for good; re-registration grants nothing back", async () => {

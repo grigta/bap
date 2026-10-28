@@ -1,4 +1,5 @@
 import { type Db, type RunStatus, isDatabaseUnavailable } from "@bap/database";
+import { sql } from "kysely";
 import { type RunEvent, message } from "@bap/protocol";
 import { AgentRequestError, type Fleet, type FleetConfig, connection } from "./fleet.ts";
 import { moveProfile } from "./profile-states.ts";
@@ -207,7 +208,9 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       .where("runs.status", "=", "ASSIGNED")
       .where("run_assignments.acknowledged_at", "is", null)
       .where("run_assignments.finished_at", "is", null)
-      .where("run_assignments.assigned_at", "<", new Date(now.getTime() - config.acceptTimeoutMs))
+      // assigned_at comes from the database clock (DEFAULT now()), so its age is measured by the same clock:
+      // the Control Plane's clock may differ from the database server's by seconds.
+      .where("run_assignments.assigned_at", "<", sql<Date>`now() - make_interval(secs => ${config.acceptTimeoutMs / 1000})`)
       .execute();
     for (const r of stale) await unreserve(r.id, r.profile_id, `agent did not accept within ${config.acceptTimeoutMs} ms`);
 

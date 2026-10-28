@@ -1,5 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { platform } from "node:os";
+import { promisify } from "node:util";
 import type { PowerState } from "@bap/protocol";
 
 /**
@@ -20,11 +21,23 @@ export function parsePower(batt: string, settings: string): PowerState {
   };
 }
 
+const run = promisify(execFile);
+const REFRESH_MS = 30_000;
+let cached: { at: number; value: PowerState | null } | null = null;
+let refreshing = false;
+
+/**
+ * The last reading, refreshed in the background at most every 30 s: power changes slowly, and the
+ * heartbeat must not wait for (or block on) two pmset processes.
+ */
 export function readPower(): PowerState | null {
   if (platform() !== "darwin") return null;
-  try {
-    return parsePower(execFileSync("pmset", ["-g", "batt"], { encoding: "utf8" }), execFileSync("pmset", ["-g"], { encoding: "utf8" }));
-  } catch {
-    return null;
+  if (!refreshing && (!cached || Date.now() - cached.at > REFRESH_MS)) {
+    refreshing = true;
+    void Promise.all([run("pmset", ["-g", "batt"]), run("pmset", ["-g"])])
+      .then(([batt, settings]) => (cached = { at: Date.now(), value: parsePower(batt.stdout, settings.stdout) }))
+      .catch(() => (cached = { at: Date.now(), value: null }))
+      .finally(() => (refreshing = false));
   }
+  return cached?.value ?? null;
 }
