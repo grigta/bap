@@ -141,8 +141,10 @@ function report(list: Outcome[]): string {
     "",
     `Итого: записано ${ok.length} из ${list.length}; повторов без изменений вёрстки — ${list.flatMap((o) => o.replays).length}, вызовов модели в них — ${list.flatMap((o) => o.replays).reduce((n, r) => n + r.calls, 0)}.`,
     "",
-    ...list.flatMap((o) => [o.recorded.error, ...o.replays.map((r) => r.error)].filter(Boolean).map((e) => `- ${o.task}: ${e}`)),
-    "",
+    ...(() => {
+      const errors = list.flatMap((o) => [o.recorded.error, ...o.replays.map((r) => r.error)].filter(Boolean).map((e) => `- ${o.task}: ${String(e).replace(/\s+/g, " ")}`));
+      return errors.length ? [...errors, ""] : [];
+    })(),
     "Стоимость — оценка Claude Code (`total_cost_usd`); при подписке это не счёт, а условная величина.",
     "",
   ];
