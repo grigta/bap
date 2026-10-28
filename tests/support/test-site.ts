@@ -10,10 +10,10 @@ const freePort = () =>
     });
   });
 
-/** Starts tests/fixtures/test-site on a free port. */
-export async function startTestSite(): Promise<{ url: string; stop: () => Promise<void> }> {
+/** Starts tests/fixtures/test-site (or another fixture site) on a free port. */
+export async function startTestSite(site: "test-site" | "shapeshift-site" = "test-site"): Promise<{ url: string; stop: () => Promise<void> }> {
   const port = await freePort();
-  const proc: ChildProcess = spawn("node", [resolve(import.meta.dirname, "../fixtures/test-site/server.ts")], {
+  const proc: ChildProcess = spawn("node", [resolve(import.meta.dirname, `../fixtures/${site}/server.ts`)], {
     env: { ...process.env, PORT: String(port) },
     stdio: ["ignore", "pipe", "inherit"],
   });

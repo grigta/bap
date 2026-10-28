@@ -34,6 +34,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@bap/browser-adapters": "workspace:*",
     "@bap/database": "workspace:*",
+    "@bap/dom-snapshot": "workspace:*",
     "@bap/engine": "workspace:*",
     "@bap/mac-agent": "workspace:*",
     "@bap/protocol": "workspace:*",

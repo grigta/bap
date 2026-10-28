@@ -178,6 +178,9 @@ importers:
       '@bap/database':
         specifier: workspace:*
         version: link:packages/database
+      '@bap/dom-snapshot':
+        specifier: workspace:*
+        version: link:packages/dom-snapshot
       '@bap/engine':
         specifier: workspace:*
         version: link:packages/engine
@@ -405,6 +408,12 @@ importers:
       pg:
         specifier: ^8.23.1
         version: 8.23.1
+
+  packages/dom-snapshot:
+    dependencies:
+      playwright-core:
+        specifier: 1.64.1
+        version: 1.64.1
 
   packages/engine:
     dependencies:
