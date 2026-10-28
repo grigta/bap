@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_FLEET, STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -16,6 +16,7 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
   let agent: ChildProcess | undefined;
   try {
     await logIn(page);
+    await goTo(page, "Агенты");
     await page.getByRole("button", { name: "Пригласить агента" }).click();
     const token = (await page.getByTestId("invite-token").textContent())!;
     await evidence(page, "S3", "invite");
@@ -28,30 +29,32 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
 
     agent = spawnAgent(cli, env);
     const row = page.getByTestId("agent-e2e-mac");
-    await expect(row.locator(".badge").first()).toHaveText("ACTIVE", { timeout: 10_000 });
-    await expect(row.locator(".badge").nth(1)).toHaveText("ONLINE");
+    await expect(row.getByTestId("agent-status")).toHaveText("ACTIVE", { timeout: 10_000 });
+    await expect(row.getByTestId("agent-connection")).toHaveText("ONLINE");
     await expect(row).toContainText("с назад");
     await evidence(page, "S3", "agents-online");
 
-    await row.getByRole("button", { name: "e2e-mac" }).click();
+    await row.getByRole("link", { name: "e2e-mac" }).click();
     await expect(page.getByTestId("agent-card")).toContainText(/Последние [2-9]\d* heartbeat/, { timeout: 10_000 });
     await evidence(page, "S3", "agent-card");
+    await page.keyboard.press("Escape"); // the card is a side sheet over the table
+    await expect(page.getByTestId("agent-card")).toBeHidden();
 
     agent.kill("SIGSTOP");
-    await expect(row.locator(".badge").nth(1)).toHaveText("SUSPECT", { timeout: STACK_FLEET.suspectAfterMs + 4000 });
+    await expect(row.getByTestId("agent-connection")).toHaveText("SUSPECT", { timeout: STACK_FLEET.suspectAfterMs + 4000 });
     await evidence(page, "S3", "agents-suspect");
-    await expect(row.locator(".badge").nth(1)).toHaveText("OFFLINE", { timeout: STACK_FLEET.offlineAfterMs + 4000 });
+    await expect(row.getByTestId("agent-connection")).toHaveText("OFFLINE", { timeout: STACK_FLEET.offlineAfterMs + 4000 });
     await evidence(page, "S3", "agents-offline");
     agent.kill("SIGCONT");
-    await expect(row.locator(".badge").nth(1)).toHaveText("ONLINE", { timeout: 8000 });
+    await expect(row.getByTestId("agent-connection")).toHaveText("ONLINE", { timeout: 8000 });
 
     await row.getByRole("button", { name: "Drain" }).click();
-    await expect(row.locator(".badge").first()).toHaveText("DRAINING");
+    await expect(row.getByTestId("agent-status")).toHaveText("DRAINING");
 
     const exited = new Promise<number | null>((r) => agent!.once("exit", r));
-    page.once("dialog", (d) => d.accept());
     await row.getByRole("button", { name: "Revoke" }).click();
-    await expect(row.locator(".badge").first()).toHaveText("REVOKED");
+    await confirmDialog(page);
+    await expect(row.getByTestId("agent-status")).toHaveText("REVOKED");
     expect(await exited).toBe(0);
     await evidence(page, "S3", "agents-revoked");
   } finally {

@@ -15,5 +15,5 @@
     "types": ["node"]
   },
   "include": ["tools", "packages", "apps", "tests", "*.ts"],
-  "exclude": ["**/node_modules"]
+  "exclude": ["**/node_modules", "apps/web"]
 }

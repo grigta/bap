@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -34,24 +34,24 @@ test("operator sees one run per profile, waiting runs with their reason, slots a
   const runs = [];
   for (let i = 0; i < 4; i++) runs.push((await (await start("shared", 2500)).json()).runId as string);
 
-  await page.getByRole("button", { name: "Runs" }).click();
+  await goTo(page, "Задания");
   await expect(page.locator("td", { hasText: "PROFILE_BUSY" })).toHaveCount(3, { timeout: 10_000 });
   await evidence(page, "S6", "runs-one-per-profile");
-  await page.getByRole("button", { name: "Profiles" }).click();
-  await expect(page.getByTestId("profile-shared").locator(".badge").last()).toHaveText(/RESERVED|IN_USE/);
+  await goTo(page, "Профили");
+  await expect(page.getByTestId("profile-shared").getByTestId("profile-status")).toHaveText(/RESERVED|IN_USE/);
   await evidence(page, "S6", "profile-in-use");
-  await page.getByRole("button", { name: "Agents" }).click();
+  await goTo(page, "Агенты");
   await expect(page.getByTestId("agent-sched-mac").getByTestId("slots")).toHaveText("1 / 2");
   await evidence(page, "S6", "agent-slots");
 
   await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Drain" }).click();
-  await expect(page.getByTestId("agent-sched-mac").locator(".badge").first()).toHaveText("DRAINING");
+  await expect(page.getByTestId("agent-sched-mac").getByTestId("agent-status")).toHaveText("DRAINING");
   const drained = (await (await start("other", 100)).json()).runId as string;
-  await page.getByRole("button", { name: "Runs" }).click();
+  await goTo(page, "Задания");
   await expect(page.getByTestId(`run-${drained}`)).toContainText("AGENT_DRAINING", { timeout: 10_000 });
   await evidence(page, "S6", "runs-drained");
 
-  await page.getByRole("button", { name: "Agents" }).click();
+  await goTo(page, "Агенты");
   await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Activate" }).click();
   for (const id of [...runs, drained])
     await expect.poll(async () => (await (await page.request.get(`/api/v1/runs/${id}`)).json()).status, { timeout: 60_000 }).toBe("SUCCEEDED");

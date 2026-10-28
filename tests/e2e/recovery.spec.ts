@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -27,7 +27,7 @@ const crashAndRestart = async () => {
 };
 
 async function launch(page: Page, item: string) {
-  await page.getByRole("button", { name: "Runs" }).click();
+  await goTo(page, "Задания");
   await page.getByLabel("Сценарий").selectOption("wizard-order@1.1.0");
   await expect(page.getByLabel("Профиль").getByRole("option", { name: "rec-p", exact: true })).toBeEnabled({ timeout: 20_000 });
   await page.getByLabel("Профиль").selectOption({ label: "rec-p" });
@@ -60,8 +60,8 @@ test("[REQ-UI-004][REQ-UI-005] operator resumes a crashed run, cancels a running
   await setMode({});
   await expect(detail.getByTestId("run-status")).toHaveText("RECOVERY_PENDING", { timeout: 30_000 });
   await evidence(page, "S7", "recovery-pending");
-  page.once("dialog", (d) => d.accept());
   await detail.getByRole("button", { name: "Resume" }).click();
+  await confirmDialog(page);
   await expect(detail.getByTestId("run-status")).toHaveText("SUCCEEDED", { timeout: 60_000 });
   await expect(detail.getByTestId("transitions")).toContainText("resumed after checkpoint review");
   expect(await ordersFor(first)).toBe(1);
@@ -86,18 +86,18 @@ test("[REQ-UI-004][REQ-UI-005] operator resumes a crashed run, cancels a running
   await crashAndRestart();
   await setMode({ ambiguous: true });
   await expect(detail.getByTestId("run-status")).toHaveText("RECOVERY_PENDING", { timeout: 30_000 });
-  page.once("dialog", (d) => d.accept());
   await detail.getByRole("button", { name: "Resume" }).click();
+  await confirmDialog(page);
   await expect(detail.getByTestId("run-status")).toHaveText("NEEDS_REVIEW", { timeout: 60_000 });
   await setMode({});
   expect(await ordersFor(third)).toBe(1);
 
-  await page.getByRole("button", { name: "Review" }).click();
+  await goTo(page, "Проверка");
   const queued = page.getByTestId("review-profile-rec-p");
   await expect(queued).toContainText("interrupted mutating step");
   await evidence(page, "S7", "review-queue");
-  page.once("dialog", (d) => d.accept());
   await queued.getByRole("button", { name: "Release" }).click();
+  await confirmDialog(page);
   await expect(queued).toHaveCount(0);
   const profile = await (await page.request.get("/api/v1/profiles")).json();
   expect(profile.find((p: { name: string }) => p.name === "rec-p").status).toBe("AVAILABLE");

@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { type APIRequestContext, type Page, expect, test } from "@playwright/test";
 import { startFakeLinkenSphere } from "../support/fake-linken-sphere.ts";
 import { outageProxy } from "../support/outage-proxy.ts";
-import { killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_FLEET, STACK_PORTS, STACK_SCHEDULER } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -92,8 +92,8 @@ async function shot(page: Page, name: string) {
   await test.info().attach(name, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
 }
 async function openRun(page: Page, runId: string) {
-  await page.getByRole("button", { name: "Runs" }).click();
-  await page.getByTestId(`run-${runId}`).getByRole("button").first().click();
+  await goTo(page, "Задания");
+  await page.getByTestId(`run-${runId}`).getByRole("link").first().click();
   return page.getByTestId("run-detail");
 }
 const agentRow = (page: Page, name: string) => page.getByTestId(`agent-${name}`);
@@ -123,6 +123,7 @@ test.afterAll(async () => {
 
 test.beforeEach(async ({ page }) => {
   await logIn(page);
+  await goTo(page, "Агенты");
 });
 
 test("1. Потеря связи с Mac", async ({ page }) => {
@@ -134,17 +135,17 @@ test("1. Потеря связи с Mac", async ({ page }) => {
   const profileId = await newProfile(mac, "net-p");
   const runId = await startRun({ scenarioId: "slow-page", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site, ms: 9000 } });
   await waitRun(runId, ["RUNNING"]);
-  await expect(agentRow(page, mac.name).locator(".badge").nth(1)).toHaveText("ONLINE");
+  await expect(agentRow(page, mac.name).getByTestId("agent-connection")).toHaveText("ONLINE");
   await shot(page, "до: агент ONLINE");
 
   net.down();
-  await expect(agentRow(page, mac.name).locator(".badge").nth(1)).toHaveText("OFFLINE", { timeout: STACK_FLEET.offlineAfterMs + 4000 });
+  await expect(agentRow(page, mac.name).getByTestId("agent-connection")).toHaveText("OFFLINE", { timeout: STACK_FLEET.offlineAfterMs + 4000 });
   const during = (await runView(runId)).status;
   await shot(page, "обрыв: агент OFFLINE");
   await sleep(3000);
   net.up();
 
-  await expect(agentRow(page, mac.name).locator(".badge").nth(1)).toHaveText("ONLINE", { timeout: 20_000 });
+  await expect(agentRow(page, mac.name).getByTestId("agent-connection")).toHaveText("ONLINE", { timeout: 20_000 });
   const done = await waitRun(runId, ["SUCCEEDED", "FAILED", "NEEDS_REVIEW", "RECOVERY_PENDING"]);
   const steps = await (await api.get(`/api/v1/runs/${runId}/steps`)).json();
   const detail = await openRun(page, runId);
@@ -159,7 +160,7 @@ test("2. Перезапуск Control Plane", async ({ page }) => {
   test.setTimeout(120_000);
   fault("Останавливаем Control Plane и запускаем снова на той же базе.", "Панель показывает offline, затем online; история заданий и статусы те же; агенты переподключаются сами; новые задания выполняются.");
   const before = (await (await api.get("/api/v1/runs")).json()) as { id: string; status: string }[];
-  await page.getByRole("button", { name: "Runs" }).click();
+  await goTo(page, "Задания");
   await shot(page, "до: история заданий");
 
   await control("/control-plane/stop");
@@ -170,8 +171,8 @@ test("2. Перезапуск Control Plane", async ({ page }) => {
 
   const after = (await (await api.get("/api/v1/runs")).json()) as { id: string; status: string }[];
   expect(after.map((r) => `${r.id}:${r.status}`)).toEqual(before.map((r) => `${r.id}:${r.status}`));
-  await page.getByRole("button", { name: "Agents" }).click();
-  for (const name of [mac.name, lsMac.name]) await expect(agentRow(page, name).locator(".badge").nth(1)).toHaveText("ONLINE", { timeout: 20_000 });
+  await goTo(page, "Агенты");
+  for (const name of [mac.name, lsMac.name]) await expect(agentRow(page, name).getByTestId("agent-connection")).toHaveText("ONLINE", { timeout: 20_000 });
   const runId = await startRun({ scenarioId: "staging-smoke-test", scenarioVersion: "1.0.0", profileId: await newProfile(mac, "restart-p"), input: { baseUrl: site } });
   const done = await waitRun(runId, ["SUCCEEDED", "FAILED"]);
   await shot(page, "после: агенты снова ONLINE");
@@ -221,7 +222,7 @@ test("4. Аварийное завершение браузера", async ({ pag
   await expect(detail.getByTestId("run-status")).toHaveText(done.status, { timeout: 5000 });
   await shot(page, "после: задание с диагностикой");
   await expect.poll(async () => (await profileView(profileId)).status, { timeout: 20_000 }).toBe("AVAILABLE");
-  await page.getByRole("button", { name: "Profiles" }).click();
+  await goTo(page, "Профили");
   await shot(page, "профиль снова AVAILABLE");
   observed(`Убито процессов Chromium: ${killed.length}. Задание: ${done.status}, ${done.errorCode}: ${done.errorMessage}. Профиль: ${(await profileView(profileId)).status}; браузеров профиля: ${browsersFor(dir)}.`);
   expect(done).toMatchObject({ status: "FAILED", errorCode: "BROWSER_DISCONNECTED" });
@@ -235,16 +236,16 @@ test("5. Недоступность Local API", async ({ page }) => {
   await expect(row).toContainText("✓");
   await shot(page, "до: LS ✓");
   await ls.down();
-  await expect(row.locator("td").nth(5)).toHaveText("✗", { timeout: 10_000 });
+  await expect(row.getByTestId("agent-ls")).toHaveText("✗", { timeout: 10_000 });
   const runId = await startRun({ scenarioId: "staging-smoke-test", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site } });
   await sleep(2500);
   const waiting = await runView(runId);
-  await page.getByRole("button", { name: "Runs" }).click();
+  await goTo(page, "Задания");
   await shot(page, "API недоступен: LS ✗, задание в очереди");
   await ls.up();
   const done = await waitRun(runId, ["SUCCEEDED", "FAILED"]);
-  await page.getByRole("button", { name: "Agents" }).click();
-  await expect(row.locator("td").nth(5)).toHaveText("✓", { timeout: 10_000 });
+  await goTo(page, "Агенты");
+  await expect(row.getByTestId("agent-ls")).toHaveText("✓", { timeout: 10_000 });
   await shot(page, "после: LS ✓");
   observed(`Пока API недоступен: задание ${waiting.status}, причина ${waiting.queueReason}. После возврата: ${done.status} (${transitions(done)}).`);
   expect(waiting).toMatchObject({ status: "QUEUED", queueReason: "PROVIDER_UNAVAILABLE" });
@@ -268,8 +269,8 @@ test("6. Повторная доставка сообщений", async ({ page 
   const tos = done.transitions.map((t: { to: string }) => t.to);
   await openRun(page, runId);
   await shot(page, "задание: переходы без дублей");
-  await page.getByRole("button", { name: "Agents" }).click();
-  await agentRow(page, mac.name).getByRole("button", { name: mac.name }).click();
+  await goTo(page, "Агенты");
+  await agentRow(page, mac.name).getByRole("link", { name: mac.name }).click();
   await expect(page.getByTestId("duplicates")).toContainText(String(after));
   await shot(page, "карточка агента: отброшенные дубли");
   observed(`Отброшено повторов: ${after - before}. Переходы: ${tos.join(" → ")}; шагов: ${steps.length}.`);
@@ -296,9 +297,9 @@ test("7. Истечение lease при работающем браузере",
     const second = await startRun({ scenarioId: "staging-smoke-test", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site } });
     await sleep(3000);
     const [firstDuring, secondDuring, profileDuring] = [await runView(first), await runView(second), await profileView(profileId)];
-    await page.getByRole("button", { name: "Profiles" }).click();
+    await goTo(page, "Профили");
     await shot(page, "агент заморожен, lease истёк: профиль");
-    await page.getByRole("button", { name: "Runs" }).click();
+    await goTo(page, "Задания");
     await shot(page, "второе задание ждёт");
     process.kill(mac.process.pid!, "SIGCONT");
 
@@ -336,7 +337,7 @@ test("8. Неоднозначное действие", async ({ page }) => {
     await sleep(6000); // a retry, if there were one, would place a second order meanwhile
     await setMode({});
     const orders = await ordersFor(item);
-    await page.getByRole("button", { name: "Review" }).click();
+    await goTo(page, "Проверка");
     await expect(page.getByTestId(`review-run-${runId}`)).toBeVisible();
     await shot(page, "очередь Review");
     observed(`Задание: ${done.status} (${done.errorCode}: ${done.errorMessage?.slice(0, 120)}); профиль: ${(await profileView(profileId)).status}; заказов с этим товаром: ${orders}.`);
@@ -359,7 +360,6 @@ test("9. Отмена во время шага, изменяющего данн�
     await expect.poll(() => ordersFor(item), { timeout: 30_000 }).toBe(1); // the site took the order; the browser still waits
     const detail = await openRun(page, runId);
     await shot(page, "до: шаг оформления выполняется");
-    page.once("dialog", (d) => d.accept());
     await detail.getByRole("button", { name: "Cancel" }).click();
     const done = await waitRun(runId, ["CANCELLED", "SUCCEEDED", "FAILED", "NEEDS_REVIEW"]);
     const steps = (await (await api.get(`/api/v1/runs/${runId}/steps`)).json()) as { stepId: string; status: string }[];

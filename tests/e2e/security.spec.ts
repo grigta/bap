@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -30,6 +30,7 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
   let agent: ChildProcess | undefined;
   try {
     await logIn(page);
+    await goTo(page, "Агенты");
 
     // 1. An expired invitation is refused.
     const expired = await invite();
@@ -46,10 +47,10 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
     const oldKey = JSON.parse(readFileSync(join(data, "agent.json"), "utf8")).agentKey as string;
     agent = spawnAgent(cli, env);
     const row = page.getByTestId(`agent-${name}`);
-    await expect(row.locator(".badge").nth(1)).toHaveText("ONLINE", { timeout: 15_000 });
+    await expect(row.getByTestId("agent-connection")).toHaveText("ONLINE", { timeout: 15_000 });
     await row.getByRole("button", { name: "Rotate key" }).click();
     await expect.poll(() => JSON.parse(readFileSync(join(data, "agent.json"), "utf8")).agentKey, { timeout: 10_000 }).not.toBe(oldKey);
-    await expect(row.locator(".badge").nth(1)).toHaveText("ONLINE", { timeout: 10_000 });
+    await expect(row.getByTestId("agent-connection")).toHaveText("ONLINE", { timeout: 10_000 });
     expect((await fetch(`${server}/api/v1/agents/me/key`, { method: "POST", headers: { authorization: `Bearer ${oldKey}` } })).status).toBe(401);
     await evidence(page, "S8", "3-key-rotated");
 
@@ -61,8 +62,8 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
       const { runId } = await (
         await page.request.post("/api/v1/runs", { data: { scenarioId: "slow-page", scenarioVersion: "1.0.0", profileId: profile.id, input: { baseUrl: "http://127.0.0.1:4310", ms: 10 } }, headers: { "idempotency-key": randomUUID() } })
       ).json();
-      await page.getByRole("button", { name: "Runs" }).click();
-      await page.getByTestId(`run-${runId}`).getByRole("button").first().click();
+      await goTo(page, "Задания");
+      await page.getByTestId(`run-${runId}`).getByRole("link").first().click();
       await expect(page.getByTestId("run-detail").getByTestId("run-status")).toHaveText("FAILED", { timeout: 30_000 });
       await expect(page.getByTestId("run-error")).toContainText("BUNDLE_CHECKSUM_MISMATCH");
       await expect(page.getByTestId(`run-${runId}`)).toContainText("FAILED");
@@ -72,12 +73,12 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
     }
 
     // 4. Revoke: the agent is cut off and a restart does not bring it back.
-    await page.getByRole("button", { name: "Agents" }).click();
+    await goTo(page, "Агенты");
     const exited = new Promise<number | null>((r) => agent!.once("exit", r));
-    page.once("dialog", (d) => d.accept());
     await row.getByRole("button", { name: "Revoke" }).click();
-    await expect(row.locator(".badge").first()).toHaveText("REVOKED");
-    await expect(row.locator(".badge").nth(1)).toHaveText("OFFLINE");
+    await confirmDialog(page);
+    await expect(row.getByTestId("agent-status")).toHaveText("REVOKED");
+    await expect(row.getByTestId("agent-connection")).toHaveText("OFFLINE");
     expect(await exited).toBe(0);
     const restarted = spawn("node", [cli, "start"], { env, stdio: "pipe" });
     let output = "";
@@ -88,14 +89,14 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
     await evidence(page, "S8", "4-agent-revoked");
 
     // 7. Audit shows every step above, refusals included.
-    await page.getByRole("button", { name: "Audit" }).click();
+    await goTo(page, "Аудит");
     const rows = page.getByTestId("audit-row");
     for (const action of ["Приглашение агента", "Регистрация агента", "Ротация ключа (запрос)", "Ротация ключа (агент сменил ключ)", "Запуск задания", "Revoke агента"])
       await expect(rows.filter({ hasText: action }).first()).toBeVisible();
     await expect(rows.filter({ hasText: expiredName }).filter({ hasText: "DENIED" })).toHaveCount(1);
     await expect(rows.filter({ hasText: reuseName }).filter({ hasText: "DENIED" })).toHaveCount(1);
     await evidence(page, "S8", "7-audit");
-    await page.getByLabel("Только отказы").check();
+    await page.getByRole("checkbox", { name: "Только отказы" }).check();
     await expect(rows.filter({ hasText: "OK" })).toHaveCount(0);
     await evidence(page, "S8", "1-2-audit-denied-invitations");
   } finally {

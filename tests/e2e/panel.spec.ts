@@ -8,7 +8,7 @@ test.afterEach(async () => {
 
 test("[REQ-UI-001] health indicator turns offline within 5 s after the Control Plane stops and recovers", async ({ page }) => {
   await logIn(page);
-  await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Обзор" })).toBeVisible();
   const health = page.getByTestId("health");
   await expect(health).toHaveText("Control Plane: online");
   await evidence(page, "S0", "panel-online");
@@ -32,7 +32,7 @@ test("[REQ-SEC-011] panel requires login, rejects a wrong password and logs out"
   await expect(page.getByRole("alert")).toHaveText("Неверный логин или пароль");
 
   await logIn(page);
-  await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Обзор" })).toBeVisible();
   await page.getByRole("button", { name: "Выйти" }).click();
   await expect(page.getByRole("heading", { name: "Вход" })).toBeVisible();
 });

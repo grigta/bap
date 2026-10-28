@@ -14,6 +14,22 @@ export async function logIn(page: Page, password: string = E2E_OPERATOR.password
   await page.getByRole("button", { name: "Выйти" }).or(page.getByRole("alert")).waitFor();
 }
 
+export type Section = "Обзор" | "Агенты" | "Профили" | "Задания" | "Проверка" | "Аудит";
+
+/** Opens a section from the sidebar. */
+export async function goTo(page: Page, section: Section) {
+  await page.getByRole("navigation").or(page.locator("[data-sidebar=sidebar]")).getByRole("link", { name: section, exact: true }).click();
+  await page.getByRole("heading", { level: 1, name: section }).waitFor();
+}
+
+/** Accepts the in-app confirmation dialog that the last click opened. */
+export async function confirmDialog(page: Page) {
+  const dialog = page.getByRole("alertdialog");
+  await dialog.waitFor();
+  await dialog.getByRole("button").last().click();
+  await dialog.waitFor({ state: "hidden" });
+}
+
 /** Starts `bap-agent start` in its own process group, so killAgent also takes down its browsers. */
 export function spawnAgent(cli: string, env: NodeJS.ProcessEnv): ChildProcess {
   return spawn("node", [cli, "start"], { env, stdio: "ignore", detached: true });
