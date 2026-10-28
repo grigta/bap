@@ -22,9 +22,12 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
   const env = { ...process.env, BAP_AGENT_DATA: data, BAP_PROVIDER: "local" };
   const enroll = (token: string, name: string) => spawnSync("node", [cli, "enroll", "--server", server, "--token", token, "--name", name], { env, encoding: "utf8" });
   const invite = async () => {
-    await page.getByRole("button", { name: "Пригласить агента" }).click();
+    await page.getByRole("button", { name: "Подключить Mac" }).click();
     await expect(page.getByTestId("invite-token")).not.toHaveText(previousToken);
-    return (previousToken = (await page.getByTestId("invite-token").textContent())!);
+    previousToken = (await page.getByTestId("invite-token").textContent())!;
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("invite")).toBeHidden();
+    return previousToken;
   };
   let previousToken = "";
   let agent: ChildProcess | undefined;

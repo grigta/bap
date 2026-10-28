@@ -3,7 +3,6 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Scenario } from "@bap/scenario-sdk";
-import { build } from "esbuild";
 
 export interface BundleManifest {
   id: string;
@@ -20,6 +19,8 @@ const sha256 = (path: string) => createHash("sha256").update(readFileSync(path))
 export async function buildScenarioBundle(entry: string, outDir: string): Promise<BundleManifest> {
   mkdirSync(outDir, { recursive: true });
   const tmp = join(outDir, `.build-${process.pid}-${Date.now()}.mjs`);
+  // Loaded here, not at module load: agents only load bundles and ship without esbuild.
+  const { build } = await import("esbuild");
   await build({ entryPoints: [entry], outfile: tmp, bundle: true, platform: "node", format: "esm", external: ["playwright-core"], logLevel: "silent" });
   const scenario: Scenario = (await import(pathToFileURL(tmp).href)).default;
   const file = `${scenario.id}@${scenario.version}.mjs`;

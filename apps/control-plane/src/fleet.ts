@@ -5,6 +5,7 @@ import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "f
 import type { WebSocket } from "ws";
 import { z } from "zod";
 import type { App } from "./app.ts";
+import { agentBundle, installCommand, installScript, publicEndpoint } from "./agent-install.ts";
 import { hashToken, newToken } from "./auth.ts";
 import { errorSchema, sendError } from "./errors.ts";
 
@@ -142,7 +143,16 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
 
   app.post(
     "/api/v1/agents/enrollments",
-    { preHandler: operatorAuth, schema: { response: { 201: z.object({ id: z.string(), token: z.string(), expiresAt: z.string() }), ...unauthorized } } },
+    {
+      preHandler: operatorAuth,
+      schema: {
+        response: {
+          // installCommand: the one line for a new Mac; null until `pnpm gateway` (or BAP_PUBLIC_URL) makes this server reachable.
+          201: z.object({ id: z.string(), token: z.string(), expiresAt: z.string(), installCommand: z.string().nullable() }),
+          ...unauthorized,
+        },
+      },
+    },
     async (request, reply) => {
       // The operator pastes it into `bap-agent enroll --token`: the prefix keeps a leading "-" of
       // base64url from being read as an option, and makes a leaked invitation easy to recognise.
@@ -153,7 +163,8 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         .values({ token_hash: hashToken(token), expires_at: expiresAt, created_by: request.operatorId! })
         .returning("id")
         .executeTakeFirstOrThrow();
-      return reply.code(201).send({ id: row.id, token, expiresAt: expiresAt.toISOString() });
+      const endpoint = publicEndpoint();
+      return reply.code(201).send({ id: row.id, token, expiresAt: expiresAt.toISOString(), installCommand: endpoint && installCommand(endpoint, token) });
     },
   );
 
@@ -282,6 +293,61 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     request.agentId = credential.id;
     request.agentCredentialId = credential.credential_id;
   };
+
+  // ---- one-command install on a new Mac (see agent-install.ts) ----
+  app.get(
+    "/api/v1/agents/enrollments/:id",
+    {
+      preHandler: operatorAuth,
+      schema: {
+        params: idParams,
+        response: {
+          200: z.object({ id: z.string(), expiresAt: z.string(), usedAt: z.string().nullable(), agent: agentSchema.pick({ id: true, name: true, connection: true }).nullable() }),
+          ...unauthorized,
+          404: errorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const invite = await db.selectFrom("agent_enrollments").selectAll().where("id", "=", request.params.id).executeTakeFirst();
+      if (!invite) return sendError(reply, request, 404, "NOT_FOUND", "Invitation not found");
+      const [agent] = invite.agent_id ? await listAgents(invite.agent_id) : [];
+      return { id: invite.id, expiresAt: invite.expires_at.toISOString(), usedAt: invite.used_at?.toISOString() ?? null, agent: agent ? { id: agent.id, name: agent.name, connection: agent.connection } : null };
+    },
+  );
+
+  // The agent program: for a valid (not yet used) invitation during install, or for an agent key on update.
+  app.get("/api/v1/agents/install/bundle", { schema: { querystring: z.object({ token: z.string().optional() }) } }, async (request, reply) => {
+    if (request.query.token) {
+      const invite = await db
+        .selectFrom("agent_enrollments")
+        .select("id")
+        .where("token_hash", "=", hashToken(request.query.token))
+        .where("used_at", "is", null)
+        .where("expires_at", ">", new Date())
+        .executeTakeFirst();
+      if (!invite) return sendError(reply, request, 401, "INVITATION_INVALID", "Invitation is unknown, used or expired");
+    } else {
+      await agentAuth(request, reply);
+      if (reply.sent) return reply;
+    }
+    const bundle = await agentBundle();
+    return reply.header("x-bap-sha256", bundle.sha256).type("text/javascript").send(bundle.body);
+  });
+
+  // The self-signed certificate agents must trust; public by nature (the TLS handshake shows it anyway).
+  app.get("/api/v1/agents/install/ca", async (request, reply) => {
+    const endpoint = publicEndpoint();
+    if (!endpoint?.caPem) return sendError(reply, request, 404, "NOT_FOUND", "This server uses a CA-signed certificate");
+    return reply.type("application/x-pem-file").send(endpoint.caPem);
+  });
+
+  app.get("/install.sh", async (request, reply) => {
+    const endpoint = publicEndpoint();
+    if (!endpoint) return reply.code(503).type("text/plain").send("echo 'BAP: the server is not reachable from other Macs yet: run pnpm gateway on it.' >&2; exit 1\n");
+    const { playwrightVersion } = await agentBundle();
+    return reply.type("text/x-shellscript").send(installScript({ endpoint, nodeVersion: process.versions.node, playwrightVersion }));
+  });
 
   app.post(
     "/api/v1/agents/:id/rotate-key",

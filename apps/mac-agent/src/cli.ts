@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { type BrowserProvider, LinkenSphereProvider, LocalChromiumProvider } from "@bap/browser-adapters";
 import { CheckpointStore, type RunStatus, loadScenarioBundle, runScenario } from "@bap/engine";
@@ -16,6 +16,7 @@ const USAGE = `usage:
   bap-agent enroll --server <url> --token <invitation> [--name <name>]
   bap-agent start
   bap-agent install-launchagent [--load]
+  bap-agent update                             (agents installed with the one-line installer)
   bap-agent ls-credentials --email <email>     (password on stdin; stored in the Keychain)
   bap-agent ls-signin --email <email>
   bap-agent run <scenario-id> --profile <id> [--input '<json>'] [--version x.y.z]
@@ -92,7 +93,13 @@ if (command === "enroll") {
       node: process.execPath,
       cli: resolve(import.meta.filename),
       logFile: join(dataDir(), "agent.log"),
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", BAP_AGENT_DATA: dataDir(), BAP_LS_API_URL: lsApiUrl },
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        BAP_AGENT_DATA: dataDir(),
+        BAP_LS_API_URL: lsApiUrl,
+        // A server with a self-signed certificate (pnpm gateway): the installer saved it next to the agent.
+        ...(process.env.NODE_EXTRA_CA_CERTS && { NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS }),
+      },
     }),
   );
   execFileSync("plutil", ["-lint", plist], { stdio: "inherit" });
@@ -118,6 +125,20 @@ if (command === "enroll") {
     const res = await new LinkenSphereProvider({ apiUrl: lsApiUrl }).api.signIn(values.email, password);
     console.log(res.message);
   }
+} else if (command === "update") {
+  // The installer put the agent here as one file; the server hands out the current one to its agents.
+  const self = resolve(import.meta.filename);
+  if (!self.endsWith(".mjs")) fail("update is for agents installed with the one-line installer; this one runs from the repository: git pull");
+  const config = loadConfig();
+  const res = await fetch(`${config.serverUrl}/api/v1/agents/install/bundle`, { headers: { authorization: `Bearer ${config.agentKey}` } });
+  if (!res.ok) fail(`update failed: HTTP ${res.status}`);
+  const body = Buffer.from(await res.arrayBuffer());
+  const sha256 = createHash("sha256").update(body).digest("hex");
+  if (sha256 !== res.headers.get("x-bap-sha256")) fail("update failed: the downloaded agent does not match its checksum");
+  writeFileSync(`${self}.new`, body);
+  renameSync(`${self}.new`, self);
+  spawnSync("launchctl", ["kickstart", "-k", `gui/${process.getuid!()}/com.bap.agent`], { stdio: "ignore" });
+  console.log(`updated to ${sha256.slice(0, 12)}; the agent restarts`);
 } else if (command === "run") {
   await runCommand(positionals[1]);
 } else fail(USAGE);

@@ -17,7 +17,7 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
   try {
     await logIn(page);
     await goTo(page, "Агенты");
-    await page.getByRole("button", { name: "Пригласить агента" }).click();
+    await page.getByRole("button", { name: "Подключить Mac" }).click();
     const token = (await page.getByTestId("invite-token").textContent())!;
     await evidence(page, "S3", "invite");
 
@@ -28,6 +28,10 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
     expect(reused.stderr).toMatch(/INVITATION_INVALID/);
 
     agent = spawnAgent(cli, env);
+    // The connect dialog follows its invitation: registered, then online.
+    await expect(page.getByTestId("invite-status")).toContainText("e2e-mac", { timeout: 10_000 });
+    await expect(page.getByTestId("invite-status").getByText("ONLINE")).toBeVisible({ timeout: 10_000 });
+    await page.keyboard.press("Escape");
     const row = page.getByTestId("agent-e2e-mac");
     await expect(row.getByTestId("agent-status")).toHaveText("ACTIVE", { timeout: 10_000 });
     await expect(row.getByTestId("agent-connection")).toHaveText("ONLINE");

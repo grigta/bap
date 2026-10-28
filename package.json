@@ -25,6 +25,7 @@
     "docs:status": "node tools/docs-check/src/cli.ts --write-status",
     "verify:code": "rm -f reports/junit/vitest.xml reports/junit/e2e*.xml && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e",
     "verify": "pnpm verify:code && pnpm test:ls && pnpm docs:status",
+    "gateway": "node apps/control-plane/src/gateway-cli.ts",
     "backup": "node apps/control-plane/src/backup-cli.ts backup",
     "restore": "node apps/control-plane/src/backup-cli.ts restore"
   },
