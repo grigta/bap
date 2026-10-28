@@ -85,6 +85,13 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
   const sockets = new Map<string, Set<WebSocket>>();
   const pending = new Map<string, { socket: WebSocket; resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   const handlers: Fleet["handlers"] = {};
+  // A socket of an agent that died without closing TCP looks open forever: drop it after the OFFLINE threshold.
+  const lastMessageAt = new WeakMap<WebSocket, number>();
+  const reaper = setInterval(() => {
+    for (const set of sockets.values())
+      for (const socket of set) if (Date.now() - (lastMessageAt.get(socket) ?? 0) > config.offlineAfterMs) socket.terminate();
+  }, Math.max(100, Math.min(config.heartbeatIntervalMs, 5000)));
+  app.addHook("onClose", async () => clearInterval(reaper));
   const unauthorized = { 401: errorSchema };
 
   const listAgents = async (id?: string) => {
@@ -273,6 +280,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     const agentId = request.agentId!;
     if (!sockets.has(agentId)) sockets.set(agentId, new Set());
     sockets.get(agentId)!.add(socket);
+    lastMessageAt.set(socket, Date.now());
     let epoch: number | null = null;
     let queue = Promise.resolve();
 
@@ -349,6 +357,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     };
 
     socket.on("message", (raw) => {
+      lastMessageAt.set(socket, Date.now());
       // Answers to server requests skip the queue: a handler in the queue may be waiting for exactly this answer.
       const text = String(raw);
       if (text.includes('"type":"agent.response"')) {

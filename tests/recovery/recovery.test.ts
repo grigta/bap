@@ -42,6 +42,9 @@ function outageProxy(targetPort: number) {
       s.on("error", () => {});
     }
     client.pipe(upstream).pipe(client);
+    // A killed peer must close both halves, as a real TCP connection would.
+    client.on("close", () => upstream.destroy());
+    upstream.on("close", () => client.destroy());
   });
   return {
     server,
@@ -171,6 +174,7 @@ describe("cancel", () => {
     expect((await api("POST", `/api/v1/runs/${runId}/cancel`)).json().error.code).toBe("RUN_STATE_CONFLICT");
 
     a.crash(); // with the agent away the next run stays queued and cancels without it
+    await until("agent offline", async () => (await api("GET", `/api/v1/agents/${(await api("GET", `/api/v1/profiles/${a.profileId}`)).json().agentId}`)).json(), (x) => x.connection === "OFFLINE");
     const queued = await order(a).start();
     expect((await api("POST", `/api/v1/runs/${queued}/cancel`)).json().status).toBe("CANCELLED");
     a.start();

@@ -270,8 +270,17 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
   const cancel = async (runId: string): Promise<"cancelled" | "requested" | "conflict"> => {
     if (await transitionRun(runId, ["QUEUED"], "CANCELLED", "cancelled by the operator before it started", { finished_at: new Date() })) return "cancelled";
     if (await transitionRun(runId, ["RECOVERY_PENDING"], "CANCELLED", "cancelled by the operator during recovery", { finished_at: new Date() })) return "cancelled";
-    const run = await db.selectFrom("runs").select("agent_id").where("id", "=", runId).executeTakeFirst();
-    if (!run || !(await transitionRun(runId, ["ASSIGNED", "ACCEPTED", "RUNNING"], "CANCEL_REQUESTED", "cancel requested by the operator"))) return "conflict";
+    const run = await db.selectFrom("runs").select(["agent_id", "profile_id"]).where("id", "=", runId).executeTakeFirst();
+    if (!run) return "conflict";
+    // Not accepted yet: no browser is working on it, so it ends now and the reservation is released.
+    if (await transitionRun(runId, ["ASSIGNED"], "CANCELLED", "cancelled by the operator before the agent accepted", { finished_at: new Date() })) {
+      await moveProfile(db, run.profile_id, ["RESERVED"], "AVAILABLE", { active_run_id: null });
+      await db.deleteFrom("profile_leases").where("run_id", "=", runId).execute();
+      await db.updateTable("run_assignments").set({ status: "ABANDONED", finished_at: new Date() }).where("run_id", "=", runId).where("finished_at", "is", null).execute();
+      fleet.send(run.agent_id, message({ type: "run.cancel", payload: { runId } }));
+      return "cancelled";
+    }
+    if (!(await transitionRun(runId, ["ACCEPTED", "RUNNING"], "CANCEL_REQUESTED", "cancel requested by the operator"))) return "conflict";
     fleet.send(run.agent_id, message({ type: "run.cancel", payload: { runId } })); // resent when the agent reconnects
     return "requested";
   };
@@ -319,6 +328,8 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     switch (event.type) {
       case "run.accepted":
         if (await transitionRun(runId, ["ASSIGNED"], "ACCEPTED", "agent accepted")) await moveProfile(db, owner.profile_id, ["RESERVED"], "IN_USE");
+        else if ((await db.selectFrom("runs").select("status").where("id", "=", runId).executeTakeFirstOrThrow()).status === "CANCELLED")
+          fleet.send(agentId, message({ type: "run.cancel", payload: { runId } })); // accepted too late: stop it
         await db.updateTable("runs").set({ resume_requested: false }).where("id", "=", runId).execute();
         await db.updateTable("run_assignments").set({ status: "ACCEPTED", acknowledged_at: new Date() }).where("run_id", "=", runId).where("acknowledged_at", "is", null).execute();
         break;

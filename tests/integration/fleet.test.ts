@@ -207,6 +207,16 @@ describe("protocol", () => {
   });
 });
 
+test("[REQ-PROTO-002] a socket that falls silent (agent died without closing TCP) is dropped after the OFFLINE threshold", async () => {
+  const { agentKey } = await newAgent("mac-silent");
+  const silent = await rawSocket(agentKey);
+  silent.ws.send(JSON.stringify(message({ type: "agent.hello", payload: { agentVersion: "t", platform: "darwin", architecture: "arm64" } })));
+  await silent.next(); // welcome; then nothing more is sent
+  const started = Date.now();
+  await silent.closed;
+  expect(Date.now() - started).toBeGreaterThanOrEqual(FLEET.offlineAfterMs - 500);
+});
+
 describe("Linken Sphere availability", () => {
   let stub: Server;
   let stubUrl: string;
