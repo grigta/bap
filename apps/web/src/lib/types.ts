@@ -25,7 +25,10 @@ export interface Agent {
   status: AgentStatus;
   connection: Connection;
   lastSeenAt: string | null;
+  /** The build: 12 hex for installed agents, "dev-<commit>" for agents run from a repository. */
   agentVersion: string | null;
+  /** Installed agents: on the server's current build; null when run from a repository. */
+  upToDate: boolean | null;
   heartbeat: Heartbeat | null;
   maxSessions: number | null;
   reportedMaxSessions: number | null;

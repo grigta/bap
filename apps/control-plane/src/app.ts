@@ -14,6 +14,7 @@ import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerRuns } from "./runs.ts";
 import { purgeArtifacts } from "./retention.ts";
+import { webHandler } from "./web.ts";
 import type { ObjectStore } from "./storage.ts";
 
 export interface AppOptions {
@@ -28,6 +29,8 @@ export interface AppOptions {
   store: ObjectStore;
   /** Serve HTTPS with this certificate (REQ-SEC-001); without it the server is plain HTTP behind a TLS proxy or on localhost. */
   https?: { cert: Buffer | string; key: Buffer | string };
+  /** The built panel (apps/web/dist) to serve next to the API; in development Vite serves it. */
+  webDir?: string;
   /** Screenshots and reports of finished runs are deleted after this many days (REQ-SEC-010); off when omitted. */
   retention?: { artifactDays: number; sweepIntervalMs?: number };
 }
@@ -40,7 +43,7 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir }: AppOptions) {
   // Request bodies are never logged; credentials in headers are redacted should headers ever be logged (REQ-SEC-008).
   const redact = ["req.headers.authorization", "req.headers.cookie", "req.headers[\"idempotency-key\"]", "res.headers[\"set-cookie\"]"];
   const app = Fastify({
@@ -202,6 +205,13 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     coordinator.start();
     scoped.addHook("onClose", () => coordinator.stop());
   });
+
+  if (webDir) {
+    const serveWeb = webHandler(webDir);
+    app.setNotFoundHandler((request, reply) =>
+      request.method === "GET" && !request.url.startsWith("/api/") ? serveWeb(request, reply) : sendError(reply, request, 404, "NOT_FOUND", `${request.method} ${request.url.split("?")[0]} does not exist`),
+    );
+  }
 
   if (retention) {
     const sweep = () =>

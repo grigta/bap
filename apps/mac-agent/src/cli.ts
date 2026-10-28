@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { type BrowserProvider, LinkenSphereProvider, LocalChromiumProvider } from "@bap/browser-adapters";
 import { CheckpointStore, type RunStatus, loadScenarioBundle, runScenario } from "@bap/engine";
 import { startAgent } from "./agent.ts";
 import { checkServerUrl, dataDir, defaultSecretStore, enroll, loadConfig, saveConfig } from "./config.ts";
 import { LINKEN_SPHERE_SERVICE } from "./secret-store.ts";
+import { buildOf, installBuild } from "./self-update.ts";
 import { launchAgentPath, launchAgentPlist } from "./launchagent.ts";
 
 const USAGE = `usage:
@@ -17,7 +18,7 @@ const USAGE = `usage:
   bap-agent start
   bap-agent install-launchagent [--load]
   bap-agent update                             (agents installed with the one-line installer)
-  bap-agent check                              (exit 0: the server accepts this agent's key; 2: rejected)
+  bap-agent check [--server <url>]             (exit 0: the server accepts this agent's key; 2: rejected)
   bap-agent ls-credentials --email <email>     (password on stdin; stored in the Keychain)
   bap-agent ls-signin --email <email>
   bap-agent run <scenario-id> --profile <id> [--input '<json>'] [--version x.y.z]
@@ -25,6 +26,11 @@ const USAGE = `usage:
 const EXIT: Record<RunStatus, number> = { SUCCEEDED: 0, FAILED: 1, NEEDS_REVIEW: 2, CANCELLED: 4 };
 const EXIT_USAGE = 3;
 const lsApiUrl = process.env.BAP_LS_API_URL ?? "http://127.0.0.1:41234";
+const self = resolve(import.meta.filename);
+/** Installed as one file by the installer (not run from the repository): can replace itself. */
+const installed = self.endsWith(".mjs");
+/** Exit code that tells launchd (KeepAlive on unsuccessful exit) to start the agent again, now on the new build. */
+const EXIT_RESTART = 75;
 
 function fail(message: string): never {
   console.error(message);
@@ -80,6 +86,7 @@ if (command === "enroll") {
     maxSessions: Number(process.env.BAP_MAX_SESSIONS ?? 2),
     dataDir: dataDir(),
     retentionDays: Number(process.env.BAP_RETENTION_DAYS ?? 7),
+    ...(installed && { selfUpdate: { file: self, build: buildOf(self), restart: () => process.exit(EXIT_RESTART) } }),
   });
   console.log(`agent ${config.name} → ${config.serverUrl}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => agent.stop());
@@ -92,7 +99,7 @@ if (command === "enroll") {
     plist,
     launchAgentPlist({
       node: process.execPath,
-      cli: resolve(import.meta.filename),
+      cli: self,
       logFile: join(dataDir(), "agent.log"),
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -127,28 +134,26 @@ if (command === "enroll") {
     console.log(res.message);
   }
 } else if (command === "check") {
+  // --server: ask that server instead (the installer moving a Mac to a new server address).
   const config = loadConfig();
-  const res = await fetch(`${config.serverUrl}/api/v1/agents/me`, { headers: { authorization: `Bearer ${config.agentKey}` } });
+  const server = values.server?.replace(/\/$/, "") ?? config.serverUrl;
+  checkServerUrl(server);
+  const res = await fetch(`${server}/api/v1/agents/me`, { headers: { authorization: `Bearer ${config.agentKey}` } });
   if (res.status === 401) {
-    console.error(`the server rejects the key of ${config.name}: revoked, enroll again`);
+    console.error(`${server} rejects the key of ${config.name}: revoked or unknown there, enroll again`);
     process.exit(2);
   }
   if (!res.ok) fail(`check failed: HTTP ${res.status}`);
-  console.log(`${config.name} (${config.agentId}) is registered at ${config.serverUrl}`);
+  // Same database, new address: keep the registration, follow the server.
+  if (server !== config.serverUrl) saveConfig({ ...config, serverUrl: server });
+  console.log(`${config.name} (${config.agentId}) is registered at ${server}`);
 } else if (command === "update") {
   // The installer put the agent here as one file; the server hands out the current one to its agents.
-  const self = resolve(import.meta.filename);
-  if (!self.endsWith(".mjs")) fail("update is for agents installed with the one-line installer; this one runs from the repository: git pull");
+  if (!installed) fail("update is for agents installed with the one-line installer; this one runs from the repository: git pull");
   const config = loadConfig();
-  const res = await fetch(`${config.serverUrl}/api/v1/agents/install/bundle`, { headers: { authorization: `Bearer ${config.agentKey}` } });
-  if (!res.ok) fail(`update failed: HTTP ${res.status}`);
-  const body = Buffer.from(await res.arrayBuffer());
-  const sha256 = createHash("sha256").update(body).digest("hex");
-  if (sha256 !== res.headers.get("x-bap-sha256")) fail("update failed: the downloaded agent does not match its checksum");
-  writeFileSync(`${self}.new`, body);
-  renameSync(`${self}.new`, self);
+  const build = await installBuild(config.serverUrl, config.agentKey, self).catch((e: Error) => fail(`update failed: ${e.message}`));
   spawnSync("launchctl", ["kickstart", "-k", `gui/${process.getuid!()}/com.bap.agent`], { stdio: "ignore" });
-  console.log(`updated to ${sha256.slice(0, 12)}; the agent restarts`);
+  console.log(`updated to ${build}; the agent restarts`);
 } else if (command === "run") {
   await runCommand(positionals[1]);
 } else fail(USAGE);

@@ -3,13 +3,12 @@
 //   agent ──https──▶ bore.pub:<port> ──tcp──▶ bore client ──▶ TLS proxy 127.0.0.1:3443 ──▶ Control Plane 127.0.0.1:3000
 // The certificate is self-signed; the one-line installer pins its public key and the agent trusts it.
 import { execFileSync, spawn } from "node:child_process";
-import { X509Certificate, createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { createServer } from "node:tls";
 import { stripVTControlCharacters } from "node:util";
-import { gatewayFile } from "./agent-install.ts";
+import { gatewayFile, pinOf } from "./agent-install.ts";
 
 const RELAY = process.env.BAP_GATEWAY_RELAY ?? "bore.pub";
 const UPSTREAM = Number(process.env.PORT ?? 3000);
@@ -33,8 +32,6 @@ function ensureCertificate() {
   log(`created a certificate for ${RELAY}: ${certFile}`);
 }
 
-/** curl --pinnedpubkey form of the certificate's public key. */
-const pinOf = (pem: string) => `sha256//${createHash("sha256").update(new X509Certificate(pem).publicKey.export({ type: "spki", format: "der" })).digest("base64")}`;
 
 interface Saved {
   port: number;

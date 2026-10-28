@@ -29,7 +29,8 @@ try {
     // Overridable for PostgreSQL in a container, e.g. `docker compose exec -T postgres pg_dump -U bap -Fc bap`.
     const bytes = await dumpDatabase(env("PG_DUMP_CMD", 'pg_dump --format=custom --dbname "$DATABASE_URL"'), target);
     const pruned = pruneDumps(dir, Number(env("BACKUP_KEEP", "14")));
-    const mirrored = await mirrorStore(await primary(), await external());
+    // Without an external store configured, the dump is still taken; the panel's artifacts are not mirrored.
+    const mirrored = process.env.BACKUP_S3_ENDPOINT ? await mirrorStore(await primary(), await external()) : "skipped: BACKUP_S3_* not set";
     console.log(JSON.stringify({ dump: target, bytes, pruned, objects: mirrored }));
   } else if (command === "restore") {
     if (!file) fail("usage: backup-cli restore <dump-file>");

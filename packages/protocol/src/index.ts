@@ -14,7 +14,10 @@ export const agentHello = z.object({
   ...envelope,
   type: z.literal("agent.hello"),
   payload: z.object({
+    /** The build: 12 hex of the agent file's sha256 when installed, "dev-<commit>" from a repository. */
     agentVersion: z.string(),
+    /** Installed with the one-line installer: it can replace itself with the server's current build. */
+    updatable: z.boolean().default(false),
     platform: z.string(),
     architecture: z.string(),
     /** Runs executing right now on this agent (they survive a dropped connection). */
@@ -166,7 +169,10 @@ export const runCancel = z.object({ ...envelope, type: z.literal("run.cancel"), 
 /** The operator asked for a new agent key: the agent fetches one with its current key and reconnects. */
 export const agentRotateKey = z.object({ ...envelope, type: z.literal("agent.rotate-key"), payload: z.object({}) });
 
-export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain, runCancel, agentRotateKey]);
+/** The server has a newer agent build: fetch it with the agent key, verify this sha256, restart on it. */
+export const agentUpdate = z.object({ ...envelope, type: z.literal("agent.update"), payload: z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }) });
+
+export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain, runCancel, agentRotateKey, agentUpdate]);
 export type ServerMessage = z.infer<typeof serverMessage>;
 
 /** Builds a message with a fresh envelope. */

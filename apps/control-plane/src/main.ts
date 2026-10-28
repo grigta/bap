@@ -27,6 +27,7 @@ const app = buildApp({
   logger: true,
   // TLS here, or a TLS-terminating proxy in front of a localhost-only server (REQ-SEC-001).
   ...(process.env.TLS_CERT_FILE && { https: { cert: readFileSync(process.env.TLS_CERT_FILE), key: readFileSync(env("TLS_KEY_FILE")) } }),
+  ...(process.env.BAP_WEB_DIR && { webDir: process.env.BAP_WEB_DIR }),
   retention: { artifactDays: Number(env("BAP_ARTIFACT_RETENTION_DAYS", "30")) },
 });
 await app.listen({ host: env("HOST", "127.0.0.1"), port: Number(env("PORT", "3000")) });

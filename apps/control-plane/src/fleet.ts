@@ -40,7 +40,10 @@ const agentSchema = z.object({
   status: z.string(),
   connection: z.enum(["ONLINE", "SUSPECT", "OFFLINE"]),
   lastSeenAt: z.string().nullable(),
+  /** The build the agent runs (see agent.hello). */
   agentVersion: z.string().nullable(),
+  /** Installed agents: whether they run the server's current build; null for agents run from a repository. */
+  upToDate: z.boolean().nullable(),
   platform: z.string(),
   architecture: z.string(),
   heartbeat: heartbeatSchema,
@@ -102,7 +105,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     let query = db
       .selectFrom("agents")
       .leftJoin("agent_capabilities", "agent_capabilities.agent_id", "agents.id")
-      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "max_sessions", "duplicate_messages", "agent_capabilities.payload as capabilities"])
+      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "max_sessions", "duplicate_messages", "updatable", "agent_capabilities.payload as capabilities"])
       .where("deleted_at", "is", null)
       .orderBy("name");
     if (id) query = query.where("agents.id", "=", id);
@@ -112,13 +115,17 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       .where("status", "in", ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED"])
       .groupBy("agent_id")
       .execute();
-    return (await query.execute()).map((r) => ({
+    const rows = await query.execute();
+    // The current build is only needed (and only bundled) when an installed agent is listed.
+    const current = rows.some((r) => r.updatable) ? (await agentBundle()).sha256.slice(0, 12) : null;
+    return rows.map((r) => ({
       id: r.id,
       name: r.name,
       status: r.status,
       connection: r.status === "REVOKED" ? "OFFLINE" : connection(r.last_seen_at, config),
       lastSeenAt: r.last_seen_at?.toISOString() ?? null,
       agentVersion: r.agent_version,
+      upToDate: r.updatable ? r.agent_version === current : null,
       platform: r.platform,
       architecture: r.architecture,
       heartbeat: (r.last_heartbeat as z.infer<typeof heartbeatSchema>) ?? null,
@@ -411,6 +418,20 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       socket.close(1008, code);
     };
 
+    // An installed agent on an old build, with no run in progress, replaces itself with the current one.
+    let updateOffered = false;
+    const offerUpdate = async () => {
+      if (updateOffered) return;
+      const agent = await db.selectFrom("agents").select(["agent_version", "updatable"]).where("id", "=", agentId).executeTakeFirst();
+      if (!agent?.updatable) return;
+      const { sha256 } = await agentBundle();
+      if (agent.agent_version === sha256.slice(0, 12)) return;
+      const busy = await db.selectFrom("runs").select("id").where("agent_id", "=", agentId).where("status", "in", ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED"]).executeTakeFirst();
+      if (busy) return;
+      updateOffered = true;
+      send(message({ type: "agent.update", payload: { sha256 } }));
+    };
+
     const handle = async (raw: string) => {
       let msg: AgentMessage;
       try {
@@ -427,6 +448,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
             current_epoch: sql<string>`current_epoch + 1`,
             last_seen_at: now,
             agent_version: msg.payload.agentVersion,
+            updatable: msg.payload.updatable,
             platform: msg.payload.platform,
             architecture: msg.payload.architecture,
           }))
@@ -437,6 +459,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         send(message({ type: "server.welcome", payload: { agentId, epoch, heartbeatIntervalMs: config.heartbeatIntervalMs } }));
         // Interrupted and still-running runs are reconciled; runs queued while the agent was away go out.
         await handlers.onConnected?.(agentId, { activeRuns: msg.payload.activeRuns, interruptedRuns: msg.payload.interruptedRuns });
+        await offerUpdate();
         return;
       }
       if (epoch === null) return protocolError("HELLO_REQUIRED", "agent.hello must be the first message");
@@ -468,6 +491,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         if (msg.type === "agent.heartbeat") {
           await db.updateTable("agents").set({ last_seen_at: now, last_heartbeat: JSON.stringify(msg.payload) }).where("id", "=", agentId).execute();
           await handlers.onHeartbeat?.(agentId);
+          await offerUpdate(); // a busy agent gets it once its runs are done
         }
         else {
           await db.updateTable("agents").set({ last_seen_at: now }).where("id", "=", agentId).execute();

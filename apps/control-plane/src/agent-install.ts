@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { X509Certificate, createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -15,14 +15,22 @@ export interface PublicEndpoint {
   caPem: string | null;
 }
 
+/** curl --pinnedpubkey form of a certificate's public key. */
+export const pinOf = (pem: string) => `sha256//${createHash("sha256").update(new X509Certificate(pem).publicKey.export({ type: "spki", format: "der" })).digest("base64")}`;
+
 export const gatewayFile = () => process.env.BAP_GATEWAY_FILE ?? join(homedir(), ".bap-cp", "gateway.json");
 
 /**
- * BAP_PUBLIC_URL (a server with a real certificate) wins; otherwise the file `pnpm gateway` writes.
+ * BAP_PUBLIC_URL (a deployed server; BAP_PUBLIC_CERT_FILE when its certificate is self-signed) wins; otherwise the file `pnpm gateway` writes.
  * Read on every call: starting the gateway needs no Control Plane restart.
  */
 export function publicEndpoint(): PublicEndpoint | null {
-  if (process.env.BAP_PUBLIC_URL) return { url: process.env.BAP_PUBLIC_URL.replace(/\/$/, ""), pin: null, caPem: null };
+  if (process.env.BAP_PUBLIC_URL) {
+    const url = process.env.BAP_PUBLIC_URL.replace(/\/$/, "");
+    // A server on its IP without a domain: a self-signed certificate that installers pin.
+    const caPem = process.env.BAP_PUBLIC_CERT_FILE ? readFileSync(process.env.BAP_PUBLIC_CERT_FILE, "utf8") : null;
+    return { url, pin: caPem && pinOf(caPem), caPem };
+  }
   const file = gatewayFile();
   if (!existsSync(file)) return null;
   const g = JSON.parse(readFileSync(file, "utf8")) as { publicUrl: string; pin: string; certFile: string };
@@ -139,7 +147,7 @@ bold "4/6 Регистрация"
 registered=""
 if [ -f "$BAP/agent.json" ]; then
   # 0: the server accepts this Mac's key; 2: it was revoked; anything else: cannot tell, do not touch it.
-  set +e; "$BAP/bin/bap-agent" check >/dev/null 2>&1; key=$?; set -e
+  set +e; "$BAP/bin/bap-agent" check --server "$SERVER" >/dev/null 2>&1; key=$?; set -e
   case "$key" in
     0) registered=1; ok "этот Mac уже зарегистрирован, приглашение не понадобилось" ;;
     2) warn "ключ этого Mac отозван, регистрирую заново"; rm -f "$BAP/agent.json" ;;

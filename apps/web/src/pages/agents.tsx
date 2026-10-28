@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -220,7 +221,9 @@ function AgentSheet({ id }: { id: string | undefined }) {
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Версия агента</dt>
-                  <dd className="font-mono text-xs">{a.agentVersion ?? "—"}</dd>
+                  <dd>
+                    <AgentVersion agent={a} />
+                  </dd>
                 </div>
               </dl>
               <Usage heartbeats={a.heartbeats} />
@@ -233,6 +236,21 @@ function AgentSheet({ id }: { id: string | undefined }) {
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** The agent's build; an installed agent on an old build updates itself as soon as it is idle. */
+function AgentVersion({ agent: a }: { agent: Agent }) {
+  return (
+    <span data-testid="agent-version" className="inline-flex items-center gap-1.5">
+      <span className="font-mono text-xs text-muted-foreground">{a.agentVersion ?? "—"}</span>
+      {a.upToDate === false && (
+        <Tooltip>
+          <TooltipTrigger render={<span className="rounded-sm bg-wait-soft px-1 text-[10px] text-wait" />}>устарел</TooltipTrigger>
+          <TooltipContent>Обновится сам, когда закончит текущие задания и будет на связи</TooltipContent>
+        </Tooltip>
+      )}
+    </span>
   );
 }
 
@@ -345,7 +363,7 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
         </span>
       ),
     }),
-    c.accessor("agentVersion", { header: "Версия", cell: (i) => <span className="font-mono text-xs text-muted-foreground">{i.getValue() ?? "—"}</span> }),
+    c.accessor("agentVersion", { header: "Версия", cell: (i) => <AgentVersion agent={i.row.original} /> }),
     c.display({ id: "actions", header: () => <span className="sr-only">Действия</span>, cell: (i) => <AgentActions agent={i.row.original} act={run} /> }),
   ];
 

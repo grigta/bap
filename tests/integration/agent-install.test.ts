@@ -98,6 +98,14 @@ test("the command from the panel installs, registers and connects a Mac in one g
   const agents = (await app.inject({ method: "GET", url: "/api/v1/agents", cookies: { bap_session: cookie } })).json();
   expect(agents.filter((a: { name: string }) => a.name.startsWith("mac-installed"))).toHaveLength(1);
 
+  // The server moves (same database, new address): the registration stays, only the address changes.
+  const gateway = JSON.parse(readFileSync(join(work, "gateway.json"), "utf8"));
+  writeFileSync(join(work, "gateway.json"), JSON.stringify({ ...gateway, publicUrl: gateway.publicUrl.replace("127.0.0.1", "localhost") }));
+  const moved = await install((await invite()).installCommand!, mac.env);
+  expect(moved.stdout).toContain("уже зарегистрирован");
+  expect(JSON.parse(readFileSync(join(bap, "agent.json"), "utf8"))).toMatchObject({ agentId: config.agentId, serverUrl: expect.stringMatching(/^https:\/\/localhost:/) });
+  writeFileSync(join(work, "gateway.json"), JSON.stringify(gateway));
+
   // Revoked and deleted in the panel: the same command with a new invitation registers the Mac again.
   agent?.kill("SIGKILL");
   agent = null;

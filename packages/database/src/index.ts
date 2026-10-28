@@ -18,6 +18,7 @@ export interface AgentsTable {
   last_heartbeat: unknown | null;
   max_sessions: number | null;
   duplicate_messages: Generated<number>;
+  updatable: Generated<boolean>;
   /** Set when a revoked agent is deleted: hidden everywhere, kept for history. */
   deleted_at: Timestamp | null;
   created_at: Timestamp;

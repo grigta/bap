@@ -15,6 +15,7 @@ import { startAgent } from "../../apps/mac-agent/src/agent.ts";
 import { launchAgentPlist } from "../../apps/mac-agent/src/launchagent.ts";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
+import { agentBundle } from "../../apps/control-plane/src/agent-install.ts";
 import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 
 const FLEET = { heartbeatIntervalMs: 200, suspectAfterMs: 1000, offlineAfterMs: 2000, enrollmentTtlMs: 60_000 };
@@ -199,7 +200,8 @@ describe("connection", () => {
     const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 3, dataDir: tmpdir(), log: () => {} });
     const view = await until("3 heartbeats", () => agentView(agent.agentId), (a) => a.heartbeats.length >= 3);
     running.stop();
-    expect(view).toMatchObject({ agentVersion: "0.1.0", maxSessions: 3, heartbeat: { activeSessions: 0, lsAvailable: false } });
+    // Run from the repository, the agent reports its commit and does not update itself.
+    expect(view).toMatchObject({ agentVersion: expect.stringMatching(/^dev-/), upToDate: null, maxSessions: 3, heartbeat: { activeSessions: 0, lsAvailable: false } });
     expect(view.heartbeat.memoryPercent).toBeGreaterThan(0);
     // Power comes from pmset, read in the background: by the latest heartbeat a real reading on macOS; null elsewhere (CI runs on Linux).
     const power = process.platform === "darwin" ? { source: expect.stringMatching(/^(ac|battery|unknown)$/), batteryPercent: expect.toBeOneOf([null, expect.any(Number)]), charging: expect.toBeOneOf([null, expect.any(Boolean)]), sleepPrevented: expect.toBeOneOf([null, expect.any(Boolean)]) } : null;
@@ -241,6 +243,54 @@ describe("connection", () => {
     const audited = await db.selectFrom("audit_events").select(["action", "actor"]).where("target_id", "=", agent.agentId).execute();
     expect(audited.map((a) => a.action)).toEqual(expect.arrayContaining(["agent key rotated"]));
   });
+});
+
+describe("agent versions", () => {
+  const hello = (agentVersion: string, updatable: boolean) => message({ type: "agent.hello", payload: { agentVersion, platform: "darwin", architecture: "arm64", updatable } });
+  const beat = (seq: number) => ({ ...message({ type: "agent.heartbeat", payload: { cpuPercent: 1, memoryPercent: 1, lsAvailable: true, activeSessions: 0 } }), seq });
+
+  test("an installed agent on an old build is told to update; one on the current build and a dev agent are not", async () => {
+    const current = (await agentBundle()).sha256;
+    const cases = [
+      { name: "mac-old", version: "000000000000", updatable: true, upToDate: false, update: true },
+      { name: "mac-current", version: current.slice(0, 12), updatable: true, upToDate: true, update: false },
+      { name: "mac-dev", version: "dev-1a2b3c4", updatable: false, upToDate: null, update: false },
+    ];
+    for (const c of cases) {
+      const { agentId, agentKey } = await newAgent(c.name);
+      const socket = await rawSocket(agentKey);
+      socket.ws.send(JSON.stringify(hello(c.version, c.updatable)));
+      expect((await socket.next()).type).toBe("server.welcome");
+      // An update request, if any, comes before the acknowledgement of the first heartbeat.
+      socket.ws.send(JSON.stringify(beat(1)));
+      const next = await socket.next();
+      if (c.update) expect(next).toMatchObject({ type: "agent.update", payload: { sha256: current } });
+      else expect(next.type).toBe("server.ack");
+      socket.ws.close();
+      expect(await agentView(agentId)).toMatchObject({ agentVersion: c.version, upToDate: c.upToDate });
+    }
+  }, 60_000);
+
+  test("an installed agent fetches the current build with its key, verifies it, replaces itself and restarts", async () => {
+    const { agentKey } = await newAgent("mac-self-update");
+    const file = join(mkdtempSync(join(tmpdir(), "bap-self-")), "bap-agent.mjs");
+    writeFileSync(file, "// old build");
+    let restarted = 0;
+    const running = startAgent({
+      serverUrl: baseUrl,
+      agentKey,
+      provider: null,
+      providerName: "none",
+      maxSessions: 1,
+      dataDir: mkdtempSync(join(tmpdir(), "bap-self-data-")),
+      log: () => {},
+      selfUpdate: { file, build: "000000000000", restart: () => void restarted++ },
+    });
+    await until("updated", async () => restarted, (n) => n === 1, 30_000);
+    running.stop();
+    const current = await agentBundle();
+    expect(readFileSync(file)).toEqual(current.body);
+  }, 60_000);
 });
 
 describe("protocol", () => {

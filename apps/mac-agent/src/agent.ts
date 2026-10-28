@@ -7,10 +7,10 @@ import WebSocket from "ws";
 import { AgentStore, type OutboxEvent } from "./agent-store.ts";
 import { checkServerUrl } from "./config.ts";
 import { readPower } from "./power.ts";
+import { devBuild, installBuild } from "./self-update.ts";
 import { purgeLocalRuns } from "./retention.ts";
 import { type EmitRunEvent, executeRun } from "./runner.ts";
 
-export const AGENT_VERSION = "0.1.0";
 
 class CodedError extends Error {
   readonly code: string;
@@ -33,6 +33,11 @@ export interface AgentOptions {
   dataDir: string;
   log?: (line: string) => void;
   maxReconnectDelayMs?: number;
+  /**
+   * Installed agents (one file from the installer): the server tells them to replace `file` with its
+   * current build; `restart` then hands over to launchd. Agents run from a repository report "dev-<commit>".
+   */
+  selfUpdate?: { file: string; build: string; restart: () => void };
   /** Local data of settled runs is deleted after this many days (REQ-SEC-010); kept when omitted. */
   retentionDays?: number;
 }
@@ -246,7 +251,8 @@ export function startAgent(opts: AgentOptions): RunningAgent {
           message({
             type: "agent.hello",
             payload: {
-              agentVersion: AGENT_VERSION,
+              agentVersion: opts.selfUpdate?.build ?? devBuild(),
+              updatable: !!opts.selfUpdate,
               platform: platform(),
               architecture: arch(),
               // Runs finished while offline still count: their results are in the outbox and arrive next.
@@ -284,7 +290,19 @@ export function startAgent(opts: AgentOptions): RunningAgent {
       } else if (msg.type === "server.ack") store.acknowledge(msg.payload.id);
       else if (msg.type === "run.assign") onAssign(msg.payload);
       else if (msg.type === "run.cancel") onCancel(msg.payload.runId);
-      else if (msg.type === "agent.rotate-key") {
+      else if (msg.type === "agent.update") {
+        const update = opts.selfUpdate;
+        // The server offers it only when idle; a run that arrived since then is finished first (offered again later).
+        if (!update || activeRuns.size > 0) return;
+        try {
+          const build = await installBuild(opts.serverUrl, agentKey, update.file, msg.payload.sha256);
+          log(`updated to ${build}; restarting`);
+          end("stopped");
+          update.restart();
+        } catch (e) {
+          log(`update failed, staying on ${update.build}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } else if (msg.type === "agent.rotate-key") {
         const res = await fetch(`${opts.serverUrl}/api/v1/agents/me/key`, { method: "POST", headers: { authorization: `Bearer ${agentKey}` } });
         if (!res.ok) return log(`key rotation failed: HTTP ${res.status}`);
         const { agentKey: rotated } = (await res.json()) as { agentKey: string };
