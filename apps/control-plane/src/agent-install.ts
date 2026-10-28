@@ -181,7 +181,7 @@ bold "6/6 Автозапуск"
 if [ -n "\${BAP_NO_LAUNCHAGENT:-}" ]; then
   warn "автозапуск пропущен (BAP_NO_LAUNCHAGENT)"
 else
-  "$BAP/bin/bap-agent" install-launchagent --load >/dev/null
+  "$BAP/bin/bap-agent" install-launchagent --load >/dev/null || die "Автозапуск не включился (сообщение выше). Выйдите из учётной записи macOS и войдите снова, затем повторите команду."
   for _ in $(seq 1 30); do grep -q "connected:" "$BAP/agent.log" 2>/dev/null && break; sleep 1; done
   grep -q "connected:" "$BAP/agent.log" 2>/dev/null && ok "агент запущен и на связи с сервером" || warn "агент запущен, но ещё не подключился: смотрите $BAP/agent.log"
 fi

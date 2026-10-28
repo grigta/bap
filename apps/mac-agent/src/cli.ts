@@ -11,7 +11,7 @@ import { startAgent } from "./agent.ts";
 import { checkServerUrl, dataDir, defaultSecretStore, enroll, loadConfig, saveConfig } from "./config.ts";
 import { LINKEN_SPHERE_SERVICE } from "./secret-store.ts";
 import { buildOf, installBuild } from "./self-update.ts";
-import { launchAgentPath, launchAgentPlist } from "./launchagent.ts";
+import { launchAgentPath, launchAgentPlist, reloadLaunchAgent } from "./launchagent.ts";
 
 const USAGE = `usage:
   bap-agent enroll --server <url> --token <invitation> [--name <name>]
@@ -112,11 +112,7 @@ if (command === "enroll") {
   );
   execFileSync("plutil", ["-lint", plist], { stdio: "inherit" });
   const load = ["bootstrap", `gui/${process.getuid!()}`, plist];
-  if (values.load) {
-    // Re-running must replace an already loaded agent: bootstrap alone fails when the label exists.
-    spawnSync("launchctl", ["bootout", `gui/${process.getuid!()}/com.bap.agent`], { stdio: "ignore" });
-    execFileSync("launchctl", load, { stdio: "inherit" });
-  }
+  if (values.load) await reloadLaunchAgent(plist, process.getuid!()).catch((e: Error) => fail(e.message));
   else console.log(`load with: launchctl ${load.join(" ")}`);
 } else if (command === "ls-credentials" || command === "ls-signin") {
   if (!values.email) fail(USAGE);

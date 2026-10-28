@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -42,4 +43,28 @@ ${env}
 </dict>
 </plist>
 `;
+}
+
+export type Launchctl = (args: string[]) => { status: number | null; stderr: string };
+const realLaunchctl: Launchctl = (args) => {
+  const res = spawnSync("launchctl", args, { encoding: "utf8" });
+  return { status: res.status, stderr: res.stderr ?? "" };
+};
+const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Replaces a loaded agent with the plist on disk. `bootout` returns before launchd has removed the
+ * service, and `bootstrap` fails with "5: Input/output error" until it has: wait for it, then retry.
+ */
+export async function reloadLaunchAgent(plist: string, uid: number, launchctl: Launchctl = realLaunchctl, sleep: (ms: number) => Promise<void> = pause): Promise<void> {
+  const service = `gui/${uid}/${LAUNCH_AGENT_LABEL}`;
+  launchctl(["bootout", service]);
+  for (let i = 0; i < 40 && launchctl(["print", service]).status === 0; i++) await sleep(250);
+  let last = { status: null as number | null, stderr: "" };
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    last = launchctl(["bootstrap", `gui/${uid}`, plist]);
+    if (last.status === 0) return;
+    await sleep(attempt * 500);
+  }
+  throw new Error(`could not start the agent with launchd (launchctl bootstrap ${last.status}: ${last.stderr.trim()}); log out and in, then run the command again`);
 }
