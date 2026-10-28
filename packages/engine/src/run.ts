@@ -203,7 +203,9 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
 
         const screenshot = `${String(index + 1).padStart(2, "0")}-${step.id}.png`;
         const shot = disconnected ? undefined : await page.screenshot({ path: join(artifactsDir, screenshot) }).then(() => screenshot, () => undefined);
-        const failure = error !== undefined ? message(error) : interrupted && !ok ? "interrupted mutating step: verify could not confirm its effect" : !ok ? "verify did not confirm the step" : undefined;
+        // A recipe step says what it checked (e.g. the site answered 500): the reason goes into the error too.
+        const why = annotation.note ? ` (${annotation.note})` : "";
+        const failure = error !== undefined ? message(error) : interrupted && !ok ? `interrupted mutating step: verify could not confirm its effect${why}` : !ok ? `verify did not confirm the step${why}` : undefined;
         const record: StepRecord = {
           sequence: index + 1,
           id: step.id,

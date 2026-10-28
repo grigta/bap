@@ -183,7 +183,12 @@ function Filmstrip({ run, steps }: { run: RunDetail; steps: Step[] }) {
                     )}
                   </div>
                 )}
-                {s.resolution === "healed" && s.note && <p className="text-[11px] text-muted-foreground">{s.note}</p>}
+                {/* Why it was healed, and what proved a step that changed data (REQ-DOM-012, REQ-DOM-014). */}
+                {s.note && (s.resolution === "healed" || s.mutating) && (
+                  <p data-testid="step-note" className="text-[11px] text-muted-foreground">
+                    {s.note}
+                  </p>
+                )}
                 {s.error && <pre className="max-h-24 overflow-auto rounded-sm bg-fail-soft p-1.5 font-mono text-[10px] whitespace-pre-wrap text-fail">{s.error}</pre>}
               </div>
             </li>

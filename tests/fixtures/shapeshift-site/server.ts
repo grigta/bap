@@ -1,12 +1,14 @@
 // "Shapeshifter" shop for S11: the same order flow, but markup, classes, ids, nesting, order and
 // wrappers change with the layout seed. Wording 1 renames buttons and fields: a redesign that needs healing.
+// Wording 2 only changes word forms ("Оформление заказа") and says "принят" instead of "оформлен".
+// failOrder makes the server reject orders with 500.
 // Flow: catalog → "В корзину" (mutating) → cart → checkout (fields, promo in shadow DOM,
 // consent in a cross-origin iframe, pickup in a same-origin iframe) → "Оформить заказ" (mutating) → order page.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 
 const port = Number(process.env.PORT ?? 4320);
-let layout = { seed: Number(process.env.SEED ?? 1), wording: 0 };
+let layout = { seed: Number(process.env.SEED ?? 1), wording: 0, failOrder: false };
 
 const PRODUCTS = [
   { id: "p1", title: "Ноутбук Pro 15", price: 1999 },
@@ -21,6 +23,7 @@ const orders: { id: number; sid: string; items: string[]; name: string; phone: s
 const WORDS = [
   { search: "Поиск товаров", find: "Найти", add: "В корзину", cart: "Корзина", toCheckout: "Перейти к оформлению", name: "Имя", phone: "Телефон", address: "Адрес", comment: "Комментарий", delivery: "Способ доставки", place: "Оформить заказ", consent: "Я согласен с условиями", done: "оформлен" },
   { search: "Что ищем?", find: "Искать", add: "Купить", cart: "Мои покупки", toCheckout: "К оплате", name: "Как вас зовут", phone: "Номер для связи", address: "Куда доставить", comment: "Пожелания", delivery: "Доставка", place: "Подтвердить покупку", consent: "Принимаю условия", done: "оформлен" },
+  { search: "Поиск товара", find: "Найти", add: "В корзинку", cart: "Корзина", toCheckout: "Перейти к оформлению заказа", name: "Имя", phone: "Телефон", address: "Адрес доставки", comment: "Комментарии", delivery: "Способы доставки", place: "Оформление заказа", consent: "Я согласна с условиями", done: "принят" },
 ];
 
 /** Seeded PRNG (mulberry32): the same seed always gives the same page. */
@@ -206,6 +209,7 @@ createServer(async (req, res) => {
   if (route === "GET /checkout") return send(res, 200, checkout(sid, req.headers.host ?? `127.0.0.1:${port}`), cookie);
   if (route === "POST /order") {
     const form = new URLSearchParams(await readBody(req));
+    if (layout.failOrder) return send(res, 500, doc("Ошибка сервера", `<p role="alert">Не удалось оформить заказ, попробуйте позже</p>`, shaper("error")));
     const missing = ["name", "phone", "address", "delivery"].filter((f) => !form.get(f));
     if (session.cart.length === 0 || missing.length > 0 || !session.consent) {
       const why = session.cart.length === 0 ? "корзина пуста" : missing.length ? `не заполнено: ${missing.join(", ")}` : "нет согласия с условиями";

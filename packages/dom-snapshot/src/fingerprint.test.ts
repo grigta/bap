@@ -30,6 +30,31 @@ describe("fingerprint resolver", () => {
     expect(similarity("a", "a")).toBe(1);
   });
 
+  test("[REQ-DOM-015] word forms of the same words are similar; opposite actions sharing a root are not", () => {
+    const similar = [
+      ["Оформить заказ", "Оформление заказа"],
+      ["Подтвердить", "Подтверждение"],
+      ["Отправить", "Отправка"],
+      ["Удалить", "Удаление"],
+      ["Способ доставки", "Доставка"],
+      ["В корзину", "В корзинку"],
+      ["Я согласен с условиями", "Я согласна с условиями"],
+    ];
+    for (const [a, b] of similar) expect(similarity(a!, b!), `${a} ≈ ${b}`).toBeGreaterThan(0.5);
+    const opposite = [
+      ["Войти", "Выйти"],
+      ["Login", "Logout"],
+      ["Подписаться", "Отписаться"],
+      ["Включить", "Выключить"],
+      ["Enable", "Disable"],
+      ["Subscribe", "Unsubscribe"],
+      ["Открыть", "Закрыть"],
+      ["Удалить", "Добавить"],
+      ["Оформить заказ", "Подтвердить покупку"],
+    ];
+    for (const [a, b] of opposite) expect(similarity(a!, b!), `${a} ≠ ${b}`).toBe(0);
+  });
+
   test("[REQ-DOM-006] one candidate above the threshold is found; a renamed element is missing, not replaced", () => {
     const target = el("e1", { context: "Ноутбук Pro 15 1999 ₽ В корзину" });
     const fp = fingerprintOf(target, page([target]));

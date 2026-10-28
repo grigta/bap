@@ -2,8 +2,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { type PageSnapshot, type Resolution, type Snapshot, act, captureSnapshot, pageHasText, renderFingerprint, renderTemplate, resolve, settle } from "@bap/dom-snapshot";
 import { type Step, type StepContext, defineScenario } from "@bap/scenario-sdk";
 import { z } from "zod";
-import { navigation } from "./record.ts";
-import { type Postcondition, type Recipe, type RecipeStep, secretValues } from "./schema.ts";
+import { type SeenRequest, navigation, watchChanges } from "./record.ts";
+import { type Postcondition, type Recipe, type RecipeStep, matchesProof, secretValues } from "./schema.ts";
 
 export type HealReason = "missing" | "ambiguous" | "postcondition";
 
@@ -49,6 +49,13 @@ type Ctx = StepContext<Record<string, unknown>, RecipeState>;
 export function recipeScenario(opts: RecipeScenarioOptions) {
   const { recipe } = opts;
   const secretsOf = (ctx: Ctx) => secretValues(recipe, ctx.input);
+  /** How each step found its target, to keep in the journal next to how it was proven. */
+  const found = new Map<string, string>();
+  const watchers = new WeakMap<Ctx["page"], ReturnType<typeof watchChanges>>();
+  const changesOf = (page: Ctx["page"]) => {
+    if (!watchers.has(page)) watchers.set(page, watchChanges(page));
+    return watchers.get(page)!;
+  };
 
   /**
    * The target, as soon as it is there. Missing or ambiguous only once the page has finished loading
@@ -78,6 +85,36 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
     return matched || holds(snap);
   };
 
+  /**
+   * A mutating step is proven by the site's answer to the recorded request; without that request (the site changed
+   * its API, or the agent restarted after the action) by the page (REQ-DOM-014). The journal says which.
+   */
+  const proven = async (ctx: Ctx, step: RecipeStep): Promise<boolean> => {
+    const post = step.postcondition;
+    const note = (text: string) => ctx.annotate?.({ note: [found.get(step.id), text].filter(Boolean).join("; ") });
+    if (post?.request) {
+      const proof = post.request;
+      const seen: SeenRequest[] = [];
+      const answered = () => (seen.push(...changesOf(ctx.page).take()), seen.some((r) => matchesProof(proof, r)));
+      const { snap } = await settle(ctx.page, { secrets: secretsOf(ctx), deadline: ctx.deadline, until: answered });
+      await snap.dispose();
+      answered();
+      const hit = seen.find((r) => matchesProof(proof, r));
+      if (hit) {
+        const ok = hit.status < 400;
+        note(ok ? `подтверждён ответом сайта: ${hit.method} ${new URL(hit.url).pathname} ${hit.status}` : `сайт ответил ошибкой: ${hit.method} ${new URL(hit.url).pathname} ${hit.status}`);
+        return ok;
+      }
+    }
+    if (!post?.url && !post?.text) {
+      note(`ответа сайта на ${post?.request ? `${post.request.method} ${post.request.path}` : "действие"} нет`);
+      return false;
+    }
+    const ok = await postconditionHolds(ctx, { url: post.url, text: post.text });
+    note(ok ? "подтверждён страницей" : "страница не подтвердила результат");
+    return ok;
+  };
+
   const heal = async (ctx: Ctx, step: RecipeStep, snap: Snapshot, reason: HealReason, detail: string) => {
     if (!opts.heal) throw new RecipeStepError(`step ${step.id} (${step.intent}): ${detail}`);
     const screenshot = await ctx.page.screenshot();
@@ -94,10 +131,12 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
       let handle;
       if ("ref" in located) {
         handle = located.snap.handles.get(located.ref)!;
-        ctx.annotate?.({ resolution: "found", note: `найден по отпечатку (${located.score})` });
+        found.set(step.id, `найден по отпечатку (${located.score})`);
+        ctx.annotate?.({ resolution: "found", note: found.get(step.id) });
       } else {
         const healed = await heal(ctx, step, located.snap, located.reason, located.detail);
         handle = healed.handle;
+        found.set(step.id, healed.note);
         ctx.annotate?.({ resolution: "healed", note: healed.note });
       }
       if (step.action === "extract") {
@@ -117,7 +156,10 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
       if (step.action === "navigate") await ctx.page.goto(renderTemplate(step.value!, ctx.input), navigation(ctx.deadline));
       else if (step.action === "wait") await sleep(Number(step.value));
       else if (step.action === "press") await ctx.page.keyboard.press(step.value!);
-      else await perform(ctx, step);
+      else {
+        if (step.mutating) changesOf(ctx.page).take(); // only what this action sends counts as its proof
+        await perform(ctx, step);
+      }
       if (step.mutating) return; // verify proves it; repeating a mutating action is never an option
       if (await postconditionHolds(ctx, step.postcondition)) return;
       // The target was there but the action led elsewhere: one healed attempt, it is a read-only step.
@@ -133,7 +175,7 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
       if (!(await postconditionHolds(ctx, step.postcondition))) throw new RecipeStepError(`step ${step.id} (${step.intent}): postcondition did not hold after healing`);
     };
     return step.mutating
-      ? { id: step.id, intent: step.intent, mutating: true as const, run, verify: (ctx: Ctx) => postconditionHolds(ctx, step.postcondition) }
+      ? { id: step.id, intent: step.intent, mutating: true as const, run, verify: (ctx: Ctx) => proven(ctx, step) }
       : { id: step.id, intent: step.intent, run };
   });
 

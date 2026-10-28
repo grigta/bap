@@ -82,7 +82,19 @@ export function words(s: string): string[] {
   return s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
-/** Dice coefficient on words, 0–1. */
+/**
+ * Two words are the same word in another form when they share a stem: a common beginning of at least 4 letters
+ * covering most of the shorter word ("оформить" / "оформление"). Opposites that differ in the prefix
+ * ("включить" / "выключить", "login" / "logout") share no such beginning (REQ-DOM-015).
+ */
+function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  let common = 0;
+  while (common < a.length && common < b.length && a[common] === b[common]) common++;
+  return common >= 4 && common >= 0.55 * Math.min(a.length, b.length);
+}
+
+/** Dice coefficient on words, where word forms of one word count as equal; 0–1. */
 export function similarity(a: string, b: string): number {
   if (a === b) return a ? 1 : 0;
   const x = words(a);
@@ -91,7 +103,7 @@ export function similarity(a: string, b: string): number {
   const rest = [...y];
   let common = 0;
   for (const w of x) {
-    const i = rest.indexOf(w);
+    const i = rest.findIndex((r) => sameWord(w, r));
     if (i >= 0) {
       common++;
       rest.splice(i, 1);

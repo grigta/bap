@@ -31,7 +31,7 @@ export async function shapeshiftRecipe(page: Page, baseUrl: string): Promise<Rec
   add({ intent: "Ввести название товара в поиск", action: "fill", target: await target("searchbox", "Поиск товаров"), value: "{{input.query}}", mutating: false });
   add({ intent: "Нажать «Найти»", action: "click", target: await target("button", "Найти"), mutating: false, postcondition: { url: "q=" } });
   await page.goto(`${baseUrl}/?q=${encodeURIComponent(SHOP_INPUT.query)}`);
-  add({ intent: "Положить товар в корзину", action: "click", target: await target("button", "В корзину", SHOP_INPUT.item), mutating: true, postcondition: { url: "/cart", text: "{{input.item}}" } });
+  add({ intent: "Положить товар в корзину", action: "click", target: await target("button", "В корзину", SHOP_INPUT.item), mutating: true, postcondition: { url: "/cart", text: "{{input.item}}", request: { method: "POST", path: "/cart/add", status: "3xx" } } });
   await page.request.post(`${baseUrl}/cart/add`, { form: { product: "p1" } });
   await page.goto(`${baseUrl}/cart`);
   add({ intent: "Перейти к оформлению", action: "click", target: await target("link", "Перейти к оформлению"), mutating: false, postcondition: { url: "/checkout" } });
@@ -42,7 +42,7 @@ export async function shapeshiftRecipe(page: Page, baseUrl: string): Promise<Rec
   add({ intent: "Заполнить адрес", action: "fill", target: await target("textbox", "Адрес"), value: "{{input.address}}", mutating: false });
   add({ intent: "Выбрать способ доставки", action: "select", target: await target("combobox", "Способ доставки"), value: "{{input.delivery}}", mutating: false });
   add({ intent: "Согласиться с условиями", action: "click", target: await target("checkbox", "Я согласен с условиями"), mutating: false });
-  add({ intent: "Оформить заказ", action: "click", target: await target("button", "Оформить заказ"), mutating: true, postcondition: { url: "/order/", text: "оформлен" } });
+  add({ intent: "Оформить заказ", action: "click", target: await target("button", "Оформить заказ"), mutating: true, postcondition: { url: "/order/", text: "оформлен", request: { method: "POST", path: "/order", status: "3xx" } } });
   await page.request.delete(`${baseUrl}/api/orders`);
   return {
     schema: 1,

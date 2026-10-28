@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@bap/database";
 import { type Fingerprint, type PageSnapshot, type SnapshotElement, fingerprintOf, renderTemplate, resolve, serializeSnapshot, templatize } from "@bap/dom-snapshot";
-import { type Recipe, type RecipeInput, type RecipeStep, recipeInputSchema, recipeJsonSchema, recipeSchema } from "@bap/recipe";
+import { type Recipe, type RecipeInput, type RecipeStep, pathPattern, recipeInputSchema, recipeJsonSchema, recipeSchema, statusClass } from "@bap/recipe";
 import type { RecordDecision } from "@bap/recipe";
 import type { preHandlerAsyncHookHandler } from "fastify";
 import { z } from "zod";
@@ -305,7 +305,7 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
         params: z.object({ id: z.uuid() }),
         body: z.union([
           z.object({ poll: z.literal(true) }),
-          z.object({ snapshot: snapshotSchema, screenshot: z.string().regex(/^[\w.-]+$/), last: z.object({ ok: z.boolean(), error: z.string().optional() }).nullable() }),
+          z.object({ snapshot: snapshotSchema, screenshot: z.string().regex(/^[\w.-]+$/), last: z.object({ ok: z.boolean(), error: z.string().optional(), requests: z.array(z.object({ method: z.string(), url: z.string(), status: z.number().int() })).optional() }).nullable() }),
         ]),
         // RecordDecision from @bap/recipe: act, wait, done or fail.
         response: { 200: z.looseObject({ type: z.enum(["act", "wait", "done", "fail"]) }), 404: errorSchema, 409: errorSchema },
@@ -327,7 +327,7 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
       }
       if ("poll" in request.body) return answer({ type: "fail", code: "NOTHING_PENDING", message: "no action is waiting; send an observation" });
 
-      const { snapshot, screenshot, last } = request.body as { snapshot: PageSnapshot; screenshot: string; last: { ok: boolean; error?: string } | null };
+      const { snapshot, screenshot, last } = request.body as { snapshot: PageSnapshot; screenshot: string; last: { ok: boolean; error?: string; requests?: { method: string; url: string; status: number }[] } | null };
       const inputs = inputsOf(run.inputs);
       const input = (run.input ?? {}) as Record<string, unknown>;
       const steps = rec.steps as DraftStep[];
@@ -337,6 +337,10 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
         lastStep.urlAfter = snapshot.url;
         lastStep.titleAfter = snapshot.title;
       }
+      // The site's own answer to a mutating action is its proof on replay (REQ-DOM-014).
+      const proof = last?.ok && lastStep?.mutating ? last.requests?.find((r) => r.status >= 200 && r.status < 400) : undefined;
+      if (proof && lastStep && !lastStep.postcondition?.request)
+        lastStep.postcondition = { ...lastStep.postcondition, request: { method: proof.method, path: pathPattern(new URL(proof.url).pathname), status: statusClass(proof.status) as "2xx" | "3xx" } };
       if (last && !last.ok && lastStep) {
         steps.pop(); // a failed action is not part of the solution
         history.push(`  ↳ failed: ${last.error ?? "unknown error"}`);
@@ -382,7 +386,8 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
       }
 
       const check = decision.previousCheck;
-      if (lastStep && steps.at(-1) === lastStep && check && (check.text || check.url) && !lastStep.postcondition) lastStep.postcondition = cleanCheck(check, openValues(inputs, input));
+      if (lastStep && steps.at(-1) === lastStep && check && (check.text || check.url) && !lastStep.postcondition?.text && !lastStep.postcondition?.url)
+        lastStep.postcondition = { ...lastStep.postcondition, ...cleanCheck(check, openValues(inputs, input)) };
 
       if (decision.decision === "fail") {
         await save();
@@ -390,7 +395,8 @@ export function registerRecipes(app: App, { db, fleet, coordinator, store, opera
       }
       if (decision.decision === "done") {
         const final = steps.at(-1);
-        if (final && decision.result && (decision.result.text || decision.result.url)) final.postcondition ??= cleanCheck(decision.result, openValues(inputs, input));
+        if (final && decision.result && (decision.result.text || decision.result.url) && !final.postcondition?.text && !final.postcondition?.url)
+          final.postcondition = { ...final.postcondition, ...cleanCheck(decision.result, openValues(inputs, input)) };
         const recipe = finishRecipe(run.goal ?? "", run.start_url ?? "", inputs, steps, run.id);
         const parsed = recipeSchema.safeParse(recipe);
         if (!parsed.success) {
@@ -573,11 +579,13 @@ function finishRecipe(goal: string, startUrl: string, inputs: RecipeInput[], dra
   const steps: RecipeStep[] = [{ id: "s01", intent: "Открыть сайт", action: "navigate", value: startUrl, mutating: false }];
   drafts.forEach(({ urlBefore, urlAfter, titleAfter, ...step }, i) => {
     let postcondition = step.postcondition;
-    // The model did not say what proves a mutating step: the page it led to does.
-    if (!postcondition && step.mutating && urlAfter) {
+    // The model did not say what on the page proves a mutating step: the page it led to does. It is the fallback
+    // when the site's answer to the recorded request is not seen on replay.
+    if (step.mutating && !postcondition?.url && !postcondition?.text && urlAfter) {
       const before = new URL(urlBefore);
       const after = new URL(urlAfter);
-      postcondition = after.pathname !== before.pathname ? { url: after.pathname.replace(/\d+$/, "") } : titleAfter ? { text: titleAfter } : undefined;
+      const page = after.pathname !== before.pathname ? { url: after.pathname.replace(/\d+$/, "") } : titleAfter ? { text: titleAfter } : {};
+      postcondition = { ...postcondition, ...page };
     }
     steps.push({ ...step, id: `s${String(i + 2).padStart(2, "0")}`, ...(postcondition && { postcondition }) });
   });

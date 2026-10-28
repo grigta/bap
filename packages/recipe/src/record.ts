@@ -26,7 +26,30 @@ export interface Observation {
   snapshot: PageSnapshot;
   screenshot: Buffer;
   /** Outcome of the previous action; null before the first one. */
-  last: { ok: boolean; error?: string } | null;
+  last: { ok: boolean; error?: string; requests?: SeenRequest[] } | null;
+}
+
+/** A request that changes data (not GET) and its answer, seen while the page settled after an action. */
+export interface SeenRequest {
+  method: string;
+  url: string;
+  status: number;
+}
+
+/** Requests that change data: what a site answers to them proves a mutating step (REQ-DOM-014). */
+export function watchChanges(page: Page): { take: () => SeenRequest[] } {
+  let seen: SeenRequest[] = [];
+  page.on("response", (res) => {
+    const req = res.request();
+    if (req.method() !== "GET" && req.method() !== "HEAD" && ["document", "xhr", "fetch"].includes(req.resourceType())) seen.push({ method: req.method(), url: req.url(), status: res.status() });
+  });
+  return {
+    take: () => {
+      const out = seen;
+      seen = [];
+      return out;
+    },
+  };
 }
 
 export interface Recorder {
@@ -86,6 +109,7 @@ export async function recordTask(opts: RecordOptions): Promise<RecordOutcome> {
   const pollMs = opts.pollMs ?? 1500;
   const cancelled = (): RecordOutcome | null => (opts.shouldCancel?.() ? { status: "CANCELLED" } : null);
 
+  const changes = watchChanges(page);
   const opened = Date.now();
   await page.goto(opts.startUrl, navigation(opts.deadline));
   const loaded = await settle(page, { secrets: opts.secrets, deadline: opts.deadline });
@@ -100,6 +124,8 @@ export async function recordTask(opts: RecordOptions): Promise<RecordOutcome> {
     const { snap } = await settle(page, { secrets: opts.secrets, deadline: opts.deadline });
     try {
       const screenshot = await page.screenshot();
+      // Requests sent by the last action have been answered while the page settled.
+      if (last) last = { ...last, requests: changes.take() };
       let decision = await recorder.observe({ snapshot: snap.page, screenshot, last });
       while (decision.type === "wait") {
         const waiting = cancelled();
@@ -111,6 +137,7 @@ export async function recordTask(opts: RecordOptions): Promise<RecordOutcome> {
       if (decision.type === "fail") return { status: "FAILED", errorCode: decision.code, errorMessage: decision.message };
 
       const started = Date.now();
+      changes.take();
       const value = renderTemplate(decision.value ?? "", opts.input);
       try {
         if (decision.action === "press") await page.keyboard.press(value);

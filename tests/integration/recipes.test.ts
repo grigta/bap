@@ -40,7 +40,7 @@ const api = (method: "GET" | "POST", url: string, payload?: object, headers: Rec
 const run = async (id: string) => (await api("GET", `/api/v1/runs/${id}`)).json();
 const steps = async (id: string) => (await api("GET", `/api/v1/runs/${id}/steps`)).json() as Promise<{ stepId: string; status: string; resolution: string | null; note: string | null; intent: string | null; mutating: boolean }[]>;
 const shopInput = () => ({ baseUrl: site.url, ...SHOP_INPUT });
-const layout = (l: { seed: number; wording: number }) => fetch(`${site.url}/api/layout`, { method: "POST", body: JSON.stringify(l) });
+const layout = (l: { seed: number; wording: number; failOrder?: boolean }) => fetch(`${site.url}/api/layout`, { method: "POST", body: JSON.stringify({ failOrder: false, ...l }) });
 const orders = async () => (await (await fetch(`${site.url}/api/orders`)).json()) as { items: string[]; name: string; address: string; delivery: string }[];
 const llmCalls = async (runId?: string) => Number((await (runId ? db.selectFrom("llm_calls").where("run_id", "=", runId) : db.selectFrom("llm_calls")).select(db.fn.countAll<string>().as("n")).executeTakeFirstOrThrow()).n);
 
@@ -160,7 +160,9 @@ describe("recipes", { timeout: 240_000 }, () => {
     const shot = body.steps.find((s) => s.screenshot)!.screenshot!;
     expect((await api("GET", `/api/v1/recipes/shop-recorded/screenshots/${shot}`)).headers["content-type"]).toBe("image/png");
     expect(JSON.stringify(body)).not.toContain(SHOP_INPUT.address);
-    expect(body.steps.find((s) => s.intent === "Положить товар в корзину")?.postcondition).toEqual({ url: "/cart", text: "{{input.item}}" });
+    // The site's answers to the two mutating actions were recorded as their proof (REQ-DOM-014).
+    expect(body.steps.find((s) => s.intent === "Положить товар в корзину")?.postcondition).toEqual({ url: "/cart", text: "{{input.item}}", request: { method: "POST", path: "/cart/add", status: "3xx" } });
+    expect(body.steps.find((s) => s.intent === "Оформить заказ")?.postcondition?.request).toEqual({ method: "POST", path: "/order", status: "3xx" });
 
     await api("POST", "/api/v1/recipes/shop-recorded/versions/1.0.0/publish");
     await layout({ seed: 11, wording: 0 });
@@ -191,7 +193,7 @@ describe("recipes", { timeout: 240_000 }, () => {
     const journal = await steps(runId);
     const healed = journal.filter((s) => s.resolution === "healed");
     expect(healed.length).toBeGreaterThanOrEqual(5);
-    expect(healed.find((s) => s.stepId === "s11")?.note).toBe("Элемент теперь называется «Подтвердить покупку»");
+    expect(healed.find((s) => s.stepId === "s11")?.note).toBe("Элемент теперь называется «Подтвердить покупку»; подтверждён ответом сайта: POST /order 303");
     expect(await llmCalls(runId)).toBe(healed.length);
     expect(await orders()).toHaveLength(1);
 
@@ -220,5 +222,36 @@ describe("recipes", { timeout: 240_000 }, () => {
     const runId = randomUUID();
     await gate.ask({ purpose: "heal", runId, system: "", prompt: "", schema: {} });
     await expect(gate.ask({ purpose: "heal", runId, system: "", prompt: "", schema: {} })).rejects.toBeInstanceOf(BudgetExceededError);
+  });
+
+  test("[REQ-DOM-015][REQ-DOM-014] other word forms are found without the model; the order is proven by the site's answer when its wording changed", async () => {
+    await api("POST", "/api/v1/recipes/shop-forms/versions", manual);
+    await api("POST", "/api/v1/recipes/shop-forms/versions/1.0.0/publish");
+    await layout({ seed: 12, wording: 2 }); // «Оформление заказа», «В корзинку», «Заказ принят» instead of «оформлен»
+    await fetch(`${site.url}/api/orders`, { method: "DELETE" });
+    const runId = await startRun("shop-forms", "1.0.0");
+    const done = await finished(runId);
+    expect(done.status, `${done.errorCode}: ${done.errorMessage}`).toBe("SUCCEEDED");
+    const journal = await steps(runId);
+    expect(journal.filter((s) => s.stepId !== "s01").every((s) => s.resolution === "found")).toBe(true);
+    expect(journal.find((s) => s.stepId === "s11")?.note).toMatch(/подтверждён ответом сайта: POST \/order 303$/);
+    expect(journal.find((s) => s.stepId === "s04")?.note).toMatch(/подтверждён ответом сайта: POST \/cart\/add 303$/);
+    expect(await llmCalls(runId)).toBe(0);
+    expect(await orders()).toHaveLength(1);
+  });
+
+  test("[REQ-DOM-014] a site that answers the order with an error leaves the run for review, and the order is not repeated", async () => {
+    await layout({ seed: 12, wording: 0, failOrder: true });
+    await fetch(`${site.url}/api/orders`, { method: "DELETE" });
+    const runId = await startRun("shop-forms", "1.0.0");
+    const done = await finished(runId);
+    expect(done).toMatchObject({ status: "NEEDS_REVIEW", errorCode: "UNVERIFIED" });
+    const s11 = (await steps(runId)).find((s) => s.stepId === "s11")!;
+    expect(s11).toMatchObject({ status: "unverified" });
+    expect(s11.note).toMatch(/сайт ответил ошибкой: POST \/order 500$/);
+    expect(await orders()).toHaveLength(0);
+    await layout({ seed: 12, wording: 0 });
+    // The profile waits for review after an unconfirmed change; release it for the next tests.
+    await api("POST", `/api/v1/profiles/${profileId}/release-review`);
   });
 });

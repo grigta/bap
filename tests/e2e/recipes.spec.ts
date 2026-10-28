@@ -1,34 +1,15 @@
-import { type ChildProcess, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import type { ChildProcess } from "node:child_process";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, localMac, logIn } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
-const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
 const SHOP = "http://127.0.0.1:4320";
 const agents: ChildProcess[] = [];
 const suffix = Date.now().toString(36);
 const recipe = `shop-${suffix}`;
 
 test.afterAll(() => agents.forEach(killAgent));
-
-/** Enrolls a local-Chromium "Mac" with one profile and imports it; returns the profile name. */
-async function mac(page: Page, name: string): Promise<string> {
-  const data = mkdtempSync(join(tmpdir(), "bap-e2e-recipes-"));
-  mkdirSync(join(data, "profiles", `${name}-profile`), { recursive: true });
-  const env = { ...process.env, BAP_AGENT_DATA: data, BAP_PROVIDER: "local" };
-  const { token } = await (await page.request.post("/api/v1/agents/enrollments")).json();
-  const enrolled = spawnSync("node", [cli, "enroll", "--server", `http://127.0.0.1:${STACK_PORTS.controlPlane}`, "--token", token, "--name", name], { env, encoding: "utf8" });
-  expect(enrolled.stderr).toBe("");
-  agents.push(spawnAgent(cli, env));
-  await expect.poll(async () => (await (await page.request.get("/api/v1/agents")).json()).find((a: { name: string; maxSessions: number | null }) => a.name === name && a.maxSessions !== null), { timeout: 15_000 }).toBeTruthy();
-  const agentId = (await (await page.request.get("/api/v1/agents")).json()).find((a: { name: string }) => a.name === name).id;
-  expect((await page.request.post("/api/v1/profiles/import", { data: { agentId, externalProfileId: `${name}-profile`, name: `${name}-profile` } })).status()).toBe(201);
-  return `${name}-profile`;
-}
 
 const modelCalls = async (runId: string) => (await (await fetch(`http://127.0.0.1:${STACK_PORTS.control}/llm-calls?run=${runId}`)).json()).calls as number;
 const runIdFromUrl = (page: Page) => page.url().split("/runs/")[1]!.split("?")[0]!;
@@ -57,8 +38,8 @@ test("[REQ-DOM-004][REQ-DOM-008][REQ-DOM-011][REQ-DOM-012][REQ-DOM-013] demo: a 
   await fetch(`${SHOP}/api/orders`, { method: "DELETE" });
   await fetch(`${SHOP}/api/layout`, { method: "POST", body: JSON.stringify({ seed: 1, wording: 0 }) });
   await logIn(page);
-  const first = await mac(page, `rec-a-${suffix}`);
-  const second = await mac(page, `rec-b-${suffix}`);
+  const first = await localMac(page, agents, `rec-a-${suffix}`);
+  const second = await localMac(page, agents, `rec-b-${suffix}`);
 
   // 1. A new task for the site, recorded live; two actions that change data wait for the operator.
   await goTo(page, "Рецепты");

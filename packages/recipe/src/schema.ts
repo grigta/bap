@@ -16,6 +16,16 @@ export const fingerprintSchema = z.object({
   position: z.object({ x: z.number(), y: z.number() }),
 });
 
+/**
+ * The request by which the site accepted a change while recording (REQ-DOM-014): method, path with ids as `*`,
+ * and the status class. On replay a successful answer to the same request proves the step.
+ */
+export const requestProofSchema = z.object({
+  method: z.string().regex(/^[A-Z]+$/),
+  path: z.string().startsWith("/"),
+  status: z.enum(["2xx", "3xx"]),
+});
+
 /** What must be true after the step; both texts may hold {{input.key}} templates. */
 export const postconditionSchema = z
   .object({
@@ -23,8 +33,9 @@ export const postconditionSchema = z
     url: z.string().min(1).optional(),
     /** The page shows this text somewhere. */
     text: z.string().min(1).optional(),
+    request: requestProofSchema.optional(),
   })
-  .refine((p) => p.url !== undefined || p.text !== undefined, "a postcondition needs url or text");
+  .refine((p) => p.url !== undefined || p.text !== undefined || p.request !== undefined, "a postcondition needs url, text or request");
 
 export const RECIPE_ACTIONS = ["click", "fill", "select", "press", "navigate", "wait", "extract"] as const;
 const TARGETED = new Set(["click", "fill", "select", "extract"]);
@@ -72,6 +83,31 @@ export type Recipe = z.infer<typeof recipeSchema>;
 export type RecipeStep = z.infer<typeof recipeStepSchema>;
 export type RecipeInput = z.infer<typeof recipeInputSchema>;
 export type Postcondition = z.infer<typeof postconditionSchema>;
+export type RequestProof = z.infer<typeof requestProofSchema>;
+
+/** A path as a pattern: numbers, uuids and long hex ids become `*`, so /order/17 matches /order/42. */
+export function pathPattern(path: string): string {
+  return path
+    .split("/")
+    .map((seg) => (/^\d+$/.test(seg) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg) || /^[0-9a-f]{16,}$/i.test(seg) ? "*" : seg))
+    .join("/");
+}
+
+/** Whether a request seen in the browser is the recorded one. */
+export function matchesProof(proof: Pick<RequestProof, "method" | "path">, request: { method: string; url: string }): boolean {
+  if (request.method !== proof.method) return false;
+  let path: string;
+  try {
+    path = new URL(request.url).pathname;
+  } catch {
+    return false;
+  }
+  const want = proof.path.split("/");
+  const got = path.split("/");
+  return want.length === got.length && want.every((seg, i) => seg === "*" || seg === got[i]);
+}
+
+export const statusClass = (status: number) => `${Math.floor(status / 100)}xx`;
 
 /** The published JSON Schema of a recipe. */
 export const recipeJsonSchema = () => z.toJSONSchema(recipeSchema, { io: "input" });
