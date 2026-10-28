@@ -1,10 +1,12 @@
-import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 /** Artifact and scenario-bundle storage. S3-compatible in production (ADR-0019), in-memory in tests. */
 export interface ObjectStore {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
   /** null when the object does not exist. */
   get(key: string): Promise<{ body: Buffer; contentType: string } | null>;
+  /** Deleting a missing object is not an error. */
+  delete(key: string): Promise<void>;
 }
 
 export function memoryStore(): ObjectStore {
@@ -15,6 +17,9 @@ export function memoryStore(): ObjectStore {
     },
     async get(key) {
       return objects.get(key) ?? null;
+    },
+    async delete(key) {
+      objects.delete(key);
     },
   };
 }
@@ -51,6 +56,9 @@ export async function s3Store(opts: S3Options): Promise<ObjectStore> {
         if ((e as { name?: string }).name === "NoSuchKey") return null;
         throw e;
       }
+    },
+    async delete(key) {
+      await client.send(new DeleteObjectCommand({ Bucket: opts.bucket, Key: key }));
     },
   };
 }

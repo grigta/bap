@@ -56,3 +56,11 @@ test("the Control Plane S3 store creates its bucket, stores objects and reports 
   // Opening the store again finds the existing bucket instead of failing.
   expect(await (await s3Store(opts)).get("runs/r1/01-step.png")).not.toBeNull();
 });
+
+test("[REQ-SEC-010] the S3 store deletes objects; deleting a missing one is not an error", async () => {
+  const store = await s3Store({ endpoint: `http://${s3.getHost()}:${s3.getMappedPort(8333)}`, bucket: "bap-delete", accessKeyId: "test", secretAccessKey: "test" });
+  await store.put("runs/r2/01-step.png", Buffer.from("png"), "image/png");
+  await store.delete("runs/r2/01-step.png");
+  expect(await store.get("runs/r2/01-step.png")).toBeNull();
+  await store.delete("runs/r2/01-step.png");
+});

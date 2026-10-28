@@ -10,7 +10,8 @@ export type EmitRunEvent = (event: Omit<RunEvent, "v" | "id" | "ts" | "seq">) =>
 
 export interface RunnerDeps {
   serverUrl: string;
-  agentKey: string;
+  /** Current key: it may be rotated while the run executes. */
+  agentKey: () => string;
   agentId: string;
   provider: BrowserProvider;
   dataDir: string;
@@ -30,7 +31,7 @@ async function fetchBundle(assign: RunAssignPayload, deps: RunnerDeps): Promise<
   const file = `${id}@${version}-${expected.slice(0, 12)}.mjs`;
   const manifest = join(dir, `${id}@${version}-${expected.slice(0, 12)}.json`);
   if (!existsSync(join(dir, file)) || sha256(readFileSync(join(dir, file))) !== expected) {
-    const res = await fetch(`${deps.serverUrl}/api/v1/scenarios/${id}/versions/${version}/bundle`, { headers: { authorization: `Bearer ${deps.agentKey}` } });
+    const res = await fetch(`${deps.serverUrl}/api/v1/scenarios/${id}/versions/${version}/bundle`, { headers: { authorization: `Bearer ${deps.agentKey()}` } });
     if (!res.ok) throw new RunnerError("BUNDLE_UNAVAILABLE", `bundle download failed: HTTP ${res.status}`);
     const body = Buffer.from(await res.arrayBuffer());
     if (sha256(body) !== expected) throw new RunnerError("BUNDLE_CHECKSUM_MISMATCH", `bundle ${id}@${version} does not match sha256 ${expected}`);

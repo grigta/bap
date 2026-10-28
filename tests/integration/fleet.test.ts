@@ -107,6 +107,29 @@ describe("enrollment", () => {
   });
 });
 
+describe("audit", () => {
+  test("[REQ-SEC-012] operator actions and rejected attempts are journalled with actor, target and outcome, without secrets", async () => {
+    const inv = await invite();
+    const { agentId } = (await enroll(inv.token, "mac-audited")).json();
+    await enroll(inv.token, "mac-audited-again");
+    await api("POST", `/api/v1/agents/${agentId}/drain`);
+    await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { login: "operator", password: "wrong-password-123" } });
+    await app.inject({ method: "POST", url: `/api/v1/agents/${agentId}/revoke` }); // no session
+
+    expect((await app.inject({ method: "GET", url: "/api/v1/audit" })).statusCode).toBe(401);
+    const events = (await api("GET", "/api/v1/audit?limit=50")).json() as { actor: string; action: string; outcome: string; targetId: string | null; details: Record<string, unknown> }[];
+    const find = (action: string, outcome: string) => events.find((e) => e.action === action && e.outcome === outcome);
+    expect(find("POST /api/v1/agents/enrollments", "ok")).toMatchObject({ actor: "operator:operator" });
+    expect(find("POST /api/v1/agents/enroll", "ok")).toMatchObject({ details: { status: 201, name: "mac-audited" } });
+    expect(find("POST /api/v1/agents/enroll", "denied")).toMatchObject({ actor: "anonymous", details: { status: 401, name: "mac-audited-again" } });
+    expect(find("POST /api/v1/agents/:id/drain", "ok")).toMatchObject({ actor: "operator:operator", targetId: agentId });
+    expect(find("POST /api/v1/agents/:id/revoke", "denied")).toMatchObject({ actor: "anonymous", targetId: agentId, details: { status: 401 } });
+    expect(find("POST /api/v1/auth/login", "denied")).toMatchObject({ details: { status: 401, login: "operator" } });
+    expect(JSON.stringify(events)).not.toMatch(/wrong-password-123|pw"|token/);
+    expect(JSON.stringify(events)).not.toContain(inv.token);
+  });
+});
+
 describe("connection", () => {
   test("[REQ-PROTO-001] the agent dials out and listens on no TCP port; the socket needs agent credentials", async () => {
     const agent = await newAgent("mac-dialer");
@@ -150,13 +173,40 @@ describe("connection", () => {
     expect(view.heartbeats[0]).toEqual({ cpuPercent: expect.any(Number), memoryPercent: expect.any(Number), lsAvailable: false, activeSessions: 0, at: expect.any(String) });
   });
 
-  test("revoking an agent closes its socket and its credentials stop working", async () => {
+  test("[REQ-SEC-005] revoking an agent closes its socket for good; re-registration grants nothing back", async () => {
     const agent = await newAgent("mac-revoked");
     const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
     await until("ONLINE", () => agentView(agent.agentId), (a) => a.connection === "ONLINE");
-    expect((await api("POST", `/api/v1/agents/${agent.agentId}/revoke`)).json().status).toBe("REVOKED");
+    // Revoked means cut off: never shown as connected, even within the heartbeat window.
+    expect((await api("POST", `/api/v1/agents/${agent.agentId}/revoke`)).json()).toMatchObject({ status: "REVOKED", connection: "OFFLINE" });
     expect(await running.stopped).toBe("revoked");
     await expect(rawSocket(agent.agentKey)).rejects.toThrow("HTTP 401");
+    // A restarted agent with the same key is refused again.
+    const restarted = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
+    expect(await restarted.stopped).toBe("revoked");
+    // Revocation is final, and a new invitation cannot take over the revoked agent's identity.
+    expect((await api("POST", `/api/v1/agents/${agent.agentId}/activate`)).statusCode).toBe(409);
+    expect((await enroll((await invite()).token, "mac-revoked")).statusCode).toBe(409);
+    const fresh = (await enroll((await invite()).token, "mac-revoked-2")).json();
+    expect(fresh.agentId).not.toBe(agent.agentId);
+    expect(await agentView(agent.agentId)).toMatchObject({ status: "REVOKED" });
+  });
+
+  test("[REQ-SEC-005] key rotation: the agent switches to a new key and reconnects; the old key is rejected", async () => {
+    const agent = await newAgent("mac-rotated");
+    let rotated = "";
+    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, onKeyRotated: (k) => (rotated = k), provider: null, providerName: "none", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
+    await until("ONLINE", () => agentView(agent.agentId), (a) => a.connection === "ONLINE");
+    expect((await api("POST", `/api/v1/agents/${agent.agentId}/rotate-key`)).statusCode).toBe(202);
+    await until("new key", async () => rotated, (k) => k !== "");
+    expect(rotated).not.toBe(agent.agentKey);
+    await until("ONLINE with the new key", () => agentView(agent.agentId), (a) => a.connection === "ONLINE");
+    await expect(rawSocket(agent.agentKey)).rejects.toThrow("HTTP 401");
+    const { ws } = await rawSocket(rotated);
+    ws.close();
+    running.stop();
+    const audited = await db.selectFrom("audit_events").select(["action", "actor"]).where("target_id", "=", agent.agentId).execute();
+    expect(audited.map((a) => a.action)).toEqual(expect.arrayContaining(["agent key rotated"]));
   });
 });
 

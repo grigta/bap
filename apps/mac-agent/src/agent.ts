@@ -5,6 +5,8 @@ import { type BrowserProvider, ProfileNotFoundError } from "@bap/browser-adapter
 import { AGENT_SOCKET_PATH, type AgentEvent, type AgentRequestPayload, type HeartbeatPayload, type RunAssignPayload, message, serverMessage } from "@bap/protocol";
 import WebSocket from "ws";
 import { AgentStore, type OutboxEvent } from "./agent-store.ts";
+import { checkServerUrl } from "./config.ts";
+import { purgeLocalRuns } from "./retention.ts";
 import { type EmitRunEvent, executeRun } from "./runner.ts";
 
 export const AGENT_VERSION = "0.1.0";
@@ -20,6 +22,8 @@ class CodedError extends Error {
 export interface AgentOptions {
   serverUrl: string;
   agentKey: string;
+  /** Persists a rotated key (keychain or file); called before the agent reconnects with it. */
+  onKeyRotated?: (agentKey: string) => void;
   /** Browser provider on this Mac (Linken Sphere in production); null when there is none. */
   provider: BrowserProvider | null;
   providerName: string;
@@ -28,6 +32,8 @@ export interface AgentOptions {
   dataDir: string;
   log?: (line: string) => void;
   maxReconnectDelayMs?: number;
+  /** Local data of settled runs is deleted after this many days (REQ-SEC-010); kept when omitted. */
+  retentionDays?: number;
 }
 
 export interface RunningAgent {
@@ -73,14 +79,17 @@ export function memoryPercent(vmStat = platform() === "darwin" ? execFileSync("v
 const runningByDataDir = new Map<string, Set<string>>();
 
 export function startAgent(opts: AgentOptions): RunningAgent {
+  checkServerUrl(opts.serverUrl);
   if (!runningByDataDir.has(opts.dataDir)) runningByDataDir.set(opts.dataDir, new Set());
   const runningInThisProcess = runningByDataDir.get(opts.dataDir)!;
   const log = opts.log ?? ((line: string) => console.log(line));
   const cpu = cpuSampler();
   const url = opts.serverUrl.replace(/^http/, "ws") + AGENT_SOCKET_PATH;
   const store = new AgentStore(opts.dataDir);
+  let agentKey = opts.agentKey;
   let socket: WebSocket | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
+  let retentionTimer: NodeJS.Timeout | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
   let delay = 1000;
   let finished = false;
@@ -91,6 +100,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     if (finished) return;
     finished = true;
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (retentionTimer) clearInterval(retentionTimer);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     socket?.terminate();
     finish(reason);
@@ -140,7 +150,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
             // In order: an event referring to a screenshot is sent only after the upload.
             const res = await fetch(`${opts.serverUrl}/api/v1/runs/${item.artifact.runId}/artifacts/${item.artifact.name}`, {
               method: "PUT",
-              headers: { authorization: `Bearer ${opts.agentKey}`, "content-type": "image/png" },
+              headers: { authorization: `Bearer ${agentKey}`, "content-type": "image/png" },
               body: readFileSync(item.artifact.path),
             }).catch(() => null);
             if (res?.ok || res?.status === 404 || res?.status === 409) store.remove(item.rowId); // 404/409: the run is gone or final
@@ -172,12 +182,26 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   };
   const recovering = recoverInterrupted();
 
+  if (opts.retentionDays !== undefined) {
+    const days = opts.retentionDays;
+    const sweep = () => {
+      try {
+        const purged = purgeLocalRuns(store, opts.dataDir, new Date(Date.now() - days * 86_400_000));
+        if (purged.length > 0) log(`deleted local data of ${purged.length} run(s) older than ${days} days`);
+      } catch (e) {
+        log(`retention sweep failed: ${e}`);
+      }
+    };
+    void recovering.then(sweep);
+    retentionTimer = setInterval(sweep, 3_600_000).unref();
+  }
+
   const startRun = (assign: RunAssignPayload, provider: BrowserProvider) => {
     const control = { cancelled: false };
     activeRuns.set(assign.runId, control);
     runningInThisProcess.add(assign.runId);
     store.setRun(assign.runId, "running", assign);
-    void executeRun(assign, { serverUrl: opts.serverUrl, agentKey: opts.agentKey, agentId, provider, dataDir: opts.dataDir, store, emit, isCancelled: () => control.cancelled, log }).finally(() => {
+    void executeRun(assign, { serverUrl: opts.serverUrl, agentKey: () => agentKey, agentId, provider, dataDir: opts.dataDir, store, emit, isCancelled: () => control.cancelled, log }).finally(() => {
       activeRuns.delete(assign.runId);
       runningInThisProcess.delete(assign.runId);
       store.setRun(assign.runId, "finished");
@@ -210,7 +234,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     await recovering;
     if (finished) return;
     let seq = 0;
-    const ws = new WebSocket(url, { headers: { authorization: `Bearer ${opts.agentKey}` } });
+    const ws = new WebSocket(url, { headers: { authorization: `Bearer ${agentKey}` } });
     socket = ws;
     const send = (event: Omit<AgentEvent, "v" | "id" | "ts" | "seq">) => ws.send(JSON.stringify({ ...message(event), seq: ++seq }));
 
@@ -255,6 +279,15 @@ export function startAgent(opts: AgentOptions): RunningAgent {
       } else if (msg.type === "server.ack") store.acknowledge(msg.payload.id);
       else if (msg.type === "run.assign") onAssign(msg.payload);
       else if (msg.type === "run.cancel") onCancel(msg.payload.runId);
+      else if (msg.type === "agent.rotate-key") {
+        const res = await fetch(`${opts.serverUrl}/api/v1/agents/me/key`, { method: "POST", headers: { authorization: `Bearer ${agentKey}` } });
+        if (!res.ok) return log(`key rotation failed: HTTP ${res.status}`);
+        const { agentKey: rotated } = (await res.json()) as { agentKey: string };
+        opts.onKeyRotated?.(rotated); // persisted first: a crash now must not lose the only valid key
+        agentKey = rotated;
+        log("agent key rotated; reconnecting with the new key");
+        ws.close(1000, "key rotated");
+      }
       else if (msg.type === "server.request") {
         const respond = (payload: { ok: boolean; result?: unknown; error?: { code: string; message: string } }) =>
           ws.send(JSON.stringify(message({ type: "agent.response", payload: { requestId: msg.id, ...payload } })));

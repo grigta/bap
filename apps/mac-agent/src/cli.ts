@@ -8,13 +8,16 @@ import { parseArgs } from "node:util";
 import { type BrowserProvider, LinkenSphereProvider, LocalChromiumProvider } from "@bap/browser-adapters";
 import { CheckpointStore, type RunStatus, loadScenarioBundle, runScenario } from "@bap/engine";
 import { startAgent } from "./agent.ts";
-import { dataDir, enroll, loadConfig, saveConfig } from "./config.ts";
+import { checkServerUrl, dataDir, defaultSecretStore, enroll, loadConfig, saveConfig } from "./config.ts";
+import { LINKEN_SPHERE_SERVICE } from "./secret-store.ts";
 import { launchAgentPath, launchAgentPlist } from "./launchagent.ts";
 
 const USAGE = `usage:
   bap-agent enroll --server <url> --token <invitation> [--name <name>]
   bap-agent start
   bap-agent install-launchagent [--load]
+  bap-agent ls-credentials --email <email>     (password on stdin; stored in the Keychain)
+  bap-agent ls-signin --email <email>
   bap-agent run <scenario-id> --profile <id> [--input '<json>'] [--version x.y.z]
                 [--provider ls|local] [--bundles dist/scenarios] [--artifacts artifacts]`;
 const EXIT: Record<RunStatus, number> = { SUCCEEDED: 0, FAILED: 1, NEEDS_REVIEW: 2, CANCELLED: 4 };
@@ -33,6 +36,7 @@ const { positionals, values } = parseArgs({
     token: { type: "string" },
     name: { type: "string", default: hostname().replace(/\.local$/, "") },
     load: { type: "boolean", default: false },
+    email: { type: "string" },
     profile: { type: "string" },
     input: { type: "string", default: "{}" },
     version: { type: "string" },
@@ -54,11 +58,17 @@ if (command === "enroll") {
   }
 } else if (command === "start") {
   const config = loadConfig();
+  try {
+    checkServerUrl(config.serverUrl);
+  } catch (e) {
+    fail((e as Error).message);
+  }
   // BAP_PROVIDER=local runs on plain Chromium (tests, machines without Linken Sphere).
   const local = process.env.BAP_PROVIDER === "local";
   const agent = startAgent({
     serverUrl: config.serverUrl,
     agentKey: config.agentKey,
+    onKeyRotated: (agentKey) => saveConfig({ ...config, agentKey }),
     provider: local
       ? new LocalChromiumProvider({ profilesDir: join(dataDir(), "profiles"), headless: process.env.BAP_HEADLESS !== "false" })
       : process.env.BAP_LS_API_URL === ""
@@ -67,6 +77,7 @@ if (command === "enroll") {
     providerName: local ? "local-chromium" : "linken-sphere",
     maxSessions: Number(process.env.BAP_MAX_SESSIONS ?? 2),
     dataDir: dataDir(),
+    retentionDays: Number(process.env.BAP_RETENTION_DAYS ?? 7),
   });
   console.log(`agent ${config.name} → ${config.serverUrl}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => agent.stop());
@@ -92,6 +103,21 @@ if (command === "enroll") {
     execFileSync("launchctl", load, { stdio: "inherit" });
   }
   else console.log(`load with: launchctl ${load.join(" ")}`);
+} else if (command === "ls-credentials" || command === "ls-signin") {
+  if (!values.email) fail(USAGE);
+  const secrets = defaultSecretStore();
+  if (!secrets) fail("no keychain on this machine: Linken Sphere credentials are not stored in files");
+  if (command === "ls-credentials") {
+    let password = "";
+    for await (const chunk of process.stdin) password += chunk;
+    secrets.set(LINKEN_SPHERE_SERVICE, values.email, password.replace(/\r?\n$/, ""));
+    console.log(`Linken Sphere password for ${values.email} saved to the Keychain`);
+  } else {
+    const password = secrets.get(LINKEN_SPHERE_SERVICE, values.email);
+    if (!password) fail(`no Linken Sphere password for ${values.email} in the Keychain — run bap-agent ls-credentials first`);
+    const res = await new LinkenSphereProvider({ apiUrl: lsApiUrl }).api.signIn(values.email, password);
+    console.log(res.message);
+  }
 } else if (command === "run") {
   await runCommand(positionals[1]);
 } else fail(USAGE);

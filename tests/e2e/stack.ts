@@ -22,10 +22,12 @@ await ensureOperator(db, E2E_OPERATOR.login, E2E_OPERATOR.password);
 const store = memoryStore();
 const bundles = mkdtempSync(join(tmpdir(), "bap-stack-bundles-"));
 const repo = resolve(import.meta.dirname, "../..");
+const bundleKeys = new Map<string, string>();
 for (const entry of ["scenarios/staging-smoke-test", "scenarios/wizard-order", "tests/fixtures/scenarios/crash-page", "tests/fixtures/scenarios/slow-page"]) {
   const manifest = await buildScenarioBundle(join(repo, entry, "index.ts"), bundles);
   const key = `scenarios/${manifest.file}`;
   await store.put(key, readFileSync(join(bundles, manifest.file)), "text/javascript");
+  bundleKeys.set(manifest.id, key);
   await db.insertInto("scenarios").values({ id: manifest.id }).execute();
   await db.insertInto("scenario_versions").values({ scenario_id: manifest.id, version: manifest.version, sha256: manifest.sha256, bundle_key: key }).execute();
 }
@@ -47,10 +49,19 @@ process.env.CONTROL_PLANE_URL = `http://127.0.0.1:${STACK_PORTS.controlPlane}`;
 const web = await createViteServer({ root: resolve(import.meta.dirname, "../../apps/web"), logLevel: "warn" });
 await web.listen();
 
+// Security demos: expire open invitations; swap a bundle in storage for other bytes and back.
+const originals = new Map<string, Buffer>();
 createHttpServer(async (req, res) => {
+  const bundle = /^\/bundles\/([\w-]+)\/(tamper|restore)$/.exec(req.url ?? "");
   if (req.method === "POST" && req.url === "/control-plane/stop") await stopControlPlane();
   else if (req.method === "POST" && req.url === "/control-plane/start") await startControlPlane();
-  else return res.writeHead(404).end();
+  else if (req.method === "POST" && req.url === "/enrollments/expire")
+    await db.updateTable("agent_enrollments").set({ expires_at: new Date(Date.now() - 1000) }).where("used_at", "is", null).execute();
+  else if (req.method === "POST" && bundle && bundleKeys.has(bundle[1]!)) {
+    const key = bundleKeys.get(bundle[1]!)!;
+    if (!originals.has(key)) originals.set(key, (await store.get(key))!.body);
+    await store.put(key, bundle[2] === "tamper" ? Buffer.from("export default {} // tampered") : originals.get(key)!, "text/javascript");
+  } else return res.writeHead(404).end();
   res.writeHead(204).end();
 }).listen(STACK_PORTS.control, "127.0.0.1");
 

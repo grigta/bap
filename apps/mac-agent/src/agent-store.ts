@@ -84,6 +84,14 @@ export class AgentStore {
     return rows.map((r) => ({ runId: r.run_id, assign: JSON.parse(r.assign) }));
   }
 
+  /** Local files of the run may go: it has finished here (or was never assigned) and nothing of it waits for upload. */
+  isSettled(runId: string): boolean {
+    const status = this.runStatus(runId);
+    if (status === "running" || status === "interrupted") return false;
+    const pending = this.db.prepare("SELECT 1 FROM outbox WHERE kind = 'artifact' AND json_extract(body, '$.runId') = ?").get(runId);
+    return pending === undefined;
+  }
+
   close(): void {
     this.db.close();
   }

@@ -4,6 +4,8 @@ export const coverageThresholds = { lines: 80, branches: 80, functions: 80, stat
 
 export default defineConfig({
   test: {
+    // Agents started by tests keep their keys in files, never in the developer's login keychain.
+    env: { BAP_KEY_STORAGE: "file" },
     projects: [
       {
         test: {

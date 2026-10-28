@@ -13,6 +13,7 @@ import { AGENT_SOCKET_PATH, message } from "@bap/protocol";
 import { type RunningAgent, startAgent } from "../../apps/mac-agent/src/agent.ts";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
+import { purgeArtifacts } from "../../apps/control-plane/src/retention.ts";
 import { type ObjectStore, memoryStore } from "../../apps/control-plane/src/storage.ts";
 import { startTestSite } from "../support/test-site.ts";
 
@@ -90,7 +91,7 @@ afterAll(async () => {
 const smoke = () => ({ scenarioId: "staging-smoke-test", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site.url } });
 
 describe("happy path", () => {
-  test("[REQ-RUN-001][REQ-ARCH-001][REQ-PROF-009][REQ-RUN-009] a run goes QUEUED→…→SUCCEEDED on the profile's agent, journalled, with a screenshot per step", async () => {
+  test("[REQ-RUN-001][REQ-ARCH-001][REQ-PROF-009][REQ-RUN-009][REQ-SEC-009] a run goes QUEUED→…→SUCCEEDED on the profile's agent, journalled, with a screenshot per step only operators can read", async () => {
     const created = await createRun(smoke());
     expect(created.statusCode).toBe(202);
     const { runId } = created.json();
@@ -116,6 +117,11 @@ describe("happy path", () => {
       expect(png.rawPayload.subarray(1, 4).toString()).toBe("PNG");
     }
     expect((await api("GET", `/api/v1/runs/${runId}/artifacts`)).json()).toHaveLength(3);
+    // [REQ-SEC-009] Only an operator reads artifacts: not anonymous callers, not agent keys.
+    const content = `/api/v1/runs/${runId}/artifacts/${steps[0].screenshotArtifactId}/content`;
+    expect((await app.inject({ method: "GET", url: content })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: content, headers: { authorization: `Bearer ${agentKey}` } })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: `/api/v1/runs/${runId}/artifacts`, headers: { authorization: `Bearer ${agentKey}` } })).statusCode).toBe(401);
     // After the run the profile passes VERIFYING: the agent confirms the browser let go of it.
     expect(await until("profile verified", async () => (await api("GET", `/api/v1/profiles/${profileId}`)).json(), (p) => p.status !== "VERIFYING")).toMatchObject({ status: "AVAILABLE", activeRunId: null });
     expect((await api("GET", "/api/v1/runs?status=SUCCEEDED")).json().map((r: { id: string }) => r.id)).toContain(runId);
@@ -155,6 +161,39 @@ describe("happy path", () => {
     expect((await run(runId)).status).toBe("QUEUED");
     connectAgent();
     expect((await finished(runId)).status).toBe("SUCCEEDED");
+  });
+});
+
+describe("retention", () => {
+  test("[REQ-SEC-010] artifacts of finished runs older than the retention period are deleted from storage, then from the journal", async () => {
+    const { runId } = (await createRun(smoke())).json();
+    await finished(runId);
+    const artifacts = await db.selectFrom("artifacts").select(["id", "storage_key"]).where("run_id", "=", runId).execute();
+    expect(artifacts).toHaveLength(3);
+
+    // Fresh artifacts are kept.
+    await purgeArtifacts(db, store, new Date(Date.now() - 60_000));
+    expect((await api("GET", `/api/v1/runs/${runId}/artifacts`)).json()).toHaveLength(3);
+
+    // A run that has not finished keeps its artifacts however old they are.
+    agent?.stop();
+    const { runId: queuedId } = (await createRun(smoke())).json();
+    await store.put(`runs/${queuedId}/old.png`, Buffer.from("png"), "image/png");
+    await db.insertInto("artifacts").values({ run_id: queuedId, name: "old.png", content_type: "image/png", size_bytes: 3, sha256: "x", storage_key: `runs/${queuedId}/old.png`, created_at: new Date(0) }).execute();
+
+    const purged = await purgeArtifacts(db, store, new Date(Date.now() + 1000));
+    expect(purged).toBeGreaterThanOrEqual(3);
+    for (const a of artifacts) expect(await store.get(a.storage_key)).toBeNull();
+    expect((await api("GET", `/api/v1/runs/${runId}/artifacts`)).json()).toEqual([]);
+    expect((await api("GET", `/api/v1/runs/${runId}/artifacts/${artifacts[0]!.id}/content`)).statusCode).toBe(404);
+    // The step journal stays; only the screenshot reference is gone.
+    const steps = (await api("GET", `/api/v1/runs/${runId}/steps`)).json();
+    expect(steps.map((s: { status: string; screenshotArtifactId: string | null }) => [s.status, s.screenshotArtifactId])).toEqual([["passed", null], ["passed", null], ["passed", null]]);
+    expect(await store.get(`runs/${queuedId}/old.png`)).not.toBeNull();
+    expect((await api("GET", `/api/v1/runs/${queuedId}/artifacts`)).json()).toHaveLength(1);
+
+    connectAgent();
+    await finished(queuedId);
   });
 });
 

@@ -1,4 +1,5 @@
 import { CdpSession } from "./cdp-session.ts";
+import { type ListenerLookup, assertLoopbackOnly, isLoopbackHost, lsofListeners } from "./loopback.ts";
 import { type BrowserProvider, ProfileNotFoundError, type ProfileState, type ProfileSummary } from "./types.ts";
 
 /**
@@ -9,6 +10,8 @@ export interface LinkenSphereOptions {
   apiUrl: string;
   headless?: boolean;
   timeoutMs?: number;
+  /** Where ports listen; lsof by default (tests substitute it). */
+  listeners?: ListenerLookup;
 }
 
 export interface LsSessionSummary {
@@ -46,15 +49,23 @@ export class LinkenSphereApi {
   start = (uuid: string, headless: boolean) => this.request<{ debug_port: number }>("POST", "/sessions/start", { uuid, headless });
   stop = (uuid: string) => this.request("POST", "/sessions/stop", { uuid });
   deleteSession = (uuid: string) => this.request("DELETE", "/sessions", { uuid });
+  /** Signs the client in with autologin; the password comes from the agent's keychain, never from config files. */
+  signIn = (email: string, password: string) => this.request<{ message: string }>("POST", "/auth/signin", { email, password, autologin: true });
 }
 
 export class LinkenSphereProvider implements BrowserProvider {
   readonly api: LinkenSphereApi;
   private readonly headless: boolean;
+  private readonly apiPort: number;
+  private readonly listeners: ListenerLookup;
 
   constructor(options: LinkenSphereOptions) {
+    const url = new URL(options.apiUrl);
+    if (!isLoopbackHost(url.hostname)) throw new Error(`Linken Sphere API ${options.apiUrl} must be on 127.0.0.1 (REQ-SEC-002)`);
     this.api = new LinkenSphereApi(options);
     this.headless = options.headless ?? false;
+    this.apiPort = Number(url.port || 80);
+    this.listeners = options.listeners ?? lsofListeners;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -83,23 +94,34 @@ export class LinkenSphereProvider implements BrowserProvider {
   async openSession(profileId: string, runId: string): Promise<LinkenSphereSession> {
     const known = await this.api.listSessions();
     if (!known.some((s) => s.uuid === profileId)) throw new ProfileNotFoundError(profileId);
-    return new LinkenSphereSession(this.api, profileId, runId, this.headless);
+    // LS settings can change while the agent runs, so the check repeats for every session.
+    await assertLoopbackOnly(this.apiPort, "Linken Sphere Local API", this.listeners, 0);
+    return new LinkenSphereSession(this.api, profileId, runId, this.headless, this.listeners);
   }
 }
 
 class LinkenSphereSession extends CdpSession {
   private readonly api: LinkenSphereApi;
   private readonly headless: boolean;
+  private readonly listeners: ListenerLookup;
 
-  constructor(api: LinkenSphereApi, profileId: string, runId: string, headless: boolean) {
+  constructor(api: LinkenSphereApi, profileId: string, runId: string, headless: boolean, listeners: ListenerLookup) {
     super(profileId, runId);
     this.api = api;
     this.headless = headless;
+    this.listeners = listeners;
   }
 
   // LS may pick another debug port than requested; only the response is authoritative.
   protected async start(): Promise<number> {
-    return (await this.api.start(this.profileId, this.headless)).debug_port;
+    const port = (await this.api.start(this.profileId, this.headless)).debug_port;
+    try {
+      await assertLoopbackOnly(port, "CDP of the Linken Sphere session", this.listeners);
+    } catch (e) {
+      await this.api.stop(this.profileId).catch(() => {});
+      throw e;
+    }
+    return port;
   }
 
   protected async stop(): Promise<void> {

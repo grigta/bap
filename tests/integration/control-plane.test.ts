@@ -105,6 +105,12 @@ describe("operator authentication", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("VALIDATION_ERROR");
   });
+
+  test("[REQ-SEC-011] a malformed request body is a client error, not a server error", async () => {
+    const res = await app.inject({ method: "POST", url: "/api/v1/auth/login", headers: { "content-type": "application/json" }, body: "" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("BAD_REQUEST");
+  });
 });
 
 test("[REQ-API-001] the generated Postman collection runs in Newman against a live Control Plane", async () => {

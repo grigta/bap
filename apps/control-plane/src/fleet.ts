@@ -54,6 +54,7 @@ const idParams = z.object({ id: z.uuid() });
 declare module "fastify" {
   interface FastifyRequest {
     agentId?: string;
+    agentCredentialId?: string;
   }
 }
 
@@ -111,7 +112,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       id: r.id,
       name: r.name,
       status: r.status,
-      connection: connection(r.last_seen_at, config),
+      connection: r.status === "REVOKED" ? "OFFLINE" : connection(r.last_seen_at, config),
       lastSeenAt: r.last_seen_at?.toISOString() ?? null,
       agentVersion: r.agent_version,
       platform: r.platform,
@@ -266,7 +267,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       ? await db
           .selectFrom("agent_credentials")
           .innerJoin("agents", "agents.id", "agent_credentials.agent_id")
-          .select("agents.id")
+          .select(["agents.id", "agent_credentials.id as credential_id"])
           .where("key_hash", "=", hashToken(key))
           .where("revoked_at", "is", null)
           .where("agents.status", "!=", "REVOKED")
@@ -274,7 +275,32 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       : undefined;
     if (!credential) return sendError(reply, request, 401, "UNAUTHORIZED", "Agent credentials required");
     request.agentId = credential.id;
+    request.agentCredentialId = credential.credential_id;
   };
+
+  app.post(
+    "/api/v1/agents/:id/rotate-key",
+    { preHandler: operatorAuth, schema: { params: idParams, response: { 202: z.object({ requested: z.literal(true) }), ...unauthorized, 404: errorSchema, 409: errorSchema } } },
+    async (request, reply) => {
+      const [agent] = await listAgents(request.params.id);
+      if (!agent) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+      const live = [...(sockets.get(agent.id) ?? [])].filter((s) => s.readyState === s.OPEN).at(-1);
+      if (!live) return sendError(reply, request, 409, "AGENT_UNAVAILABLE", "The agent must be connected to rotate its key");
+      live.send(JSON.stringify(message({ type: "agent.rotate-key", payload: {} })));
+      return reply.code(202).send({ requested: true });
+    },
+  );
+
+  // The agent exchanges its current key for a new one; the old key stops working at once (REQ-SEC-005).
+  app.post("/api/v1/agents/me/key", { preHandler: agentAuth, schema: { response: { 201: z.object({ agentKey: z.string() }), ...unauthorized } } }, async (request, reply) => {
+    const agentKey = newToken();
+    await db.transaction().execute(async (tx) => {
+      await tx.updateTable("agent_credentials").set({ revoked_at: new Date() }).where("id", "=", request.agentCredentialId!).execute();
+      await tx.insertInto("agent_credentials").values({ agent_id: request.agentId!, key_hash: hashToken(agentKey) }).execute();
+      await tx.insertInto("audit_events").values({ actor: `agent:${request.agentId}`, action: "agent key rotated", outcome: "ok", target_type: "agents", target_id: request.agentId!, details: "{}", request_id: request.id }).execute();
+    });
+    return reply.code(201).send({ agentKey });
+  });
 
   app.get(AGENT_SOCKET_PATH, { websocket: true, preValidation: agentAuth }, (socket, request) => {
     const agentId = request.agentId!;

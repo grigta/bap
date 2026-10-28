@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 import { STACK_PORTS } from "./tests/e2e/stack-config.ts";
 
 const testSitePort = 4310;
+// Agents enrolled by e2e tests keep their keys in files, never in the developer's login keychain.
+process.env.BAP_KEY_STORAGE = "file";
 
 export default defineConfig({
   testDir: "tests/e2e",

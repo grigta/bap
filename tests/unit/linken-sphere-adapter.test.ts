@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { LinkenSphereProvider, ProfileNotFoundError } from "@bap/browser-adapters";
+import { LinkenSphereProvider, ProfileNotFoundError, parseLsofListeners } from "@bap/browser-adapters";
 
 // A stand-in for the Local API, answering with the shapes observed on LS 2.26.10.
 const sessions = new Map<string, { name: string; status: string }>();
@@ -43,6 +43,7 @@ beforeAll(async () => {
       s.status = "stopped";
       return json(200, { uuid: body.uuid });
     }
+    if (route === "POST /auth/signin") return body.password === "right" ? json(200, { message: "Signed in successfully" }) : json(401, { error: "Wrong credentials" });
     if (route === "POST /sessions/force_stop") {
       sessions.get(body.uuid)!.status = "stopped";
       return json(200, { uuid: body.uuid });
@@ -112,7 +113,37 @@ test("[REQ-LS-011] profile state comes from the session status; force-release st
 
 test("openSession returns a session bound to the profile and run", async () => {
   sessions.set("u2", { name: "Shop 2", status: "stopped" });
-  const session = await new LinkenSphereProvider({ apiUrl }).openSession("u2", "run-7");
+  const session = await new LinkenSphereProvider({ apiUrl, listeners: localOnly }).openSession("u2", "run-7");
   expect({ profileId: session.profileId, runId: session.runId }).toEqual({ profileId: "u2", runId: "run-7" });
   expect(await session.inspect()).toEqual({ connected: false });
+});
+
+test("[REQ-SEC-007] sign-in sends the keychain password with autologin and reports a rejection", async () => {
+  const { api } = new LinkenSphereProvider({ apiUrl });
+  expect(await api.signIn("ops@example.com", "right")).toEqual({ message: "Signed in successfully" });
+  expect(calls.at(-1)).toEqual({ method: "POST", url: "/auth/signin", body: { email: "ops@example.com", password: "right", autologin: true } });
+  await expect(api.signIn("ops@example.com", "wrong")).rejects.toThrow(/HTTP 401/);
+});
+
+const localOnly = () => ["127.0.0.1"];
+
+test("[REQ-SEC-002] lsof listener output is read as addresses", () => {
+  expect(parseLsofListeners("p123\nf20\nn127.0.0.1:41234\nf21\nn[::1]:41234\n")).toEqual(["127.0.0.1", "[::1]"]);
+  expect(parseLsofListeners("p9\nf3\nn*:9222\n")).toEqual(["*"]);
+  expect(parseLsofListeners("")).toEqual([]);
+});
+
+test("[REQ-SEC-002] the agent refuses a Local API that is not on 127.0.0.1 or listens on the network", async () => {
+  expect(() => new LinkenSphereProvider({ apiUrl: "http://192.168.1.20:41234" })).toThrow(/127\.0\.0\.1/);
+  sessions.set("u3", { name: "Shop 3", status: "stopped" });
+  const exposed = new LinkenSphereProvider({ apiUrl, listeners: () => ["*"] });
+  await expect(exposed.openSession("u3", "run-8")).rejects.toThrow(/Local API on port \d+ listens on \*/);
+});
+
+test("[REQ-SEC-002] a session whose CDP port listens beyond 127.0.0.1 is stopped and refused", async () => {
+  sessions.set("u4", { name: "Shop 4", status: "stopped" });
+  const provider = new LinkenSphereProvider({ apiUrl, listeners: (port) => (port === 9999 ? ["0.0.0.0"] : ["127.0.0.1"]) });
+  const session = await provider.openSession("u4", "run-9");
+  await expect(session.attach()).rejects.toThrow(/CDP .* port 9999 listens on 0\.0\.0\.0/);
+  expect(calls.at(-1)).toEqual({ method: "POST", url: "/sessions/stop", body: { uuid: "u4" } });
 });

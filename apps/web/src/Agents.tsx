@@ -121,7 +121,7 @@ export function Agents() {
   const [selected, setSelected] = useState<string | null>(null);
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api<Agent[]>("/agents"), refetchInterval: POLL_MS });
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "drain" | "disable" | "activate" | "revoke" }) => api(`/agents/${id}/${action}`, { method: "POST" }),
+    mutationFn: ({ id, action }: { id: string; action: "drain" | "disable" | "activate" | "revoke" | "rotate-key" }) => api(`/agents/${id}/${action}`, { method: "POST" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
   });
   const revoke = (agent: Agent) => {
@@ -176,6 +176,9 @@ export function Agents() {
                   )}
                   <button disabled={a.status === "DISABLED" || a.status === "REVOKED"} onClick={() => act.mutate({ id: a.id, action: "disable" })}>
                     Disable
+                  </button>
+                  <button disabled={a.status === "REVOKED" || a.connection !== "ONLINE"} onClick={() => act.mutate({ id: a.id, action: "rotate-key" })}>
+                    Rotate key
                   </button>
                   <button disabled={a.status === "REVOKED"} onClick={() => revoke(a)}>
                     Revoke

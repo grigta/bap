@@ -86,3 +86,5 @@ table.agents th { font-weight: 500; color: #555; font-size: 13px; }
 .review { list-style: none; padding: 0; display: grid; gap: 8px; }
 .review li { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #fff; border: 1px solid #e3e5e8; border-radius: 8px; padding: 10px 14px; }
 .review p { margin: 4px 0 0; }
+.outcome-ok { background: #e3f6e8; color: #116b2c; }
+.outcome-denied { background: #fde4e4; color: #a11a1a; }

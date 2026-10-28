@@ -151,7 +151,10 @@ export const agentDrain = z.object({ ...envelope, type: z.literal("agent.drain")
 /** Stop at the next step boundary; a mutating step in progress finishes and is verified first. */
 export const runCancel = z.object({ ...envelope, type: z.literal("run.cancel"), payload: z.object({ runId: z.uuid() }) });
 
-export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain, runCancel]);
+/** The operator asked for a new agent key: the agent fetches one with its current key and reconnects. */
+export const agentRotateKey = z.object({ ...envelope, type: z.literal("agent.rotate-key"), payload: z.object({}) });
+
+export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain, runCancel, agentRotateKey]);
 export type ServerMessage = z.infer<typeof serverMessage>;
 
 /** Builds a message with a fresh envelope. */

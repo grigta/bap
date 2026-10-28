@@ -6,11 +6,13 @@ import Fastify, { type FastifySchema } from "fastify";
 import { hasZodFastifySchemaValidationErrors, serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { SESSION_COOKIE, checkPassword, hashToken, newToken, requireOperator } from "./auth.ts";
+import { audit } from "./audit.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import { type Coordinator, DEFAULT_SCHEDULER, type SchedulerConfig, createCoordinator } from "./coordinator.ts";
 import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerRuns } from "./runs.ts";
+import { purgeArtifacts } from "./retention.ts";
 import type { ObjectStore } from "./storage.ts";
 
 export interface AppOptions {
@@ -18,10 +20,15 @@ export interface AppOptions {
   /** Secure cookies need HTTPS; off only for local development and tests. */
   secureCookies?: boolean;
   sessionTtlMs?: number;
-  logger?: boolean;
+  /** true logs to stdout; a stream receives JSON log lines (tests scan them for secrets). */
+  logger?: boolean | { stream: NodeJS.WritableStream };
   fleet?: Partial<FleetConfig>;
   scheduler?: Partial<SchedulerConfig>;
   store: ObjectStore;
+  /** Serve HTTPS with this certificate (REQ-SEC-001); without it the server is plain HTTP behind a TLS proxy or on localhost. */
+  https?: { cert: Buffer | string; key: Buffer | string };
+  /** Screenshots and reports of finished runs are deleted after this many days (REQ-SEC-010); off when omitted. */
+  retention?: { artifactDays: number; sweepIntervalMs?: number };
 }
 
 export interface RegisteredRoute {
@@ -32,8 +39,16 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store }: AppOptions) {
-  const app = Fastify({ logger, genReqId: () => randomUUID() }).withTypeProvider<ZodTypeProvider>();
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https }: AppOptions) {
+  // Request bodies are never logged; credentials in headers are redacted should headers ever be logged (REQ-SEC-008).
+  const redact = ["req.headers.authorization", "req.headers.cookie", "req.headers[\"idempotency-key\"]", "res.headers[\"set-cookie\"]"];
+  const app = Fastify({
+    logger: logger === false ? false : { redact, ...(typeof logger === "object" && { stream: logger.stream }) },
+    genReqId: () => randomUUID(),
+    ...(https && { https }),
+  }).withTypeProvider<ZodTypeProvider>();
+  // Browsers must never fall back to plain HTTP once they have seen this server over HTTPS.
+  if (https) app.addHook("onSend", async (_request, reply) => void reply.header("strict-transport-security", "max-age=31536000"));
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.register(cookie);
@@ -47,14 +62,61 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
   });
   app.decorate("registeredRoutes", routes);
 
+  // Every changing API call is audited: who, which route, which target, allowed or denied (REQ-SEC-012).
+  // Request bodies are never stored; only the login name and the agent name, which are not secrets.
+  // Written before the response leaves: whatever the caller saw acknowledged is already in the journal.
+  app.addHook("onSend", async (request, reply, payload) => {
+    const route = request.routeOptions.url;
+    if (!["POST", "PATCH", "PUT", "DELETE"].includes(request.method) || !route?.startsWith("/api/v1/") || request.agentId) return payload;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const params = (request.params ?? {}) as Record<string, string>;
+    const details: Record<string, unknown> = { status: reply.statusCode };
+    if (route === "/api/v1/auth/login" && typeof body.login === "string") details.login = body.login;
+    if (route === "/api/v1/agents/enroll" && typeof body.name === "string") details.name = body.name;
+    await audit(db, request, {
+      action: `${request.method} ${route}`,
+      outcome: reply.statusCode < 400 ? "ok" : "denied",
+      ...(params.id && { targetId: params.id, targetType: route.split("/")[3] }),
+      details,
+    }).catch((e) => request.log.error(e));
+    return payload;
+  });
+
   app.setErrorHandler((err, request, reply) => {
     if (hasZodFastifySchemaValidationErrors(err)) return sendError(reply, request, 400, "VALIDATION_ERROR", err.message);
+    // Fastify's own client errors (malformed body, unsupported media type) keep their 4xx status.
+    const status = (err as { statusCode?: number }).statusCode;
+    if (status && status >= 400 && status < 500) return sendError(reply, request, status, "BAD_REQUEST", (err as Error).message);
     request.log.error(err);
     return sendError(reply, request, 500, "INTERNAL_ERROR", "Internal server error");
   });
 
   const auth = requireOperator(db);
   const unauthorized = { 401: errorSchema };
+
+  app.get(
+    "/api/v1/audit",
+    {
+      preHandler: auth,
+      schema: {
+        querystring: z.object({ limit: z.coerce.number().int().min(1).max(1000).default(200) }),
+        response: {
+          200: z.array(z.object({ at: z.string(), actor: z.string(), action: z.string(), outcome: z.enum(["ok", "denied"]), targetType: z.string().nullable(), targetId: z.string().nullable(), details: z.record(z.string(), z.unknown()) })),
+          ...unauthorized,
+        },
+      },
+    },
+    async (request) =>
+      (await db.selectFrom("audit_events").selectAll().orderBy("id", "desc").limit(request.query.limit).execute()).map((e) => ({
+        at: e.at.toISOString(),
+        actor: e.actor,
+        action: e.action,
+        outcome: e.outcome,
+        targetType: e.target_type,
+        targetId: e.target_id,
+        details: e.details as Record<string, unknown>,
+      })),
+  );
 
   app.get("/api/v1/health", { schema: { response: { 200: z.object({ status: z.literal("ok") }) } } }, async () => ({
     status: "ok" as const,
@@ -118,6 +180,19 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     coordinator.start();
     scoped.addHook("onClose", () => coordinator.stop());
   });
+
+  if (retention) {
+    const sweep = () =>
+      purgeArtifacts(db, store, new Date(Date.now() - retention.artifactDays * 86_400_000))
+        .then((purged) => purged > 0 && app.log.info({ purged }, "expired artifacts deleted"))
+        .catch((e) => app.log.error(e, "artifact retention sweep failed"));
+    let timer: NodeJS.Timeout | undefined;
+    app.addHook("onReady", async () => {
+      void sweep();
+      timer = setInterval(sweep, retention.sweepIntervalMs ?? 3_600_000).unref();
+    });
+    app.addHook("onClose", async () => clearInterval(timer));
+  }
 
   return app;
 }

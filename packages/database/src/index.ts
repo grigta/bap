@@ -177,6 +177,18 @@ export interface ProfileLeasesTable {
   created_at: Timestamp;
 }
 
+export interface AuditEventsTable {
+  id: Generated<string>;
+  at: Timestamp;
+  actor: string;
+  action: string;
+  outcome: "ok" | "denied";
+  target_type: string | null;
+  target_id: string | null;
+  details: unknown;
+  request_id: string | null;
+}
+
 export interface OperatorsTable {
   id: Generated<string>;
   login: string;
@@ -218,6 +230,7 @@ export interface Database {
   idempotency_keys: IdempotencyKeysTable;
   profile_leases: ProfileLeasesTable;
   checkpoints: CheckpointsTable;
+  audit_events: AuditEventsTable;
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   api_tokens: ApiTokensTable;
