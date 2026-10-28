@@ -94,7 +94,7 @@ fetch() { if [ -n "$PIN" ]; then curl -fsS --pinnedpubkey "$PIN" -k "$@"; else c
 case "$(uname -m)" in arm64|aarch64) ARCH=arm64 ;; x86_64) ARCH=x64 ;; *) die "Неизвестная архитектура $(uname -m)." ;; esac
 mkdir -p "$BAP/bin" "$BAP/app"
 
-bold "1/5 Сервер BAP"
+bold "1/6 Сервер BAP"
 fetch "$SERVER/api/v1/health" >/dev/null || die "Сервер $SERVER не отвечает. Проверьте интернет и что на сервере запущен pnpm gateway."
 if [ -n "$PIN" ]; then
   fetch "$SERVER/api/v1/agents/install/ca" -o "$BAP/server-ca.pem"
@@ -102,7 +102,7 @@ if [ -n "$PIN" ]; then
 fi
 ok "$SERVER отвечает, соединение зашифровано"
 
-bold "2/5 Node.js"
+bold "2/6 Node.js"
 NODE="\${BAP_NODE:-$BAP/node/bin/node}"
 if [ -z "\${BAP_NODE:-}" ] && { [ ! -x "$NODE" ] || [ "$("$NODE" -p process.versions.node)" != "$NODE_VERSION" ]; }; then
   dist="node-v$NODE_VERSION-darwin-$ARCH"
@@ -114,7 +114,7 @@ if [ -z "\${BAP_NODE:-}" ] && { [ ! -x "$NODE" ] || [ "$("$NODE" -p process.vers
 fi
 ok "Node.js $("$NODE" -p process.versions.node)"
 
-bold "3/5 Агент"
+bold "3/6 Агент"
 fetch -D "$BAP/app/.headers" "$SERVER/api/v1/agents/install/bundle?token=$TOKEN" -o "$BAP/app/bap-agent.mjs.new" \\
   || die "Приглашение недействительно: оно одноразовое и живёт 15 минут. Создайте новое в панели."
 expected="$(grep -i '^x-bap-sha256:' "$BAP/app/.headers" | tr -d '\\r' | awk '{print $2}')"
@@ -135,15 +135,41 @@ WRAPPER
 chmod +x "$BAP/bin/bap-agent"
 ok "установлен в $BAP"
 
-bold "4/5 Регистрация"
+bold "4/6 Регистрация"
+registered=""
 if [ -f "$BAP/agent.json" ]; then
-  ok "этот Mac уже зарегистрирован, приглашение не понадобилось"
-else
+  # 0: the server accepts this Mac's key; 2: it was revoked; anything else: cannot tell, do not touch it.
+  set +e; "$BAP/bin/bap-agent" check >/dev/null 2>&1; key=$?; set -e
+  case "$key" in
+    0) registered=1; ok "этот Mac уже зарегистрирован, приглашение не понадобилось" ;;
+    2) warn "ключ этого Mac отозван, регистрирую заново"; rm -f "$BAP/agent.json" ;;
+    *) die "Не удалось проверить регистрацию этого Mac на сервере, запустите команду ещё раз." ;;
+  esac
+fi
+if [ -z "$registered" ]; then
   "$BAP/bin/bap-agent" enroll --server "$SERVER" --token "$TOKEN" \${BAP_NAME:+--name "$BAP_NAME"} || die "Регистрация не прошла (сообщение выше)."
   ok "зарегистрирован"
 fi
 
-bold "5/5 Автозапуск"
+bold "5/6 Питание: Mac не засыпает"
+POWER_CMD="pmset -a sleep 0 disksleep 0 autorestart 1 womp 1 && pmset -a disablesleep 1"
+if [ -n "\${BAP_SKIP_POWER:-}" ]; then
+  warn "настройка питания пропущена (BAP_SKIP_POWER)"
+elif ! [ -r /dev/tty ]; then
+  warn "нет терминала для пароля: выполните позже  sudo sh -c '$POWER_CMD'"
+else
+  printf '  Один раз нужен пароль администратора этого Mac, чтобы отключить сон.\n'
+  if sudo -v < /dev/tty; then
+    sudo pmset -a sleep 0 disksleep 0 autorestart 1 womp 1 >/dev/null
+    # Laptops: keep running with the lid closed. Desktops have no such setting; that is fine.
+    sudo pmset -a disablesleep 1 >/dev/null 2>&1 || true
+    ok "сон отключён, в том числе с закрытой крышкой; после сбоя питания Mac включится сам"
+  else
+    warn "пароль не введён, сон не отключён. Позже:  sudo sh -c '$POWER_CMD'"
+  fi
+fi
+
+bold "6/6 Автозапуск"
 if [ -n "\${BAP_NO_LAUNCHAGENT:-}" ]; then
   warn "автозапуск пропущен (BAP_NO_LAUNCHAGENT)"
 else
@@ -158,7 +184,7 @@ if curl -fsS -m 3 "http://127.0.0.1:41234/sessions" >/dev/null 2>&1; then
 else
   warn "Linken Sphere не отвечает на 127.0.0.1:41234: запустите LS, войдите и включите Settings → Network → Api port = 41234"
 fi
-[ "$(pmset -g 2>/dev/null | awk '/^ *sleep /{print $2}')" = "0" ] || warn "Mac засыпает: чтобы он работал круглосуточно, выполните  sudo pmset -a sleep 0"
+pmset -g batt 2>/dev/null | grep -q "Battery Power" && warn "Mac работает от батареи: подключите зарядку, иначе он разрядится и выключится"
 printf '\\n  Mac появится в панели в разделе «Агенты». Логи: %s/agent.log\\n\\n' "$BAP"
 `;
 }

@@ -103,6 +103,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       .selectFrom("agents")
       .leftJoin("agent_capabilities", "agent_capabilities.agent_id", "agents.id")
       .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "max_sessions", "duplicate_messages", "agent_capabilities.payload as capabilities"])
+      .where("deleted_at", "is", null)
       .orderBy("name");
     if (id) query = query.where("agents.id", "=", id);
     const active = await db
@@ -190,7 +191,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
           .returning("id")
           .executeTakeFirst();
         if (!invite) return "invalid" as const;
-        const taken = await tx.selectFrom("agents").select("id").where("name", "=", name).executeTakeFirst();
+        const taken = await tx.selectFrom("agents").select("id").where("name", "=", name).where("deleted_at", "is", null).executeTakeFirst();
         if (taken) return "taken" as const;
         const agent = await tx.insertInto("agents").values({ name, platform, architecture }).returning("id").executeTakeFirstOrThrow();
         await tx.updateTable("agent_enrollments").set({ agent_id: agent.id }).where("id", "=", invite.id).execute();
@@ -294,6 +295,24 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     request.agentCredentialId = credential.credential_id;
   };
 
+  // A revoked agent can be removed from the panel; its rows stay for the history that points at them
+  // (REQ-DB-002), and its name and Linken Sphere profiles are free for a new registration.
+  app.delete(
+    "/api/v1/agents/:id",
+    { preHandler: operatorAuth, schema: { params: idParams, response: { 204: z.null(), ...unauthorized, 404: errorSchema, 409: errorSchema } } },
+    async (request, reply) => {
+      const [agent] = await listAgents(request.params.id);
+      if (!agent) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+      if (agent.status !== "REVOKED") return sendError(reply, request, 409, "AGENT_STATE_CONFLICT", "Only a revoked agent can be deleted: revoke it first");
+      await db.transaction().execute(async (tx) => {
+        const now = new Date();
+        await tx.updateTable("agents").set({ deleted_at: now }).where("id", "=", agent.id).execute();
+        await tx.updateTable("profiles").set({ archived_at: now }).where("agent_id", "=", agent.id).where("archived_at", "is", null).execute();
+      });
+      return reply.code(204).send(null);
+    },
+  );
+
   // ---- one-command install on a new Mac (see agent-install.ts) ----
   app.get(
     "/api/v1/agents/enrollments/:id",
@@ -361,6 +380,11 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       return reply.code(202).send({ requested: true });
     },
   );
+
+  // Lets an agent (and the installer) ask whether its key is still accepted.
+  app.get("/api/v1/agents/me", { preHandler: agentAuth, schema: { response: { 200: z.object({ agentId: z.string() }), ...unauthorized } } }, async (request) => ({
+    agentId: request.agentId!,
+  }));
 
   // The agent exchanges its current key for a new one; the old key stops working at once (REQ-SEC-005).
   app.post("/api/v1/agents/me/key", { preHandler: agentAuth, schema: { response: { 201: z.object({ agentKey: z.string() }), ...unauthorized } } }, async (request, reply) => {

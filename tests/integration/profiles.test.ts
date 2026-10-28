@@ -88,7 +88,7 @@ describe("import", () => {
     expect(rows).toHaveLength(1);
     await expect(
       db.insertInto("profiles").values({ provider: "local-chromium", external_profile_id: "shop-2", name: "x", agent_id: agentId }).execute(),
-    ).rejects.toThrow(/profiles_provider_external_profile_id_key/);
+    ).rejects.toThrow(/profiles_external_live/);
   });
   test("an agent without a browser provider answers with PROVIDER_UNAVAILABLE", async () => {
     const { token } = (await api("POST", "/api/v1/agents/enrollments")).json();

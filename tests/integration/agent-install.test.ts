@@ -62,7 +62,7 @@ function freshMac(name: string) {
   symlinkSync(playwrightCore, join(home, ".bap/app/node_modules/playwright-core"));
   return {
     home,
-    env: { ...process.env, HOME: home, BAP_HOME: join(home, ".bap"), BAP_NODE: process.execPath, BAP_SKIP_NPM: "1", BAP_NO_LAUNCHAGENT: "1", BAP_ALLOW_NON_MAC: "1", BAP_KEY_STORAGE: "file", BAP_NAME: name },
+    env: { ...process.env, HOME: home, BAP_HOME: join(home, ".bap"), BAP_NODE: process.execPath, BAP_SKIP_NPM: "1", BAP_NO_LAUNCHAGENT: "1", BAP_SKIP_POWER: "1", BAP_ALLOW_NON_MAC: "1", BAP_KEY_STORAGE: "file", BAP_NAME: name },
   };
 }
 const install = (command: string, env: NodeJS.ProcessEnv) => sh("bash", ["-c", command], { env, timeout: 120_000 });
@@ -72,7 +72,8 @@ test("the command from the panel installs, registers and connects a Mac in one g
   expect(first.installCommand).toMatch(/^curl -fsSL --pinnedpubkey 'sha256\/\/[\w+/=]+' -k 'https:\/\/127\.0\.0\.1:\d+\/install\.sh' \| bash -s -- 'bapi_[\w-]+'$/);
   const mac = freshMac("mac-installed");
   const { stdout } = await install(first.installCommand!, mac.env);
-  expect(stdout).toContain("5/5");
+  expect(stdout).toContain("6/6");
+  expect(stdout).toContain("настройка питания пропущена");
   expect(stdout).toContain("зарегистрирован");
   const bap = join(mac.home, ".bap");
   expect(readFileSync(join(bap, "server-ca.pem"), "utf8")).toBe(readFileSync(certFile, "utf8"));
@@ -96,6 +97,18 @@ test("the command from the panel installs, registers and connects a Mac in one g
   expect(rerun.stdout).toContain("уже зарегистрирован");
   const agents = (await app.inject({ method: "GET", url: "/api/v1/agents", cookies: { bap_session: cookie } })).json();
   expect(agents.filter((a: { name: string }) => a.name.startsWith("mac-installed"))).toHaveLength(1);
+
+  // Revoked and deleted in the panel: the same command with a new invitation registers the Mac again.
+  agent?.kill("SIGKILL");
+  agent = null;
+  await app.inject({ method: "POST", url: `/api/v1/agents/${config.agentId}/revoke`, cookies: { bap_session: cookie } });
+  await app.inject({ method: "DELETE", url: `/api/v1/agents/${config.agentId}`, cookies: { bap_session: cookie } });
+  const fresh = await invite();
+  const reinstall = await install(fresh.installCommand!, mac.env);
+  expect(reinstall.stdout).toContain("ключ этого Mac отозван, регистрирую заново");
+  const reconfig = JSON.parse(readFileSync(join(bap, "agent.json"), "utf8"));
+  expect(reconfig.agentId).not.toBe(config.agentId);
+  expect(reconfig.name).toBe("mac-installed");
 
   // The agent updates itself from the server with its own key.
   const update = await sh(join(bap, "bin/bap-agent"), ["update"], { env: mac.env });
@@ -127,5 +140,8 @@ test("the installer script carries no secrets and no invitation", () => {
   expect(script).toContain("SERVER='https://bore.pub:12345'");
   expect(script).toContain("PIN='sha256//abc='");
   expect(script).not.toMatch(/bapi_|PEM/);
+  // Power: sudo asks on the terminal (the script itself arrives on stdin) and the lid-closed setting is included.
+  expect(script).toContain("sudo -v < /dev/tty");
+  expect(script).toContain("pmset -a disablesleep 1");
   execFileSync("bash", ["-n"], { input: script }); // valid bash
 });

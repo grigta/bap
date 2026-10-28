@@ -30,11 +30,23 @@ export const agentCapabilities = z.object({
   payload: z.object({ providers: z.array(z.string()), maxSessions: z.number().int().nonnegative() }),
 });
 
+/** Power of the Mac: an unattended node must stay on the charger and must not sleep. */
+export const powerState = z.object({
+  source: z.enum(["ac", "battery", "unknown"]),
+  batteryPercent: z.number().min(0).max(100).nullable(),
+  charging: z.boolean().nullable(),
+  /** System sleep is off (pmset sleep 0 or SleepDisabled, which also covers a closed lid). */
+  sleepPrevented: z.boolean().nullable(),
+});
+export type PowerState = z.infer<typeof powerState>;
+
 export const heartbeatPayload = z.object({
   cpuPercent: z.number().min(0).max(100),
   memoryPercent: z.number().min(0).max(100),
   lsAvailable: z.boolean(),
   activeSessions: z.number().int().nonnegative(),
+  /** null off macOS; absent from agents older than this field. */
+  power: powerState.nullable().optional(),
 });
 export type HeartbeatPayload = z.infer<typeof heartbeatPayload>;
 

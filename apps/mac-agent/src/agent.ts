@@ -6,6 +6,7 @@ import { AGENT_SOCKET_PATH, type AgentEvent, type AgentRequestPayload, type Hear
 import WebSocket from "ws";
 import { AgentStore, type OutboxEvent } from "./agent-store.ts";
 import { checkServerUrl } from "./config.ts";
+import { readPower } from "./power.ts";
 import { purgeLocalRuns } from "./retention.ts";
 import { type EmitRunEvent, executeRun } from "./runner.ts";
 
@@ -114,6 +115,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     memoryPercent: memoryPercent(),
     lsAvailable: opts.provider ? await opts.provider.isAvailable() : false,
     activeSessions: activeRuns.size,
+    power: readPower(),
   });
 
   const handleRequest = async (req: AgentRequestPayload, requestId: string): Promise<unknown> => {

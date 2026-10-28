@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { PowerIndicator } from "@/components/power-indicator";
 import { StatusBadge, toneOf } from "@/components/status-badge";
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { PageHeader } from "@/layout/app-shell";
@@ -49,6 +50,7 @@ function Fleet({ agents }: { agents: Agent[] }) {
                       <span key={i} className={cn("h-3 w-5 rounded-[3px] border", i < a.activeRuns ? "border-busy bg-busy" : "border-border bg-muted")} />
                     ))}
                   </span>
+                  <PowerIndicator power={a.heartbeat?.power} className="text-xs" />
                   <span className="ml-auto text-xs text-muted-foreground tabular-nums">
                     {a.heartbeat ? `CPU ${a.heartbeat.cpuPercent.toFixed(0)}%, RAM ${a.heartbeat.memoryPercent.toFixed(0)}%` : "нет данных"}, {ago(a.lastSeenAt, now)}
                   </span>

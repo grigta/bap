@@ -109,6 +109,35 @@ describe("enrollment", () => {
   });
 });
 
+describe("deleting a revoked agent", () => {
+  test("[REQ-DB-002] only a revoked agent can be deleted; it leaves the panel with its profiles, its history stays, its name is free again", async () => {
+    const { agentId } = await newAgent("mac-deleted");
+    const profile = await db
+      .insertInto("profiles")
+      .values({ provider: "linken-sphere", external_profile_id: "ls-uuid-1", name: "shop", agent_id: agentId })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    expect((await app.inject({ method: "DELETE", url: `/api/v1/agents/${agentId}`, cookies: { bap_session: cookie } })).json().error.code).toBe("AGENT_STATE_CONFLICT");
+    await api("POST", `/api/v1/agents/${agentId}/revoke`);
+    expect((await app.inject({ method: "DELETE", url: `/api/v1/agents/${agentId}` })).statusCode).toBe(401);
+    expect((await app.inject({ method: "DELETE", url: `/api/v1/agents/${agentId}`, cookies: { bap_session: cookie } })).statusCode).toBe(204);
+
+    expect((await api("GET", "/api/v1/agents")).json().map((a: { id: string }) => a.id)).not.toContain(agentId);
+    expect((await api("GET", `/api/v1/agents/${agentId}`)).statusCode).toBe(404);
+    expect((await api("GET", "/api/v1/profiles")).json().map((p: { id: string }) => p.id)).not.toContain(profile.id);
+    // Nothing is erased: runs, events and audit keep pointing at the same rows.
+    expect(await db.selectFrom("agents").select("id").where("id", "=", agentId).executeTakeFirst()).toBeDefined();
+    expect(await db.selectFrom("profiles").select("id").where("id", "=", profile.id).executeTakeFirst()).toBeDefined();
+
+    // The same Mac registers again under its name and can import the same Linken Sphere profile.
+    const again = (await enroll((await invite()).token, "mac-deleted")).json();
+    expect(again.agentId).not.toBe(agentId);
+    await db.insertInto("profiles").values({ provider: "linken-sphere", external_profile_id: "ls-uuid-1", name: "shop", agent_id: again.agentId }).execute();
+    expect((await app.inject({ method: "DELETE", url: `/api/v1/agents/${agentId}`, cookies: { bap_session: cookie } })).statusCode).toBe(404);
+  });
+});
+
 describe("audit", () => {
   test("[REQ-SEC-012] operator actions and rejected attempts are journalled with actor, target and outcome, without secrets", async () => {
     const inv = await invite();
@@ -172,7 +201,9 @@ describe("connection", () => {
     running.stop();
     expect(view).toMatchObject({ agentVersion: "0.1.0", maxSessions: 3, heartbeat: { activeSessions: 0, lsAvailable: false } });
     expect(view.heartbeat.memoryPercent).toBeGreaterThan(0);
-    expect(view.heartbeats[0]).toEqual({ cpuPercent: expect.any(Number), memoryPercent: expect.any(Number), lsAvailable: false, activeSessions: 0, at: expect.any(String) });
+    // Power comes from pmset: a real reading on macOS, null elsewhere (CI runs on Linux).
+    const power = process.platform === "darwin" ? { source: expect.stringMatching(/^(ac|battery|unknown)$/), batteryPercent: expect.toBeOneOf([null, expect.any(Number)]), charging: expect.toBeOneOf([null, expect.any(Boolean)]), sleepPrevented: expect.toBeOneOf([null, expect.any(Boolean)]) } : null;
+    expect(view.heartbeats[0]).toEqual({ cpuPercent: expect.any(Number), memoryPercent: expect.any(Number), lsAvailable: false, activeSessions: 0, power, at: expect.any(String) });
   });
 
   test("[REQ-SEC-005] revoking an agent closes its socket for good; re-registration grants nothing back", async () => {

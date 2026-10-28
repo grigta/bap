@@ -6,6 +6,7 @@ import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { useConfirm } from "@/components/confirm";
 import { type Column, DataTable, columns } from "@/components/data-table";
 import { EmptyState } from "@/components/empty-state";
+import { PowerIndicator, powerProblem } from "@/components/power-indicator";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
@@ -21,7 +22,7 @@ import { notifyDone, notifyError } from "@/lib/notify";
 import type { Agent, AgentCard as AgentCardData } from "@/lib/types";
 
 const POLL_MS = 2000;
-type AgentAction = "drain" | "disable" | "activate" | "revoke" | "rotate-key";
+type AgentAction = "drain" | "disable" | "activate" | "revoke" | "rotate-key" | "delete";
 
 interface Invite {
   id: string;
@@ -196,7 +197,13 @@ function AgentSheet({ id }: { id: string | undefined }) {
               </SheetDescription>
             </SheetHeader>
             <div className="grid gap-6 overflow-y-auto p-4">
-              <dl className="grid grid-cols-3 gap-3 text-sm">
+              {powerProblem(a.heartbeat?.power) && (
+                <p role="alert" className="rounded-md bg-fail-soft px-3 py-2 text-sm text-fail">
+                  {powerProblem(a.heartbeat?.power)}
+                  {a.heartbeat?.power?.sleepPrevented === false && ". На этом Mac:  sudo pmset -a sleep 0 disablesleep 1"}
+                </p>
+              )}
+              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div>
                   <dt className="text-xs text-muted-foreground">Слоты</dt>
                   <dd className="tabular-nums">{a.maxSessions !== null ? `${a.activeRuns} / ${a.maxSessions}` : "—"}</dd>
@@ -204,6 +211,12 @@ function AgentSheet({ id }: { id: string | undefined }) {
                 <div>
                   <dt className="text-xs text-muted-foreground">Linken Sphere</dt>
                   <dd>{a.heartbeat ? (a.heartbeat.lsAvailable ? "доступен" : "недоступен") : "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Питание</dt>
+                  <dd>
+                    <PowerIndicator power={a.heartbeat?.power} />
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Версия агента</dt>
@@ -229,6 +242,25 @@ function AgentActions({ agent: a, act }: { agent: Agent; act: (id: string, actio
     if (await confirm({ title: `Отозвать ключ агента ${a.name}?`, description: "Агент сразу отключится и не сможет подключиться снова. Вернуть узел можно только новым приглашением.", action: "Отозвать", destructive: true }))
       act(a.id, "revoke");
   };
+  const remove = async () => {
+    if (
+      await confirm({
+        title: `Удалить агента ${a.name}?`,
+        description: "Агент и его профили исчезнут из панели. История заданий и скриншоты сохранятся. Этот Mac можно будет подключить заново под тем же именем.",
+        action: "Удалить",
+        destructive: true,
+      })
+    )
+      act(a.id, "delete");
+  };
+  if (a.status === "REVOKED")
+    return (
+      <div className="flex justify-end">
+        <Button size="xs" variant="destructive" onClick={remove}>
+          Удалить
+        </Button>
+      </div>
+    );
   return (
     <div className="flex justify-end gap-1">
       {a.status === "DRAINING" || a.status === "DISABLED" ? (
@@ -240,13 +272,13 @@ function AgentActions({ agent: a, act }: { agent: Agent; act: (id: string, actio
           Drain
         </Button>
       )}
-      <Button size="xs" variant="outline" disabled={a.status === "DISABLED" || a.status === "REVOKED"} onClick={() => act(a.id, "disable")}>
+      <Button size="xs" variant="outline" disabled={a.status === "DISABLED"} onClick={() => act(a.id, "disable")}>
         Disable
       </Button>
-      <Button size="xs" variant="outline" disabled={a.status === "REVOKED" || a.connection !== "ONLINE"} onClick={() => act(a.id, "rotate-key")}>
+      <Button size="xs" variant="outline" disabled={a.connection !== "ONLINE"} onClick={() => act(a.id, "rotate-key")}>
         Rotate key
       </Button>
-      <Button size="xs" variant="destructive" disabled={a.status === "REVOKED"} onClick={revoke}>
+      <Button size="xs" variant="destructive" onClick={revoke}>
         Revoke
       </Button>
     </div>
@@ -258,8 +290,9 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
   const now = useNow();
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api<Agent[]>("/agents"), refetchInterval: POLL_MS });
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: AgentAction }) => api(`/agents/${id}/${action}`, { method: "POST" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
+    mutationFn: ({ id, action }: { id: string; action: AgentAction }) =>
+      action === "delete" ? api(`/agents/${id}`, { method: "DELETE" }) : api(`/agents/${id}/${action}`, { method: "POST" }),
+    onSuccess: () => queryClient.invalidateQueries(),
     onError: notifyError("Действие с агентом"),
   });
   const run = (id: string, action: AgentAction) => act.mutate({ id, action });
@@ -290,6 +323,11 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
           </span>
         );
       },
+    }),
+    c.accessor((a) => a.heartbeat?.power?.batteryPercent ?? 101, {
+      id: "power",
+      header: "Питание",
+      cell: (i) => <PowerIndicator power={i.row.original.heartbeat?.power} />,
     }),
     c.accessor((a) => a.heartbeat?.cpuPercent ?? -1, {
       id: "load",

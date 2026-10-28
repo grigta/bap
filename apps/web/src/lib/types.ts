@@ -1,10 +1,19 @@
 // Shapes of the Control Plane API as the panel uses them.
 
+export interface Power {
+  source: "ac" | "battery" | "unknown";
+  batteryPercent: number | null;
+  charging: boolean | null;
+  sleepPrevented: boolean | null;
+}
+
 export interface Heartbeat {
   cpuPercent: number;
   memoryPercent: number;
   lsAvailable: boolean;
   activeSessions: number;
+  /** null off macOS; absent from older agents. */
+  power?: Power | null;
 }
 
 export type AgentStatus = "ACTIVE" | "DRAINING" | "DISABLED" | "REVOKED";

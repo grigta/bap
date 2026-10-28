@@ -41,7 +41,8 @@ export function registerProfiles(app: App, db: Db, fleet: Fleet, config: FleetCo
       .selectAll("profiles")
       .select(["agents.name as agent_name", "agents.status as agent_status", "agents.last_seen_at"])
       .orderBy("profiles.name");
-    if (id) query = query.where("profiles.id", "=", id);
+    // Profiles of a deleted agent stay in the database for history, not in the panel.
+    query = id ? query.where("profiles.id", "=", id) : query.where("profiles.archived_at", "is", null);
     return (await query.execute()).map((r) => {
       const agentConnection = connection(r.last_seen_at, config);
       return {
@@ -128,7 +129,7 @@ export function registerProfiles(app: App, db: Db, fleet: Fleet, config: FleetCo
       const row = await db
         .insertInto("profiles")
         .values({ provider, external_profile_id: externalProfileId, name, agent_id: agentId })
-        .onConflict((oc) => oc.columns(["provider", "external_profile_id"]).doNothing())
+        .onConflict((oc) => oc.columns(["provider", "external_profile_id"]).where("archived_at", "is", null).doNothing())
         .returning("id")
         .executeTakeFirst();
       if (!row) return sendError(reply, request, 409, "PROFILE_EXISTS", `Profile ${externalProfileId} is already imported`);

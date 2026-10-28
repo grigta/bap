@@ -17,6 +17,7 @@ const USAGE = `usage:
   bap-agent start
   bap-agent install-launchagent [--load]
   bap-agent update                             (agents installed with the one-line installer)
+  bap-agent check                              (exit 0: the server accepts this agent's key; 2: rejected)
   bap-agent ls-credentials --email <email>     (password on stdin; stored in the Keychain)
   bap-agent ls-signin --email <email>
   bap-agent run <scenario-id> --profile <id> [--input '<json>'] [--version x.y.z]
@@ -125,6 +126,15 @@ if (command === "enroll") {
     const res = await new LinkenSphereProvider({ apiUrl: lsApiUrl }).api.signIn(values.email, password);
     console.log(res.message);
   }
+} else if (command === "check") {
+  const config = loadConfig();
+  const res = await fetch(`${config.serverUrl}/api/v1/agents/me`, { headers: { authorization: `Bearer ${config.agentKey}` } });
+  if (res.status === 401) {
+    console.error(`the server rejects the key of ${config.name}: revoked, enroll again`);
+    process.exit(2);
+  }
+  if (!res.ok) fail(`check failed: HTTP ${res.status}`);
+  console.log(`${config.name} (${config.agentId}) is registered at ${config.serverUrl}`);
 } else if (command === "update") {
   // The installer put the agent here as one file; the server hands out the current one to its agents.
   const self = resolve(import.meta.filename);

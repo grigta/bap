@@ -18,6 +18,8 @@ export interface AgentsTable {
   last_heartbeat: unknown | null;
   max_sessions: number | null;
   duplicate_messages: Generated<number>;
+  /** Set when a revoked agent is deleted: hidden everywhere, kept for history. */
+  deleted_at: Timestamp | null;
   created_at: Timestamp;
 }
 
@@ -69,6 +71,8 @@ export interface ProfilesTable {
   active_run_id: string | null;
   last_error: string | null;
   last_verified_at: Timestamp | null;
+  /** Set when its agent is deleted. */
+  archived_at: Timestamp | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }

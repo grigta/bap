@@ -303,6 +303,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
         .innerJoin("agents", "agents.id", "profiles.agent_id")
         .select(["profiles.id", "profiles.name", "agents.name as agent_name", "profiles.last_error", "profiles.updated_at"])
         .where("profiles.status", "=", "NEEDS_REVIEW")
+        .where("profiles.archived_at", "is", null)
         .orderBy("profiles.updated_at", "desc")
         .execute();
       return {

@@ -61,6 +61,12 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
     await expect(row.getByTestId("agent-status")).toHaveText("REVOKED");
     expect(await exited).toBe(0);
     await evidence(page, "S3", "agents-revoked");
+
+    // A revoked agent can be deleted from the panel.
+    await expect(row.getByRole("button", { name: "Revoke" })).toBeHidden();
+    await row.getByRole("button", { name: "Удалить" }).click();
+    await confirmDialog(page);
+    await expect(row).toBeHidden();
   } finally {
     killAgent(agent);
   }
