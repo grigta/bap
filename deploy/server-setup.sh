@@ -95,6 +95,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=$BAP/data
 ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -116,13 +117,16 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=$BAP
 ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now bap-seaweed >/dev/null
-systemctl enable bap-control-plane >/dev/null
+systemctl enable bap-seaweed bap-control-plane >/dev/null 2>&1
+# Storage first: the Control Plane checks its bucket on start.
+systemctl restart bap-seaweed
+for _ in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:8333/ 2>/dev/null && break; sleep 1; done
 systemctl restart bap-control-plane
 
 say "Firewall: port $PORT"
