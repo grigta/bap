@@ -249,7 +249,8 @@ export function startAgent(opts: AgentOptions): RunningAgent {
               architecture: arch(),
               // Runs finished while offline still count: their results are in the outbox and arrive next.
               // Otherwise the server could resume such a run before learning it already ended.
-              activeRuns: [...new Set([...runningInThisProcess, ...store.runsWithUndeliveredEvents()])],
+              // Interrupted runs never do: nothing executes them any more, whatever the outbox holds.
+              activeRuns: [...new Set([...runningInThisProcess, ...store.finishedRunsWithUndeliveredEvents()])],
               interruptedRuns: store.runs("interrupted").map((r) => r.runId),
             },
           }),

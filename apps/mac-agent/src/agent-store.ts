@@ -84,9 +84,15 @@ export class AgentStore {
     return rows.map((r) => ({ runId: r.run_id, assign: JSON.parse(r.assign) }));
   }
 
-  /** Runs whose events (results included) the server has not acknowledged yet. */
-  runsWithUndeliveredEvents(): string[] {
-    const rows = this.db.prepare("SELECT DISTINCT json_extract(body, '$.payload.runId') AS run_id FROM outbox WHERE kind = 'event'").all() as { run_id: string }[];
+  /** Runs that ended here while their results are still unacknowledged by the server. */
+  finishedRunsWithUndeliveredEvents(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT json_extract(o.body, '$.payload.runId') AS run_id FROM outbox o
+         JOIN local_runs r ON r.run_id = json_extract(o.body, '$.payload.runId')
+         WHERE o.kind = 'event' AND r.status = 'finished'`,
+      )
+      .all() as { run_id: string }[];
     return rows.map((r) => r.run_id);
   }
 
