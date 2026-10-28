@@ -16,6 +16,7 @@ export interface AgentsTable {
   agent_version: string | null;
   last_seen_at: Timestamp | null;
   last_heartbeat: unknown | null;
+  max_sessions: number | null;
   created_at: Timestamp;
 }
 
@@ -99,6 +100,7 @@ export interface RunsTable {
   status: ColumnType<RunStatus, RunStatus | undefined, RunStatus>;
   error_code: string | null;
   error_message: string | null;
+  queue_reason: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
   started_at: Timestamp | null;
@@ -155,6 +157,14 @@ export interface IdempotencyKeysTable {
   created_at: Timestamp;
 }
 
+export interface ProfileLeasesTable {
+  profile_id: string;
+  run_id: string;
+  owner_agent_id: string;
+  expires_at: Timestamp;
+  created_at: Timestamp;
+}
+
 export interface OperatorsTable {
   id: Generated<string>;
   login: string;
@@ -194,6 +204,7 @@ export interface Database {
   artifacts: ArtifactsTable;
   run_steps: RunStepsTable;
   idempotency_keys: IdempotencyKeysTable;
+  profile_leases: ProfileLeasesTable;
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   api_tokens: ApiTokensTable;

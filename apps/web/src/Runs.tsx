@@ -11,6 +11,7 @@ interface Run {
   status: string;
   errorCode: string | null;
   errorMessage: string | null;
+  queueReason: string | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -184,6 +185,7 @@ export function Runs() {
               <th>Сценарий</th>
               <th>Статус</th>
               <th>Создано</th>
+              <th>Ожидание</th>
               <th>Длительность</th>
             </tr>
           </thead>
@@ -202,6 +204,13 @@ export function Runs() {
                   <span className={`badge run-${r.status}`}>{r.status}</span>
                 </td>
                 <td>{new Date(r.createdAt).toLocaleTimeString()}</td>
+                <td className="muted">
+                  {r.status === "QUEUED"
+                    ? `${Math.round((Date.now() - Date.parse(r.createdAt)) / 1000)} с${r.queueReason ? ` · ${r.queueReason}` : ""}`
+                    : r.startedAt
+                      ? `${((Date.parse(r.startedAt) - Date.parse(r.createdAt)) / 1000).toFixed(1)} с`
+                      : "—"}
+                </td>
                 <td>{r.startedAt && r.finishedAt ? `${((Date.parse(r.finishedAt) - Date.parse(r.startedAt)) / 1000).toFixed(1)} с` : "—"}</td>
               </tr>
             ))}

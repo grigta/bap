@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import { AgentRequestError, type Fleet, type FleetConfig, connection } from "./fleet.ts";
+import { moveProfile } from "./profile-states.ts";
 
 const STATUSES = ["AVAILABLE", "RESERVED", "IN_USE", "VERIFYING", "NEEDS_REVIEW", "DISABLED"] as const;
 
@@ -62,15 +63,7 @@ export function registerProfiles(app: App, db: Db, fleet: Fleet, config: FleetCo
     });
   };
 
-  /** Atomic state change: only from the listed states, so concurrent requests cannot both win. */
-  const transition = async (id: string, from: ProfileStatus[], to: ProfileStatus, extra: { last_error?: string | null } = {}) =>
-    db
-      .updateTable("profiles")
-      .set({ status: to, updated_at: new Date(), ...extra })
-      .where("id", "=", id)
-      .where("status", "in", from)
-      .returning(["id", "agent_id", "external_profile_id"])
-      .executeTakeFirst();
+  const transition = (id: string, from: ProfileStatus[], to: ProfileStatus, extra: { last_error?: string | null } = {}) => moveProfile(db, id, from, to, extra);
 
   const conflict = async (request: FastifyRequest, reply: FastifyReply, id: string, action: string) => {
     const [profile] = await load(id);
@@ -86,7 +79,7 @@ export function registerProfiles(app: App, db: Db, fleet: Fleet, config: FleetCo
     const row = await transition(id, from, "VERIFYING");
     if (!row) return conflict(request, reply, id, action);
     void fleet.request(row.agent_id, { method: "profiles.verify", externalId: row.external_profile_id }).then(
-      () => db.updateTable("profiles").set({ status: "AVAILABLE", last_verified_at: new Date(), last_error: null, updated_at: new Date() }).where("id", "=", id).where("status", "=", "VERIFYING").execute(),
+      () => moveProfile(db, id, ["VERIFYING"], "AVAILABLE", { last_verified_at: new Date(), last_error: null }),
       (e: unknown) => {
         const code = e instanceof AgentRequestError ? e.code : "AGENT_ERROR";
         const lastError = code === "PROFILE_NOT_FOUND" ? PROFILE_NOT_FOUND_MESSAGE : `${code}: ${e instanceof Error ? e.message : String(e)}`;

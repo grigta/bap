@@ -1,17 +1,17 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { logIn } from "./helpers.ts";
+import { killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
 let agent: ChildProcess | undefined;
 
-test.afterEach(() => agent?.kill("SIGKILL"));
+test.afterEach(() => killAgent(agent));
 
 /** Enrolls a local-Chromium agent with one profile and imports it. */
 async function agentWithProfile(page: Page, name: string): Promise<string> {
@@ -21,7 +21,7 @@ async function agentWithProfile(page: Page, name: string): Promise<string> {
   const { token } = await (await page.request.post("/api/v1/agents/enrollments")).json();
   const enrolled = spawnSync("node", [cli, "enroll", "--server", `http://127.0.0.1:${STACK_PORTS.controlPlane}`, "--token", token, "--name", name], { env, encoding: "utf8" });
   expect(enrolled.stderr).toBe("");
-  agent = spawn("node", [cli, "start"], { env, stdio: "ignore" });
+  agent = spawnAgent(cli, env);
   const agentId = await expect
     .poll(async () => (await (await page.request.get("/api/v1/agents")).json()).find((a: { name: string; maxSessions: number | null }) => a.name === name && a.maxSessions !== null)?.id, { timeout: 15_000 })
     .not.toBeUndefined()

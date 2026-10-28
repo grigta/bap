@@ -108,7 +108,7 @@ export function Profiles() {
                 <td>
                   <span className={`badge profile-${p.status}`}>{p.status}</span>
                 </td>
-                <td>{p.activeRunId ?? "—"}</td>
+                <td>{p.activeRunId ? <code title={p.activeRunId}>{p.activeRunId.slice(0, 8)}</code> : "—"}</td>
                 <td>{p.lastVerifiedAt ? new Date(p.lastVerifiedAt).toLocaleString() : "—"}</td>
                 <td className="error-text">{p.lastError ?? ""}</td>
                 <td className="actions">

@@ -1,10 +1,10 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright-core";
 import { CdpSession } from "./cdp-session.ts";
-import { type BrowserProvider, ProfileNotFoundError, type ProfileSummary } from "./types.ts";
+import { type BrowserProvider, ProfileNotFoundError, type ProfileState, type ProfileSummary } from "./types.ts";
 
 /**
  * Plain Chromium with one user-data-dir per profile. Runs as a separate process with a CDP port,
@@ -32,6 +32,14 @@ export class LocalChromiumProvider implements BrowserProvider {
     return readdirSync(this.profilesDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => ({ id: d.name, name: d.name }));
+  }
+
+  async profileState(profileId: string): Promise<ProfileState> {
+    const dir = join(this.profilesDir, profileId);
+    if (!existsSync(dir)) return "missing";
+    // A Chromium process started for this profile carries its user-data-dir on the command line.
+    const processes = execFileSync("ps", ["-ax", "-o", "command"], { encoding: "utf8" });
+    return processes.includes(`--user-data-dir=${dir}`) ? "busy" : "idle";
   }
 
   async openSession(profileId: string, runId: string): Promise<LocalChromiumSession> {

@@ -37,7 +37,7 @@ const api = (method: "GET" | "POST", url: string, payload?: object, headers: Rec
   app.inject({ method, url, payload, headers, cookies: { bap_session: cookie } });
 const createRun = (body: object, key: string = randomUUID()) => api("POST", "/api/v1/runs", body, { "idempotency-key": key });
 const run = async (id: string) => (await api("GET", `/api/v1/runs/${id}`)).json();
-const connectAgent = () => (agent = startAgent({ serverUrl: baseUrl, agentKey, provider, providerName: "local-chromium", maxSessions: 2, dataDir: join(work, "agent"), log: () => {} }));
+const connectAgent = () => (agent = startAgent({ serverUrl: baseUrl, agentKey, provider, providerName: "local-chromium", maxSessions: 2, dataDir: join(work, "agent"), log: (l) => process.env.BAP_TEST_AGENT_LOG && console.log(`[runs-agent] ${l}`) }));
 
 async function until<T>(what: string, read: () => Promise<T>, ok: (v: T) => boolean, timeoutMs = 30_000): Promise<T> {
   const started = Date.now();
@@ -116,7 +116,8 @@ describe("happy path", () => {
       expect(png.rawPayload.subarray(1, 4).toString()).toBe("PNG");
     }
     expect((await api("GET", `/api/v1/runs/${runId}/artifacts`)).json()).toHaveLength(3);
-    expect((await api("GET", `/api/v1/profiles/${profileId}`)).json()).toMatchObject({ status: "AVAILABLE", activeRunId: null });
+    // After the run the profile passes VERIFYING: the agent confirms the browser let go of it.
+    expect(await until("profile verified", async () => (await api("GET", `/api/v1/profiles/${profileId}`)).json(), (p) => p.status !== "VERIFYING")).toMatchObject({ status: "AVAILABLE", activeRunId: null });
     expect((await api("GET", "/api/v1/runs?status=SUCCEEDED")).json().map((r: { id: string }) => r.id)).toContain(runId);
   });
 
@@ -217,7 +218,7 @@ describe("failures", () => {
     const { runId } = (await createRun({ scenarioId: "slow-page", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site.url, ms: 5000 }, timeoutMs: 1500 })).json();
     const done = await finished(runId);
     expect(done).toMatchObject({ status: "FAILED", errorCode: "TIMEOUT" });
-    expect((await api("GET", `/api/v1/profiles/${profileId}`)).json().status).toBe("AVAILABLE");
+    expect((await until("profile verified", async () => (await api("GET", `/api/v1/profiles/${profileId}`)).json(), (p) => p.status !== "VERIFYING")).status).toBe("AVAILABLE");
   });
 
   test("[REQ-RUN-002] a mutating step that times out unconfirmed goes to NEEDS_REVIEW and blocks the profile", async () => {

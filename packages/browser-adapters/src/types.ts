@@ -23,9 +23,13 @@ export interface ProfileSummary {
   name: string;
 }
 
+export type ProfileState = "idle" | "busy" | "missing";
+
 export interface BrowserProvider {
   isAvailable(): Promise<boolean>;
   listProfiles(): Promise<ProfileSummary[]>;
+  /** Whether the profile exists and no browser holds it: what VERIFYING checks after a run. */
+  profileState(profileId: string): Promise<ProfileState>;
   openSession(profileId: string, runId: string): Promise<BrowserSession>;
 }
 

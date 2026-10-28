@@ -60,6 +60,8 @@ export const runFailed = z.object({
 export const agentRequestPayload = z.discriminatedUnion("method", [
   z.object({ method: z.literal("profiles.list") }),
   z.object({ method: z.literal("profiles.verify"), externalId: z.string().min(1) }),
+  /** Cheap check after a run: is the profile there and released by the browser? */
+  z.object({ method: z.literal("profiles.check"), externalId: z.string().min(1) }),
 ]);
 export type AgentRequestPayload = z.infer<typeof agentRequestPayload>;
 
@@ -113,7 +115,10 @@ export const runAssign = z.object({
 });
 export type RunAssignPayload = z.infer<typeof runAssign>["payload"];
 
-export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign]);
+/** The operator drained the agent: it keeps its runs but gets no new ones. */
+export const agentDrain = z.object({ ...envelope, type: z.literal("agent.drain"), payload: z.object({ draining: z.boolean() }) });
+
+export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain]);
 export type ServerMessage = z.infer<typeof serverMessage>;
 
 /** Builds a message with a fresh envelope. */

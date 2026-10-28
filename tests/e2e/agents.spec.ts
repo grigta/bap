@@ -1,10 +1,10 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { logIn } from "./helpers.ts";
+import { killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_FLEET, STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -26,7 +26,7 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
     expect(reused.status).toBe(3);
     expect(reused.stderr).toMatch(/INVITATION_INVALID/);
 
-    agent = spawn("node", [cli, "start"], { env, stdio: "ignore" });
+    agent = spawnAgent(cli, env);
     const row = page.getByTestId("agent-e2e-mac");
     await expect(row.locator(".badge").first()).toHaveText("ACTIVE", { timeout: 10_000 });
     await expect(row.locator(".badge").nth(1)).toHaveText("ONLINE");
@@ -55,6 +55,6 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
     expect(await exited).toBe(0);
     await evidence(page, "S3", "agents-revoked");
   } finally {
-    agent?.kill("SIGKILL");
+    killAgent(agent);
   }
 });

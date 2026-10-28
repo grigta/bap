@@ -192,6 +192,7 @@ describe("session start", () => {
       provider: {
         isAvailable: () => provider.isAvailable(),
         listProfiles: () => provider.listProfiles(),
+        profileState: (id: string) => provider.profileState(id),
         openSession: async (id: string, runId: string) => {
           const session = await provider.openSession(id, runId);
           const attach = session.attach.bind(session);

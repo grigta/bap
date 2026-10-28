@@ -77,3 +77,5 @@ table.agents th { font-weight: 500; color: #555; font-size: 13px; }
 .steps .error { white-space: pre-wrap; background: #fff5f5; color: #a11a1a; padding: 8px; border-radius: 6px; font-size: 12px; }
 .steps img { max-width: 420px; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: block; }
 .transitions { list-style: none; padding: 0; margin: 0; font-size: 13px; display: grid; gap: 2px; }
+.limit { margin: 10px 0 0; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.limit input { width: 110px; padding: 4px 6px; border: 1px solid #c9ccd1; border-radius: 6px; }

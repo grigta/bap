@@ -43,7 +43,11 @@ const agentSchema = z.object({
   platform: z.string(),
   architecture: z.string(),
   heartbeat: heartbeatSchema,
+  /** Effective limit of parallel sessions: the operator's limit, else what the agent reports. */
   maxSessions: z.number().nullable(),
+  reportedMaxSessions: z.number().nullable(),
+  sessionLimit: z.number().nullable(),
+  activeRuns: z.number(),
 });
 const idParams = z.object({ id: z.uuid() });
 
@@ -73,6 +77,7 @@ export interface Fleet {
   handlers: {
     onRunEvent?: (agentId: string, event: RunEvent) => Promise<void>;
     onConnected?: (agentId: string) => Promise<void>;
+    onHeartbeat?: (agentId: string) => Promise<void>;
   };
 }
 
@@ -86,9 +91,15 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     let query = db
       .selectFrom("agents")
       .leftJoin("agent_capabilities", "agent_capabilities.agent_id", "agents.id")
-      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "agent_capabilities.payload as capabilities"])
+      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "max_sessions", "agent_capabilities.payload as capabilities"])
       .orderBy("name");
     if (id) query = query.where("agents.id", "=", id);
+    const active = await db
+      .selectFrom("runs")
+      .select(["agent_id", db.fn.countAll<string>().as("n")])
+      .where("status", "in", ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED"])
+      .groupBy("agent_id")
+      .execute();
     return (await query.execute()).map((r) => ({
       id: r.id,
       name: r.name,
@@ -99,8 +110,23 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       platform: r.platform,
       architecture: r.architecture,
       heartbeat: (r.last_heartbeat as z.infer<typeof heartbeatSchema>) ?? null,
-      maxSessions: (r.capabilities as { maxSessions?: number } | null)?.maxSessions ?? null,
+      maxSessions: r.max_sessions ?? (r.capabilities as { maxSessions?: number } | null)?.maxSessions ?? null,
+      reportedMaxSessions: (r.capabilities as { maxSessions?: number } | null)?.maxSessions ?? null,
+      sessionLimit: r.max_sessions,
+      activeRuns: Number(active.find((a) => a.agent_id === r.id)?.n ?? 0),
     }));
+  };
+
+  const heartbeatHistory = async (agentId: string) => {
+    const rows = await db
+      .selectFrom("agent_events")
+      .select(["payload", "received_at"])
+      .where("agent_id", "=", agentId)
+      .where("event_type", "=", "agent.heartbeat")
+      .orderBy("received_at", "desc")
+      .limit(60)
+      .execute();
+    return rows.reverse().map((r) => ({ ...(r.payload as z.infer<typeof heartbeatPayload>), at: r.received_at.toISOString() }));
   };
 
   app.post(
@@ -167,38 +193,65 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     async (request, reply) => {
       const [agent] = await listAgents(request.params.id);
       if (!agent) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
-      const rows = await db
-        .selectFrom("agent_events")
-        .select(["payload", "received_at"])
-        .where("agent_id", "=", agent.id)
-        .where("event_type", "=", "agent.heartbeat")
-        .orderBy("received_at", "desc")
-        .limit(60)
-        .execute();
-      const heartbeats = rows.reverse().map((r) => ({ ...(r.payload as z.infer<typeof heartbeatPayload>), at: r.received_at.toISOString() }));
-      return { ...agent, heartbeats };
+      return { ...agent, heartbeats: await heartbeatHistory(agent.id) };
     },
   );
 
-  for (const [action, status] of [
-    ["drain", "DRAINING"],
-    ["disable", "DISABLED"],
-    ["revoke", "REVOKED"],
+  // activate is not in PRD §10.1: it is the way back from DRAINING/DISABLED (S6).
+  for (const [action, from, status] of [
+    ["drain", ["ACTIVE"], "DRAINING"],
+    ["disable", ["ACTIVE", "DRAINING"], "DISABLED"],
+    ["activate", ["DRAINING", "DISABLED"], "ACTIVE"],
+    ["revoke", ["ACTIVE", "DRAINING", "DISABLED"], "REVOKED"],
   ] as const) {
     app.post(
       `/api/v1/agents/:id/${action}`,
-      { preHandler: operatorAuth, schema: { params: idParams, response: { 200: agentSchema, ...unauthorized, 404: errorSchema } } },
+      { preHandler: operatorAuth, schema: { params: idParams, response: { 200: agentSchema, ...unauthorized, 404: errorSchema, 409: errorSchema } } },
       async (request, reply) => {
-        const updated = await db.updateTable("agents").set({ status }).where("id", "=", request.params.id).returning("id").executeTakeFirst();
-        if (!updated) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+        const updated = await db.updateTable("agents").set({ status }).where("id", "=", request.params.id).where("status", "in", [...from]).returning("id").executeTakeFirst();
+        if (!updated) {
+          const [agent] = await listAgents(request.params.id);
+          if (!agent) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+          return sendError(reply, request, 409, "AGENT_STATE_CONFLICT", `Cannot ${action} an agent in status ${agent.status}`);
+        }
         if (status === "REVOKED") {
           await db.updateTable("agent_credentials").set({ revoked_at: new Date() }).where("agent_id", "=", updated.id).where("revoked_at", "is", null).execute();
           for (const socket of sockets.get(updated.id) ?? []) socket.close(4401, "credentials revoked");
+        } else {
+          // Draining keeps running work; the agent only learns that no new runs come.
+          const live = [...(sockets.get(updated.id) ?? [])].filter((s) => s.readyState === s.OPEN).at(-1);
+          live?.send(JSON.stringify(message({ type: "agent.drain", payload: { draining: status !== "ACTIVE" } })));
         }
         return (await listAgents(updated.id))[0]!;
       },
     );
   }
+
+  app.patch(
+    "/api/v1/agents/:id",
+    {
+      preHandler: operatorAuth,
+      schema: { params: idParams, body: z.object({ sessionLimit: z.number().int().min(0).max(100).nullable() }), response: { 200: agentSchema, ...unauthorized, 404: errorSchema } },
+    },
+    async (request, reply) => {
+      const updated = await db.updateTable("agents").set({ max_sessions: request.body.sessionLimit }).where("id", "=", request.params.id).returning("id").executeTakeFirst();
+      if (!updated) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+      return (await listAgents(updated.id))[0]!;
+    },
+  );
+
+  app.get(
+    "/api/v1/agents/:id/metrics",
+    {
+      preHandler: operatorAuth,
+      schema: { params: idParams, response: { 200: z.object({ heartbeats: z.array(heartbeatPayload.extend({ at: z.string() })) }), ...unauthorized, 404: errorSchema } },
+    },
+    async (request, reply) => {
+      const [agent] = await listAgents(request.params.id);
+      if (!agent) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+      return { heartbeats: await heartbeatHistory(agent.id) };
+    },
+  );
 
   const agentAuth = async (request: FastifyRequest, reply: FastifyReply) => {
     const key = /^Bearer (.+)$/.exec(request.headers.authorization ?? "")?.[1];
@@ -276,8 +329,10 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         .executeTakeFirst();
       const duplicate = !inserted;
       if (!duplicate) {
-        if (msg.type === "agent.heartbeat")
+        if (msg.type === "agent.heartbeat") {
           await db.updateTable("agents").set({ last_seen_at: now, last_heartbeat: JSON.stringify(msg.payload) }).where("id", "=", agentId).execute();
+          await handlers.onHeartbeat?.(agentId);
+        }
         else {
           await db.updateTable("agents").set({ last_seen_at: now }).where("id", "=", agentId).execute();
           if (msg.type === "agent.capabilities")
@@ -293,7 +348,13 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     };
 
     socket.on("message", (raw) => {
-      queue = queue.then(() => handle(String(raw))).catch((e) => request.log.error(e));
+      // Answers to server requests skip the queue: a handler in the queue may be waiting for exactly this answer.
+      const text = String(raw);
+      if (text.includes('"type":"agent.response"')) {
+        void handle(text).catch((e) => request.log.error(e));
+        return;
+      }
+      queue = queue.then(() => handle(text)).catch((e) => request.log.error(e));
     });
     socket.on("close", () => {
       sockets.get(agentId)?.delete(socket);

@@ -96,6 +96,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     const provider = opts.provider;
     if (!provider) throw new CodedError("PROVIDER_UNAVAILABLE", "this agent has no browser provider");
     if (req.method === "profiles.list") return provider.listProfiles();
+    if (req.method === "profiles.check") return { state: await provider.profileState(req.externalId) };
     // Verify: the profile must open and close cleanly; the window appears briefly on this Mac.
     const session = await provider.openSession(req.externalId, `verify-${requestId}`);
     try {
@@ -109,6 +110,8 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   };
 
   let activeSessions = 0;
+  const activeRuns = new Set<string>();
+  const finishedRuns = new Set<string>();
   let agentId = "";
   // Run events go out on whichever connection is current; while disconnected they are dropped (buffering: S7).
   let currentSend: ((event: Omit<AgentEvent, "v" | "id" | "ts" | "seq">) => void) | null = null;
@@ -145,8 +148,23 @@ export function startAgent(opts: AgentOptions): RunningAgent {
           emit({ type: "run.failed", payload: { runId: msg.payload.runId, status: "FAILED", errorCode: "PROVIDER_UNAVAILABLE", message: "this agent has no browser provider" } });
           return;
         }
+        const { runId } = msg.payload;
+        // A repeated assignment must never run the scenario twice.
+        if (activeRuns.has(runId)) {
+          emit({ type: "run.accepted", payload: { runId } });
+          return;
+        }
+        if (finishedRuns.has(runId)) {
+          emit({ type: "run.failed", payload: { runId, status: "NEEDS_REVIEW", errorCode: "DUPLICATE_ASSIGNMENT", message: "this agent already executed the run; not repeating it" } });
+          return;
+        }
+        activeRuns.add(runId);
         activeSessions++;
-        void executeRun(msg.payload, { serverUrl: opts.serverUrl, agentKey: opts.agentKey, agentId, provider, dataDir: opts.dataDir, emit, log }).finally(() => activeSessions--);
+        void executeRun(msg.payload, { serverUrl: opts.serverUrl, agentKey: opts.agentKey, agentId, provider, dataDir: opts.dataDir, emit, log }).finally(() => {
+          activeSessions--;
+          activeRuns.delete(runId);
+          finishedRuns.add(runId);
+        });
       } else if (msg.type === "server.request") {
         const respond = (payload: { ok: boolean; result?: unknown; error?: { code: string; message: string } }) =>
           ws.send(JSON.stringify(message({ type: "agent.response", payload: { requestId: msg.id, ...payload } })));
@@ -156,7 +174,8 @@ export function startAgent(opts: AgentOptions): RunningAgent {
           const code = e instanceof ProfileNotFoundError ? "PROFILE_NOT_FOUND" : e instanceof CodedError ? e.code : "PROVIDER_ERROR";
           respond({ ok: false, error: { code, message: e instanceof Error ? e.message : String(e) } });
         }
-      } else if (msg.type === "server.error") log(`server error ${msg.payload.code}: ${msg.payload.message}`);
+      } else if (msg.type === "agent.drain") log(msg.payload.draining ? "drained: finishing current runs, no new ones" : "active again");
+      else if (msg.type === "server.error") log(`server error ${msg.payload.code}: ${msg.payload.message}`);
     });
     ws.on("error", (e) => log(`connection error: ${e.message}`));
     ws.on("close", (code, reason) => {

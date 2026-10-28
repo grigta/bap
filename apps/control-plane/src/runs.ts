@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Db, RunStatus } from "@bap/database";
-import { type RunEvent, message } from "@bap/protocol";
 import type { preHandlerAsyncHookHandler } from "fastify";
 import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
+import type { Coordinator } from "./coordinator.ts";
 import type { Fleet } from "./fleet.ts";
 import type { ObjectStore } from "./storage.ts";
 
@@ -32,6 +32,8 @@ const runSchema = z.object({
   timeoutMs: z.number(),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
+  /** Why a QUEUED run waits (agent drained, provider down, profile busy, capacity…). */
+  queueReason: z.string().nullable(),
   createdAt: z.string(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
@@ -53,122 +55,13 @@ const idParams = z.object({ id: z.uuid() });
 export interface RunsOptions {
   db: Db;
   fleet: Fleet;
+  coordinator: Coordinator;
   store: ObjectStore;
   operatorAuth: preHandlerAsyncHookHandler;
 }
 
-export function registerRuns(app: App, { db, fleet, store, operatorAuth }: RunsOptions) {
+export function registerRuns(app: App, { db, fleet, coordinator, store, operatorAuth }: RunsOptions) {
   const errors = { 401: errorSchema, 404: errorSchema, 409: errorSchema };
-
-  // ---- run coordinator: the only place that changes run status ----
-
-  /** Changes status only from the listed states and journals the change in the same transaction. */
-  const transition = (runId: string, from: RunStatus[], to: RunStatus, reason: string | null, extra: Partial<{ error_code: string; error_message: string; started_at: Date; finished_at: Date }> = {}) =>
-    db.transaction().execute(async (tx) => {
-      const before = await tx.selectFrom("runs").select("status").where("id", "=", runId).where("status", "in", from).forUpdate().executeTakeFirst();
-      if (!before) return false;
-      await tx.updateTable("runs").set({ status: to, updated_at: new Date(), ...extra }).where("id", "=", runId).execute();
-      await tx.insertInto("run_transitions").values({ run_id: runId, from_status: before.status, to_status: to, reason }).execute();
-      return true;
-    });
-
-  const releaseProfile = (runId: string, to: "AVAILABLE" | "NEEDS_REVIEW", lastError: string | null) =>
-    db.updateTable("profiles").set({ status: to, active_run_id: null, last_error: lastError, updated_at: new Date() }).where("active_run_id", "=", runId).execute();
-
-  /** Hands a queued run to its profile's agent if the agent is connected; otherwise it waits for the agent. */
-  const dispatch = async (runId: string) => {
-    const run = await db
-      .selectFrom("runs")
-      .innerJoin("profiles", "profiles.id", "runs.profile_id")
-      .innerJoin("scenario_versions", (j) => j.onRef("scenario_versions.scenario_id", "=", "runs.scenario_id").onRef("scenario_versions.version", "=", "runs.scenario_version"))
-      .select(["runs.id", "runs.agent_id", "runs.status", "runs.input", "runs.timeout_ms", "runs.scenario_id", "runs.scenario_version", "scenario_versions.sha256", "profiles.external_profile_id"])
-      .where("runs.id", "=", runId)
-      .executeTakeFirstOrThrow();
-    if (run.status !== "QUEUED" || !fleet.isConnected(run.agent_id)) return;
-    // The profile is taken for this run atomically; a profile already in use leaves the run queued.
-    const taken = await db
-      .updateTable("profiles")
-      .set({ status: "IN_USE", active_run_id: runId, updated_at: new Date() })
-      .where("id", "=", (await db.selectFrom("runs").select("profile_id").where("id", "=", runId).executeTakeFirstOrThrow()).profile_id)
-      .where("status", "=", "AVAILABLE")
-      .returning("id")
-      .executeTakeFirst();
-    if (!taken) return;
-    if (!(await transition(runId, ["QUEUED"], "ASSIGNED", `assigned to agent ${run.agent_id}`))) return releaseProfile(runId, "AVAILABLE", null);
-    await db.insertInto("run_assignments").values({ run_id: runId, agent_id: run.agent_id }).execute();
-    const sent = fleet.send(
-      run.agent_id,
-      message({
-        type: "run.assign",
-        payload: {
-          runId,
-          scenario: { id: run.scenario_id, version: run.scenario_version, sha256: run.sha256 },
-          profileExternalId: run.external_profile_id,
-          input: run.input,
-          timeoutMs: run.timeout_ms,
-        },
-      }),
-    );
-    if (!sent) {
-      await transition(runId, ["ASSIGNED"], "QUEUED", "agent disconnected before the assignment was sent");
-      await releaseProfile(runId, "AVAILABLE", null);
-    }
-  };
-
-  fleet.handlers.onConnected = async (agentId) => {
-    const queued = await db.selectFrom("runs").select("id").where("agent_id", "=", agentId).where("status", "=", "QUEUED").orderBy("created_at").execute();
-    for (const r of queued) await dispatch(r.id);
-  };
-
-  fleet.handlers.onRunEvent = async (agentId, event: RunEvent) => {
-    const runId = event.payload.runId;
-    const owner = await db.selectFrom("runs").select("agent_id").where("id", "=", runId).executeTakeFirst();
-    if (owner?.agent_id !== agentId) return; // an agent may only report on its own runs
-    switch (event.type) {
-      case "run.accepted":
-        await transition(runId, ["ASSIGNED"], "ACCEPTED", "agent accepted");
-        await db.updateTable("run_assignments").set({ status: "ACCEPTED", acknowledged_at: new Date() }).where("run_id", "=", runId).where("acknowledged_at", "is", null).execute();
-        break;
-      case "run.started":
-        await transition(runId, ["ACCEPTED"], "RUNNING", "browser session started", { started_at: new Date() });
-        break;
-      case "run.progress": {
-        const step = event.payload.step;
-        const shot = step.screenshot
-          ? await db.selectFrom("artifacts").select("id").where("run_id", "=", runId).where("name", "=", step.screenshot).executeTakeFirst()
-          : undefined;
-        await db
-          .insertInto("run_steps")
-          .values({
-            run_id: runId,
-            sequence: step.sequence,
-            step_id: step.stepId,
-            mutating: step.mutating,
-            status: step.status,
-            started_at: step.startedAt,
-            duration_ms: step.durationMs,
-            error: step.error ?? null,
-            screenshot_artifact_id: shot?.id ?? null,
-          })
-          .onConflict((oc) => oc.columns(["run_id", "sequence"]).doNothing())
-          .execute();
-        break;
-      }
-      case "run.completed":
-        await transition(runId, ["RUNNING"], "SUCCEEDED", "all steps passed", { finished_at: new Date() });
-        await releaseProfile(runId, "AVAILABLE", null);
-        await db.updateTable("run_assignments").set({ status: "FINISHED", finished_at: new Date() }).where("run_id", "=", runId).execute();
-        break;
-      case "run.failed": {
-        const { status, errorCode, message: text } = event.payload;
-        await transition(runId, ["ACCEPTED", "RUNNING"], status, `${errorCode}: ${text}`, { error_code: errorCode, error_message: text, finished_at: new Date() });
-        // An unconfirmed change keeps the profile blocked until an operator looks at it.
-        await releaseProfile(runId, status === "NEEDS_REVIEW" ? "NEEDS_REVIEW" : "AVAILABLE", status === "NEEDS_REVIEW" ? `run ${runId}: ${text}` : null);
-        await db.updateTable("run_assignments").set({ status: "FINISHED", finished_at: new Date() }).where("run_id", "=", runId).execute();
-        break;
-      }
-    }
-  };
 
   // ---- scenarios ----
 
@@ -232,7 +125,7 @@ export function registerRuns(app: App, { db, fleet, store, operatorAuth }: RunsO
 
   // ---- runs ----
 
-  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
+  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; queue_reason: string | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
     id: r.id,
     scenarioId: r.scenario_id,
     scenarioVersion: r.scenario_version,
@@ -243,6 +136,7 @@ export function registerRuns(app: App, { db, fleet, store, operatorAuth }: RunsO
     timeoutMs: r.timeout_ms,
     errorCode: r.error_code,
     errorMessage: r.error_message,
+    queueReason: r.status === "QUEUED" ? r.queue_reason : null,
     createdAt: r.created_at.toISOString(),
     startedAt: r.started_at?.toISOString() ?? null,
     finishedAt: r.finished_at?.toISOString() ?? null,
@@ -311,7 +205,7 @@ export function registerRuns(app: App, { db, fleet, store, operatorAuth }: RunsO
         if ((e as { code?: string }).code === "23505") return (await replay())!;
         throw e;
       }
-      await dispatch(runId);
+      await coordinator.tick();
       return accepted(runId);
     },
   );

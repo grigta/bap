@@ -60,8 +60,11 @@ export function browserProviderContract(target: ContractTarget) {
 
     await session.attach();
     expect((await session.inspect()).connected).toBe(true);
+    expect(await target.provider.profileState(profileId)).toBe("busy");
     await session.closeSession();
     expect(await target.isRunning(profileId)).toBe(false);
+    expect(await target.provider.profileState(profileId)).toBe("idle");
+    expect(await target.provider.profileState("00000000-0000-0000-0000-000000000000")).toBe("missing");
     await expect(target.provider.openSession(profileId, "run-3")).resolves.toBeDefined();
   });
 

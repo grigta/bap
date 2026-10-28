@@ -18,6 +18,9 @@ interface Agent {
   agentVersion: string | null;
   heartbeat: Heartbeat | null;
   maxSessions: number | null;
+  reportedMaxSessions: number | null;
+  sessionLimit: number | null;
+  activeRuns: number;
 }
 
 const POLL_MS = 2000;
@@ -66,6 +69,31 @@ function Sparkline({ values, label }: { values: number[]; label: string }) {
   );
 }
 
+function SessionLimit({ agent }: { agent: Agent }) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState(agent.sessionLimit === null ? "" : String(agent.sessionLimit));
+  const save = useMutation({
+    mutationFn: () => api(`/agents/${agent.id}`, { method: "PATCH", body: JSON.stringify({ sessionLimit: value === "" ? null : Number(value) }) }),
+    onSuccess: () => queryClient.invalidateQueries(),
+  });
+  return (
+    <form
+      className="limit"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate();
+      }}
+    >
+      <label>
+        Лимит сессий{" "}
+        <input type="number" min={0} max={100} value={value} placeholder={`агент: ${agent.reportedMaxSessions ?? "—"}`} onChange={(e) => setValue(e.target.value)} aria-label="Лимит сессий" />
+      </label>
+      <button type="submit">Сохранить</button>
+      <span className="muted"> пусто — как сообщает агент</span>
+    </form>
+  );
+}
+
 function AgentCard({ id, onClose }: { id: string; onClose: () => void }) {
   const card = useQuery({
     queryKey: ["agent", id],
@@ -79,6 +107,7 @@ function AgentCard({ id, onClose }: { id: string; onClose: () => void }) {
         <h2>{card.data.name}</h2>
         <button onClick={onClose}>Закрыть</button>
       </header>
+      <SessionLimit agent={card.data} />
       <Sparkline label="CPU" values={card.data.heartbeats.map((b) => b.cpuPercent)} />
       <Sparkline label="RAM" values={card.data.heartbeats.map((b) => b.memoryPercent)} />
       <p className="muted">Последние {card.data.heartbeats.length} heartbeat</p>
@@ -92,7 +121,7 @@ export function Agents() {
   const [selected, setSelected] = useState<string | null>(null);
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api<Agent[]>("/agents"), refetchInterval: POLL_MS });
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "drain" | "disable" | "revoke" }) => api(`/agents/${id}/${action}`, { method: "POST" }),
+    mutationFn: ({ id, action }: { id: string; action: "drain" | "disable" | "activate" | "revoke" }) => api(`/agents/${id}/${action}`, { method: "POST" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
   });
   const revoke = (agent: Agent) => {
@@ -136,11 +165,15 @@ export function Agents() {
                 <td>{a.agentVersion ?? "—"}</td>
                 <td>{a.heartbeat ? (a.heartbeat.lsAvailable ? "✓" : "✗") : "—"}</td>
                 <td>{a.heartbeat ? `${a.heartbeat.cpuPercent.toFixed(0)}% / ${a.heartbeat.memoryPercent.toFixed(0)}%` : "—"}</td>
-                <td>{a.heartbeat && a.maxSessions !== null ? `${a.heartbeat.activeSessions} / ${a.maxSessions}` : "—"}</td>
+                <td data-testid="slots">{a.maxSessions !== null ? `${a.activeRuns} / ${a.maxSessions}` : "—"}</td>
                 <td className="actions">
-                  <button disabled={a.status !== "ACTIVE"} onClick={() => act.mutate({ id: a.id, action: "drain" })}>
-                    Drain
-                  </button>
+                  {a.status === "DRAINING" || a.status === "DISABLED" ? (
+                    <button onClick={() => act.mutate({ id: a.id, action: "activate" })}>Activate</button>
+                  ) : (
+                    <button disabled={a.status !== "ACTIVE"} onClick={() => act.mutate({ id: a.id, action: "drain" })}>
+                      Drain
+                    </button>
+                  )}
                   <button disabled={a.status === "DISABLED" || a.status === "REVOKED"} onClick={() => act.mutate({ id: a.id, action: "disable" })}>
                     Disable
                   </button>

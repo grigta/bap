@@ -1,10 +1,10 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { logIn } from "./helpers.ts";
+import { killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_FLEET, STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -22,7 +22,7 @@ test("[REQ-UI-003] operator imports profiles, verifies, disables and enables the
     const { token } = await invite.json();
     const enrolled = spawnSync("node", [cli, "enroll", "--server", `http://127.0.0.1:${STACK_PORTS.controlPlane}`, "--token", token, "--name", "profiles-mac"], { env, encoding: "utf8" });
     expect(enrolled.stderr).toBe("");
-    agent = spawn("node", [cli, "start"], { env, stdio: "ignore" });
+    agent = spawnAgent(cli, env);
 
     await page.getByRole("button", { name: "Profiles" }).click();
     await expect(page.getByRole("option", { name: "profiles-mac" })).toBeAttached({ timeout: 10_000 });
@@ -60,6 +60,6 @@ test("[REQ-UI-003] operator imports profiles, verifies, disables and enables the
     await expect(a.locator(".badge").last()).toHaveText("AVAILABLE");
     await evidence(page, "S4", "profile-node-unreachable");
   } finally {
-    agent?.kill("SIGKILL");
+    killAgent(agent);
   }
 });

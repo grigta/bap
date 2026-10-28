@@ -7,6 +7,7 @@ import { hasZodFastifySchemaValidationErrors, serializerCompiler, validatorCompi
 import { z } from "zod";
 import { SESSION_COOKIE, checkPassword, hashToken, newToken, requireOperator } from "./auth.ts";
 import { errorSchema, sendError } from "./errors.ts";
+import { type Coordinator, DEFAULT_SCHEDULER, type SchedulerConfig, createCoordinator } from "./coordinator.ts";
 import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerRuns } from "./runs.ts";
@@ -19,6 +20,7 @@ export interface AppOptions {
   sessionTtlMs?: number;
   logger?: boolean;
   fleet?: Partial<FleetConfig>;
+  scheduler?: Partial<SchedulerConfig>;
   store: ObjectStore;
 }
 
@@ -30,7 +32,7 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, store }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store }: AppOptions) {
   const app = Fastify({ logger, genReqId: () => randomUUID() }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -101,12 +103,20 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     },
   );
 
+  // Lets tests drive the scheduler directly (e.g. concurrent reservations).
+  const internals: { coordinator: Coordinator | null } = { coordinator: null };
+  app.decorate("internals", internals);
+
   // Registered as a plugin so it loads after @fastify/websocket, which websocket routes require.
   app.register(async (scoped) => {
     const fleetConfig = { ...DEFAULT_FLEET, ...fleet };
     const agents = registerFleet(scoped as unknown as App, db, fleetConfig, auth);
     registerProfiles(scoped as unknown as App, db, agents, fleetConfig, auth);
-    registerRuns(scoped as unknown as App, { db, fleet: agents, store, operatorAuth: auth });
+    const coordinator = createCoordinator(db, agents, fleetConfig, { ...DEFAULT_SCHEDULER, ...scheduler });
+    registerRuns(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth });
+    internals.coordinator = coordinator;
+    coordinator.start();
+    scoped.addHook("onClose", () => coordinator.stop());
   });
 
   return app;
@@ -117,5 +127,6 @@ export type App = ReturnType<typeof buildApp>;
 declare module "fastify" {
   interface FastifyInstance {
     registeredRoutes: RegisteredRoute[];
+    internals: { coordinator: Coordinator | null };
   }
 }

@@ -1,5 +1,5 @@
 import { CdpSession } from "./cdp-session.ts";
-import { type BrowserProvider, ProfileNotFoundError, type ProfileSummary } from "./types.ts";
+import { type BrowserProvider, ProfileNotFoundError, type ProfileState, type ProfileSummary } from "./types.ts";
 
 /**
  * Linken Sphere 2 Local API (checked against 2.26.10). The API listens on 127.0.0.1 only,
@@ -69,6 +69,11 @@ export class LinkenSphereProvider implements BrowserProvider {
 
   async listProfiles(): Promise<ProfileSummary[]> {
     return (await this.api.listSessions()).map((s) => ({ id: s.uuid, name: s.name }));
+  }
+
+  async profileState(profileId: string): Promise<ProfileState> {
+    const session = (await this.api.listSessions()).find((s) => s.uuid === profileId);
+    return !session ? "missing" : session.status === "stopped" ? "idle" : "busy";
   }
 
   async openSession(profileId: string, runId: string): Promise<LinkenSphereSession> {
