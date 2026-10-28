@@ -166,6 +166,7 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
           break;
         }
         const stepStarted = Date.now();
+        ctx.deadline = Number.isFinite(deadline) ? deadline : undefined;
         let annotation: StepNote = {};
         ctx.annotate = (note) => void (annotation = { ...annotation, ...note });
         const remaining = deadline - stepStarted;

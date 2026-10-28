@@ -81,6 +81,16 @@ as_bap corepack enable --install-directory "$BAP/node/bin" pnpm
 (cd "$BAP/app" && as_bap pnpm install --frozen-lockfile --reporter=silent && as_bap pnpm --filter @bap/web build >/dev/null)
 echo "$(as_bap git -C "$BAP/app" log -1 --format='%h %s')"
 
+say "Claude Code (recording and healing of recipes, ADR-0026)"
+as_bap "$BAP/node/bin/npm" install -g --prefix "$BAP/node" --silent @anthropic-ai/claude-code >/dev/null
+echo "$("$BAP/node/bin/claude" --version)"
+upsert() { grep -q "^$1=" "$ENV" && sed -i "s|^$1=.*|$1=$2|" "$ENV" || echo "$1=$2" >> "$ENV"; }
+upsert BAP_CLAUDE_BIN "$BAP/node/bin/claude"
+upsert BAP_LLM_DIR "$BAP/data/llm"
+# The token from `claude setup-token` is passed once as an environment variable of this script, never in the repo.
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then upsert CLAUDE_CODE_OAUTH_TOKEN "$CLAUDE_CODE_OAUTH_TOKEN"; echo "model token stored in $ENV"; fi
+grep -q "^CLAUDE_CODE_OAUTH_TOKEN=" "$ENV" || echo "no model token: recording and healing are off until CLAUDE_CODE_OAUTH_TOKEN is set"
+
 say "Services"
 cat > /etc/systemd/system/bap-seaweed.service <<EOF
 [Unit]

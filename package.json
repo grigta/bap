@@ -12,6 +12,7 @@
     "test": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --project unit --project integration --coverage --reporter=default --reporter=junit --outputFile.junit=reports/junit/vitest.xml",
     "test:unit": "vitest run --project unit",
     "test:ls": "vitest run --project ls --reporter=default --reporter=junit --outputFile.junit=reports/junit/ls.xml",
+    "test:sites": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --project sites --reporter=default --reporter=junit --outputFile.junit=reports/junit/sites.xml",
     "test:integration": "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock vitest run --project integration",
     "test:e2e": "playwright test",
     "test:e2e:update-linux": "scripts/e2e-linux.sh",

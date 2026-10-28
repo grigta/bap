@@ -194,6 +194,7 @@ async function record(assign: RunAssignPayload, deps: RunnerDeps, artifactsDir: 
         input,
         secrets,
         recorder,
+        deadline: Date.now() + assign.timeoutMs,
         shouldCancel: deps.isCancelled,
         onStep: async (step) => {
           const screenshot = `${String(step.sequence).padStart(2, "0")}-${step.stepId}.png`;

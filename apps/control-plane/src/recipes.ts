@@ -554,8 +554,11 @@ function templateText(text: string, open: Record<string, unknown>): string {
   return values.reduce((acc, [key, value]) => acc.split(value).join(`{{input.${key}}}`), text);
 }
 
-const cleanCheck = (c: { text?: string; url?: string }, open: Record<string, unknown>) => ({
-  ...(c.text && { text: templateText(c.text, open) }),
+/** The page list's notation is not page text: `value="Option 2"` checks for Option 2. */
+const unquote = (text: string) => /^\s*[\w-]+="(.*)"\s*$/.exec(text)?.[1] ?? text;
+
+export const cleanCheck = (c: { text?: string; url?: string }, open: Record<string, unknown>) => ({
+  ...(c.text && { text: templateText(unquote(c.text), open) }),
   ...(c.url && { url: templateText(c.url, open) }),
 });
 

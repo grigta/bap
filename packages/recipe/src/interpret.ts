@@ -1,7 +1,8 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { type PageSnapshot, type Snapshot, act, captureSnapshot, pageHasText, renderFingerprint, renderTemplate, resolve } from "@bap/dom-snapshot";
+import { type PageSnapshot, type Resolution, type Snapshot, act, captureSnapshot, pageHasText, renderFingerprint, renderTemplate, resolve, settle } from "@bap/dom-snapshot";
 import { type Step, type StepContext, defineScenario } from "@bap/scenario-sdk";
 import { z } from "zod";
+import { navigation } from "./record.ts";
 import { type Postcondition, type Recipe, type RecipeStep, secretValues } from "./schema.ts";
 
 export type HealReason = "missing" | "ambiguous" | "postcondition";
@@ -31,11 +32,6 @@ export interface RecipeScenarioOptions {
   recipe: Recipe;
   /** Without it a step that cannot find its target fails, as a scenario step would. */
   heal?: Healer;
-  /** How long a step waits for its target to appear before it counts as missing. */
-  findTimeoutMs?: number;
-  /** How long a postcondition may take to come true. */
-  postconditionTimeoutMs?: number;
-  pollMs?: number;
 }
 
 interface RecipeState {
@@ -52,47 +48,34 @@ type Ctx = StepContext<Record<string, unknown>, RecipeState>;
  */
 export function recipeScenario(opts: RecipeScenarioOptions) {
   const { recipe } = opts;
-  const findTimeoutMs = opts.findTimeoutMs ?? 8000;
-  const postTimeoutMs = opts.postconditionTimeoutMs ?? 10_000;
-  const pollMs = opts.pollMs ?? 300;
   const secretsOf = (ctx: Ctx) => secretValues(recipe, ctx.input);
 
-  /** Waits for the target; returns the snapshot it was found in, or why it was not. */
+  /**
+   * The target, as soon as it is there. Missing or ambiguous only once the page has finished loading
+   * (REQ-DOM-006): a slow site is waited for, not failed; the run's deadline is the only limit.
+   */
   const locate = async (ctx: Ctx, step: RecipeStep): Promise<{ snap: Snapshot; ref: string; score: number } | { snap: Snapshot; reason: HealReason; detail: string }> => {
     const fp = renderFingerprint(step.target!, ctx.input);
-    const deadline = Date.now() + findTimeoutMs;
-    for (;;) {
-      const snap = await captureSnapshot(ctx.page, { secrets: secretsOf(ctx) });
-      const found = resolve(fp, snap.page);
-      if (found.kind === "found") return { snap, ref: found.ref, score: found.score };
-      if (Date.now() >= deadline) {
-        const detail =
-          found.kind === "missing"
-            ? `no element matches “${fp.name || fp.text}” (${fp.role})${found.best ? `; best candidate ${found.best.score}` : ""}`
-            : `${found.candidates.length} elements match “${fp.name || fp.text}” equally`;
-        return { snap, reason: found.kind, detail };
-      }
-      await snap.dispose();
-      await sleep(pollMs);
-    }
+    let found: Resolution | null = null;
+    const { snap } = await settle(ctx.page, { secrets: secretsOf(ctx), deadline: ctx.deadline, until: (s) => (found = resolve(fp, s.page)).kind === "found" });
+    const result = found ?? resolve(fp, snap.page);
+    if (result.kind === "found") return { snap, ref: result.ref, score: result.score };
+    const detail =
+      result.kind === "missing"
+        ? `no element matches “${fp.name || fp.text}” (${fp.role}) on the loaded page${result.best ? `; best candidate ${result.best.score}` : ""}`
+        : `${result.candidates.length} elements match “${fp.name || fp.text}” equally`;
+    return { snap, reason: result.kind, detail };
   };
 
-  const postconditionHolds = async (ctx: Ctx, post: Postcondition | undefined, timeoutMs: number): Promise<boolean> => {
+  /** Checked once the page has finished what the action started; true as soon as it holds. */
+  const postconditionHolds = async (ctx: Ctx, post: Postcondition | undefined): Promise<boolean> => {
     if (!post) return true;
     const url = post.url && renderTemplate(post.url, ctx.input);
     const text = post.text && renderTemplate(post.text, ctx.input);
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      let ok = !url || ctx.page.url().includes(url);
-      if (ok && text) {
-        const snap = await captureSnapshot(ctx.page, { secrets: secretsOf(ctx) }).catch(() => null);
-        await snap?.dispose();
-        ok = snap !== null && pageHasText(snap.page, text);
-      }
-      if (ok) return true;
-      if (Date.now() >= deadline) return false;
-      await sleep(pollMs);
-    }
+    const holds = (s: Snapshot) => (!url || s.page.url.includes(url)) && (!text || pageHasText(s.page, text));
+    const { snap, matched } = await settle(ctx.page, { secrets: secretsOf(ctx), deadline: ctx.deadline, until: holds });
+    await snap.dispose();
+    return matched || holds(snap);
   };
 
   const heal = async (ctx: Ctx, step: RecipeStep, snap: Snapshot, reason: HealReason, detail: string) => {
@@ -131,12 +114,12 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
 
   const steps: Step<Record<string, unknown>, RecipeState>[] = recipe.steps.map((step) => {
     const run = async (ctx: Ctx) => {
-      if (step.action === "navigate") await ctx.page.goto(renderTemplate(step.value!, ctx.input));
+      if (step.action === "navigate") await ctx.page.goto(renderTemplate(step.value!, ctx.input), navigation(ctx.deadline));
       else if (step.action === "wait") await sleep(Number(step.value));
       else if (step.action === "press") await ctx.page.keyboard.press(step.value!);
       else await perform(ctx, step);
       if (step.mutating) return; // verify proves it; repeating a mutating action is never an option
-      if (await postconditionHolds(ctx, step.postcondition, postTimeoutMs)) return;
+      if (await postconditionHolds(ctx, step.postcondition)) return;
       // The target was there but the action led elsewhere: one healed attempt, it is a read-only step.
       if (!opts.heal || !step.target) throw new RecipeStepError(`step ${step.id} (${step.intent}): postcondition did not hold`);
       const snap = await captureSnapshot(ctx.page, { secrets: secretsOf(ctx) });
@@ -147,10 +130,10 @@ export function recipeScenario(opts: RecipeScenarioOptions) {
       } finally {
         await snap.dispose();
       }
-      if (!(await postconditionHolds(ctx, step.postcondition, postTimeoutMs))) throw new RecipeStepError(`step ${step.id} (${step.intent}): postcondition did not hold after healing`);
+      if (!(await postconditionHolds(ctx, step.postcondition))) throw new RecipeStepError(`step ${step.id} (${step.intent}): postcondition did not hold after healing`);
     };
     return step.mutating
-      ? { id: step.id, intent: step.intent, mutating: true as const, run, verify: (ctx: Ctx) => postconditionHolds(ctx, step.postcondition, postTimeoutMs) }
+      ? { id: step.id, intent: step.intent, mutating: true as const, run, verify: (ctx: Ctx) => postconditionHolds(ctx, step.postcondition) }
       : { id: step.id, intent: step.intent, run };
   });
 

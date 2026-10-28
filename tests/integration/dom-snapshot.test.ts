@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Fingerprint, MASK, type PageSnapshot, act, captureSnapshot, fingerprintOf, resolve } from "@bap/dom-snapshot";
@@ -11,10 +11,12 @@ let site: Awaited<ReturnType<typeof startTestSite>>;
 let launched: LaunchedChromium;
 let browser: Browser;
 let page: Page;
+let profileDir: string;
 
 beforeAll(async () => {
   site = await startTestSite("shapeshift-site");
-  launched = await launchChromium(mkdtempSync(join(tmpdir(), "bap-dom-")), true);
+  profileDir = mkdtempSync(join(tmpdir(), "bap-dom-"));
+  launched = await launchChromium(profileDir, true);
   browser = await chromium.connectOverCDP(`http://127.0.0.1:${launched.port}`);
   page = await browser.contexts()[0]!.newPage();
 });
@@ -139,6 +141,8 @@ describe("page snapshot", () => {
     const before = await snapshot();
     expect(before.text).toContain("Промокод применён"); // text inside the closed shadow root
     expect(before.text).toContain("Пункт выбран"); // text inside the same-origin frame
+    expect(before.text).toContain("Курьер"); // what the <select> shows is page text: postconditions can check it
+    expect(before.text).toContain("Москва, Тверская 1");
     expect(before.elements.find((e) => e.role === "checkbox")!.states).toContain("checked");
 
     const snap = await captureSnapshot(page);
@@ -167,6 +171,11 @@ describe("page snapshot", () => {
     await act(page, snap.handles.get(target.ref)!, { kind: "select", value: "Почта" });
     await snap.dispose();
     expect(await globals()).toEqual(baseline);
+  });
+
+  test("[REQ-DOM-001] the profile's password manager is off: its leaked-password dialog would swallow clicks after a login", () => {
+    const prefs = JSON.parse(readFileSync(join(profileDir, "Default", "Preferences"), "utf8"));
+    expect(prefs).toMatchObject({ credentials_enable_service: false, profile: { password_manager_enabled: false, password_manager_leak_detection: false } });
   });
 
   test("[REQ-DOM-003] password fields and secret values never appear in a snapshot", async () => {

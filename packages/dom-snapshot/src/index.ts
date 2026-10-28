@@ -5,3 +5,4 @@ export {
 } from "./fingerprint.ts";
 export { serializeSnapshot } from "./serialize.ts";
 export { MASK, type NodeHandle, type PageSnapshot, type Rect, type Snapshot, type SnapshotElement, type SnapshotOptions, captureSnapshot } from "./snapshot.ts";
+export { type SettleOptions, loadingRequests, settle } from "./stable.ts";

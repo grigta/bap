@@ -1,6 +1,6 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright-core";
 import { CdpSession } from "./cdp-session.ts";
@@ -94,6 +94,7 @@ export interface LaunchedChromium {
 
 /** Starts Chromium on a user-data-dir with a CDP port chosen by Chromium itself. */
 export async function launchChromium(userDataDir: string, headless: boolean): Promise<LaunchedChromium> {
+  disablePasswordManager(userDataDir);
   const portFile = join(userDataDir, "DevToolsActivePort");
   rmSync(portFile, { force: true });
   const args = [`--user-data-dir=${userDataDir}`, "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check"];
@@ -130,6 +131,22 @@ export async function closeChromium({ process: proc, port }: LaunchedChromium): 
     proc.kill("SIGKILL");
     if (!exited(proc)) await exit;
   }
+}
+
+/**
+ * After a login with a known leaked password, Chromium opens a "change your password" dialog that swallows
+ * every click on the page (public demo sites use such passwords). The profile's password manager is turned off.
+ */
+function disablePasswordManager(userDataDir: string) {
+  const file = join(userDataDir, "Default", "Preferences");
+  let prefs: Record<string, unknown> = {};
+  try {
+    prefs = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    mkdirSync(dirname(file), { recursive: true });
+  }
+  const profile = (prefs.profile ?? {}) as Record<string, unknown>;
+  writeFileSync(file, JSON.stringify({ ...prefs, credentials_enable_service: false, profile: { ...profile, password_manager_enabled: false, password_manager_leak_detection: false } }));
 }
 
 /** A process killed by a signal has exitCode null and signalCode set. */

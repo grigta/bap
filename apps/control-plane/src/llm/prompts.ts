@@ -14,6 +14,8 @@ Rules:
 - previousCheck: when the previous step was mutating, quote text or an address fragment visible NOW that proves it
   worked (e.g. text "Товар добавлен" or url "/cart"). Give it for other steps when the page clearly changed.
 - Finish with decision "done" when the goal is reached; result: text or url fragment on this page that proves it.
+- A check's text is words a person sees on the page (a heading, a message, a field's value, a button's name),
+  never the list's own notation: write Option 2, not value="Option 2".
 - decision "fail" with a reason when the goal cannot be reached (login wall, captcha, missing product…).
 - Do not navigate by typing addresses; move through the site like a person.`;
 

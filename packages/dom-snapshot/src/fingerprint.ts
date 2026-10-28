@@ -199,8 +199,12 @@ export function renderFingerprint(fp: Fingerprint, input: Record<string, unknown
   return out;
 }
 
-/** Whether the page shows this text anywhere (all frames), ignoring case and spacing. */
+/**
+ * Whether the page shows this text anywhere (all frames), ignoring case and spacing. Accessible names of visible
+ * elements count too: they are what the snapshot shows (a cart button named "Cart, 1 items" has no such text).
+ */
 export function pageHasText(page: PageSnapshot, text: string): boolean {
   const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
-  return norm(page.text).includes(norm(text));
+  const wanted = norm(text);
+  return norm(page.text).includes(wanted) || page.elements.some((e) => e.visible && norm(e.name).includes(wanted));
 }

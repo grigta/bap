@@ -16,6 +16,8 @@ export interface StepContext<Input, State> {
   state: State;
   /** Adds to the journal entry of the current step. */
   annotate?: (note: StepNote) => void;
+  /** When the run's time is up (epoch ms); waits inside a step must not go past it. */
+  deadline?: number;
 }
 
 interface BaseStep<Input, State> {

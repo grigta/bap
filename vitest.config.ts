@@ -24,6 +24,16 @@ export default defineConfig({
         },
       },
       {
+        // Real public sites and the real model: local only, run by `pnpm test:sites`, never in CI
+        test: {
+          name: "sites",
+          include: ["tests/sites/**/*.test.ts"],
+          testTimeout: 900_000,
+          hookTimeout: 180_000,
+          fileParallelism: false,
+        },
+      },
+      {
         test: {
           name: "integration",
           include: ["tests/integration/**/*.test.ts", "tests/recovery/**/*.test.ts"],

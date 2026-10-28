@@ -1,4 +1,3 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import type { Page } from "playwright-core";
 import type { NodeHandle } from "./snapshot.ts";
 
@@ -17,9 +16,11 @@ async function clickPoint(handle: NodeHandle): Promise<{ x: number; y: number }>
   // Outermost first: the <iframe> must be in view before anything inside it can be.
   for (const owner of [...handle.owners].reverse()) await owner.session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: owner.backendNodeId }).catch(() => {});
   await session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {});
-  // Clicks are routed by the compositor's hit-test data, which lags a scroll by a frame or two: right after
-  // scrolling, a click can land on whatever was at that point before (e.g. a cross-origin frame).
-  if (handle.owners.length > 0 || JSON.stringify(await quadsOf()) !== before) await sleep(150);
+  // Clicks are routed by the compositor's hit-test data, which lags a scroll by a frame: right after scrolling,
+  // a click can land on whatever was at that point before (e.g. a cross-origin frame). Wait for painted frames.
+  if (handle.owners.length > 0 || JSON.stringify(await quadsOf()) !== before) {
+    for (const h of [handle, ...handle.owners.map((o) => ({ ...handle, ...o, frameId: "" }))]) await callInIsolatedWorld(h, NEXT_FRAMES, [], true).catch(() => {});
+  }
   const quads = await quadsOf();
   const quad = quads.find((q) => Math.abs(q[4]! - q[0]!) > 1 && Math.abs(q[5]! - q[1]!) > 1);
   if (!quad) throw new ActionError("the element has no visible box to click");
@@ -35,8 +36,10 @@ async function clickPoint(handle: NodeHandle): Promise<{ x: number; y: number }>
 }
 
 /** Runs a function on the element in an isolated world: the page's own scripts and globals never see it. */
-async function callInIsolatedWorld(handle: NodeHandle, fn: string, args: unknown[]): Promise<unknown> {
-  const { session, backendNodeId, frameId } = handle;
+async function callInIsolatedWorld(handle: NodeHandle, fn: string, args: unknown[], awaitPromise = false): Promise<unknown> {
+  const { session, backendNodeId } = handle;
+  // The node's own frame: an <iframe> owner lives in its parent's frame.
+  const frameId = handle.frameId || ((await session.send("DOM.describeNode", { backendNodeId })) as { node: { frameId?: string } }).node.frameId!;
   const world = (await session.send("Page.createIsolatedWorld", { frameId, worldName: "bap-recipes" })) as { executionContextId: number };
   const { object } = (await session.send("DOM.resolveNode", { backendNodeId, executionContextId: world.executionContextId })) as { object: { objectId: string } };
   const res = (await session.send("Runtime.callFunctionOn", {
@@ -44,10 +47,14 @@ async function callInIsolatedWorld(handle: NodeHandle, fn: string, args: unknown
     functionDeclaration: fn,
     arguments: args.map((value) => ({ value })),
     returnByValue: true,
+    awaitPromise,
   })) as { result: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text: string } };
   if (res.exceptionDetails) throw new ActionError(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text);
   return res.result.value;
 }
+
+/** Resolves after two painted frames of the node's frame. */
+const NEXT_FRAMES = "function () { return new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true)))); }";
 
 const SELECT_OPTION = `function (wanted) {
   const norm = (s) => s.replace(/\\s+/g, " ").trim().toLowerCase();

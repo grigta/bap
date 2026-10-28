@@ -61,6 +61,8 @@ describe("fingerprint resolver", () => {
   test("[REQ-DOM-006] text postconditions ignore case and spacing", () => {
     expect(pageHasText(page([]), "каталог   ноутбук")).toBe(true);
     expect(pageHasText(page([]), "Заказ")).toBe(false);
+    expect(pageHasText(page([el("e1", { name: "Cart, 1 items" })]), "cart, 1 items")).toBe(true);
+    expect(pageHasText(page([el("e1", { name: "Cart, 1 items", visible: false })]), "Cart, 1 items")).toBe(false);
   });
 
   test("[REQ-DOM-004] the model sees only visible elements, grouped by frame, with refs", () => {

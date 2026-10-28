@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { type PageSnapshot, ActionError, act, captureSnapshot, renderTemplate } from "@bap/dom-snapshot";
+import { type PageSnapshot, ActionError, act, renderTemplate, settle } from "@bap/dom-snapshot";
 import type { Page } from "playwright-core";
 
 /** The server's answer to an observation during a recording (REQ-DOM-004). */
@@ -58,7 +58,10 @@ export interface RecordOptions {
   shouldCancel?: () => boolean;
   /** Safety net against a loop that never finishes; the server's model budget is the real limit. */
   maxSteps?: number;
+  /** How often to ask whether the operator has decided. */
   pollMs?: number;
+  /** End of the run's time (epoch ms): the only limit on waiting for the site. */
+  deadline?: number;
 }
 
 export interface RecordOutcome {
@@ -68,11 +71,11 @@ export interface RecordOutcome {
   version?: string;
 }
 
-/** Lets the page finish what the last action started before the next look at it. */
-async function settle(page: Page) {
-  await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => {});
-  await sleep(400);
-}
+/**
+ * Navigation returns once the server answers; `settle` then waits for the page itself. No timeout of its own:
+ * only the run's deadline, so a slow site is waited for, not failed.
+ */
+export const navigation = (deadline?: number) => ({ waitUntil: "commit" as const, timeout: deadline === undefined ? 0 : Math.max(1, deadline - Date.now()) });
 
 /**
  * The agent's half of a recording: shows the page to the server and does what it decides.
@@ -84,15 +87,17 @@ export async function recordTask(opts: RecordOptions): Promise<RecordOutcome> {
   const cancelled = (): RecordOutcome | null => (opts.shouldCancel?.() ? { status: "CANCELLED" } : null);
 
   const opened = Date.now();
-  await page.goto(opts.startUrl);
-  await settle(page);
+  await page.goto(opts.startUrl, navigation(opts.deadline));
+  const loaded = await settle(page, { secrets: opts.secrets, deadline: opts.deadline });
+  await loaded.snap.dispose();
   await opts.onStep({ sequence: 1, stepId: "s01", intent: "Открыть сайт", mutating: false, resolution: "recorded", status: "passed", startedAt: new Date(opened).toISOString(), durationMs: Date.now() - opened, screenshot: await page.screenshot() });
 
   let last: Observation["last"] = null;
   for (let sequence = 2; sequence <= (opts.maxSteps ?? 60) + 1; sequence++) {
     const stop = cancelled();
     if (stop) return stop;
-    const snap = await captureSnapshot(page, { secrets: opts.secrets });
+    // The next look waits for what the last action started to finish loading.
+    const { snap } = await settle(page, { secrets: opts.secrets, deadline: opts.deadline });
     try {
       const screenshot = await page.screenshot();
       let decision = await recorder.observe({ snapshot: snap.page, screenshot, last });
@@ -130,7 +135,6 @@ export async function recordTask(opts: RecordOptions): Promise<RecordOutcome> {
         ...(last.error && { error: last.error }),
         screenshot,
       });
-      await settle(page);
     } finally {
       await snap.dispose();
     }

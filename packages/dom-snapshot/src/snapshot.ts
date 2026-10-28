@@ -85,6 +85,7 @@ const SKIP_TEXT = new Set(["script", "style", "noscript", "template", "head", "t
 const KEPT_ATTR = /^(id|name|type|placeholder|href|title|alt|role|for|aria-[\w-]+|data-[\w-]+)$/;
 
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
+const wordsOf = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 interface RawSnapshot {
@@ -310,10 +311,25 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       return st.visibility !== "hidden" && st.visibility !== "collapse" && (w ?? 0) > 0 && (h ?? 0) > 0;
     };
 
-    // Visible text of the page, in document order.
-    for (let i = 0; i < count; i++) if (n.nodeType[i] === 3 && !hidden[i] && n.parentIndex[i]! >= 0 && !SKIP_TEXT.has(tag(n.parentIndex[i]!)) && isVisible(n.parentIndex[i]!)) {
-      const t = collapse(s(n.nodeValue[i]));
-      if (t) pageText.push(t);
+    // Visible text of the page, in document order; what a field or a <select> shows counts too.
+    for (let i = 0; i < count; i++) {
+      if (hidden[i] || n.parentIndex[i]! < 0) continue;
+      if (n.nodeType[i] === 3) {
+        if (SKIP_TEXT.has(tag(n.parentIndex[i]!)) || !isVisible(n.parentIndex[i]!)) continue;
+        const t = collapse(s(n.nodeValue[i]));
+        if (t) pageText.push(t);
+      } else if (n.nodeType[i] === 1 && isVisible(i)) {
+        const t = tag(i);
+        const shown =
+          t === "select"
+            ? children[i]!.find((c) => tag(c) === "option" && selected.has(c))
+            : (t === "input" && !["password", "hidden", "checkbox", "radio", "submit", "button", "reset"].includes(attrs(i).type ?? "")) || t === "textarea"
+              ? -1
+              : undefined;
+        if (shown === undefined) continue;
+        const value = collapse(shown >= 0 ? text[shown]! : (inputValue.get(i) ?? textValue.get(i) ?? ""));
+        if (value) pageText.push(value);
+      }
     }
 
     const ancestors = (i: number) => {
@@ -335,12 +351,13 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       }
       return "";
     };
+    // The nearest container that says more than the element itself; a price or a counter alone does not.
     const contextOf = (i: number) => {
-      const mine = text[i]!.length;
+      const mine = new Set(wordsOf(text[i]!));
       for (const [depth, a] of ancestors(i).entries()) {
         if (depth > 6) break;
-        const t = text[a]!;
-        if (t.length > mine + 3) return t.length <= 300 ? cut(t, 160) : "";
+        const extra = wordsOf(text[a]!).filter((w) => !mine.has(w));
+        if (extra.some((w) => !/^\d+$/.test(w))) return cut(text[a]!, 160);
       }
       return "";
     };
