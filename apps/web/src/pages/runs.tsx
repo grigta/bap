@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Flag, PlayCircle, Play, RotateCcw, Square, X } from "lucide-react";
+import { Check, Flag, PlayCircle, Play, RotateCcw, Square, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { type Column, DataTable, columns } from "@/components/data-table";
@@ -16,11 +16,19 @@ import { PageHeader } from "@/layout/app-shell";
 import { HttpError, api } from "@/lib/api";
 import { seconds, shortId, time } from "@/lib/format";
 import { notifyError } from "@/lib/notify";
-import { CANCELLABLE_RUN, FINAL_RUN, type Profile, RUN_STATUSES, type Run, type RunDetail, type RunStatus, type Step } from "@/lib/types";
+import { CANCELLABLE_RUN, FINAL_RUN, type PendingConfirmation, type Profile, RUN_STATUSES, type Run, type RunDetail, type RunStatus, type Step, type StepResolution } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const MARK = { passed: "✓", failed: "✗", unverified: "?" } as const;
 const MARK_TONE = { passed: "bg-ok-soft text-ok", failed: "bg-fail-soft text-fail", unverified: "bg-wait-soft text-wait" } as const;
+/** How a recipe step found its target: by fingerprint, healed after a redesign, confirmed or recorded. */
+const RESOLUTION: Record<StepResolution, [string, string]> = {
+  found: ["найден", "bg-ok-soft text-ok"],
+  healed: ["вылечен", "bg-busy-soft text-busy"],
+  confirmed: ["подтверждён", "bg-wait-soft text-wait"],
+  recorded: ["записан", "bg-idle-soft text-idle"],
+};
+const runTitle = (r: Run) => `${r.scenarioId}@${r.scenarioVersion ?? "запись"}`;
 
 function NewRun({ onCreated }: { onCreated: (id: string) => void }) {
   const queryClient = useQueryClient();
@@ -154,13 +162,18 @@ function Filmstrip({ run, steps }: { run: RunDetail; steps: Step[] }) {
               <div className="grid gap-1 p-2 text-xs">
                 <div className="flex items-center gap-1.5">
                   <span className={cn("grid size-4 shrink-0 place-items-center rounded-sm text-[11px] font-semibold", MARK_TONE[s.status])}>{MARK[s.status]}</span>
-                  <span className="truncate font-medium">
-                    {s.sequence}. {s.stepId}
+                  <span className="truncate font-medium" title={s.intent ?? s.stepId}>
+                    {s.sequence}. {s.intent ?? s.stepId}
                   </span>
                   <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">{s.durationMs} мс</span>
                 </div>
-                {(s.mutating || checkpoint) && (
-                  <div className="flex gap-1">
+                {(s.mutating || checkpoint || s.resolution) && (
+                  <div className="flex flex-wrap gap-1">
+                    {s.resolution && (
+                      <span data-testid="step-resolution" className={cn("rounded-sm px-1 text-[10px]", RESOLUTION[s.resolution][1])} title={s.note ?? undefined}>
+                        {RESOLUTION[s.resolution][0]}
+                      </span>
+                    )}
                     {s.mutating && <span className="rounded-sm bg-wait-soft px-1 text-[10px] text-wait">mutating</span>}
                     {checkpoint && (
                       <span className="inline-flex items-center gap-0.5 rounded-sm bg-busy-soft px-1 text-[10px] text-busy">
@@ -170,6 +183,7 @@ function Filmstrip({ run, steps }: { run: RunDetail; steps: Step[] }) {
                     )}
                   </div>
                 )}
+                {s.resolution === "healed" && s.note && <p className="text-[11px] text-muted-foreground">{s.note}</p>}
                 {s.error && <pre className="max-h-24 overflow-auto rounded-sm bg-fail-soft p-1.5 font-mono text-[10px] whitespace-pre-wrap text-fail">{s.error}</pre>}
               </div>
             </li>
@@ -179,12 +193,46 @@ function Filmstrip({ run, steps }: { run: RunDetail; steps: Step[] }) {
       <Dialog open={open !== null} onOpenChange={(o) => !o && setOpen(null)}>
         <DialogContent className="sm:max-w-5xl">
           <DialogTitle>
-            Шаг {open?.sequence}. {open?.stepId}
+            Шаг {open?.sequence}. {open?.intent ?? open?.stepId}
           </DialogTitle>
           {open && <img src={src(open)} alt={`Скриншот шага ${open.stepId}`} className="w-full rounded-md border" />}
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** A recording waits before an action that changes data on the site: the operator decides (REQ-DOM-008). */
+function Confirmation({ runId }: { runId: string }) {
+  const queryClient = useQueryClient();
+  const pending = useQuery({ queryKey: ["confirmation", runId], queryFn: () => api<{ pending: PendingConfirmation | null }>(`/runs/${runId}/confirmation`), refetchInterval: 1000 });
+  const decide = useMutation({
+    mutationFn: (decision: "confirm" | "reject") => api(`/runs/${runId}/confirmation`, { method: "POST", body: JSON.stringify({ decision }) }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["confirmation", runId] }),
+    onError: notifyError("Подтверждение"),
+  });
+  const p = pending.data?.pending;
+  if (!p) return null;
+  return (
+    <div role="region" aria-label="Ждёт подтверждения" data-testid="confirmation" className="grid gap-3 rounded-lg border border-wait/40 bg-wait-soft p-3 sm:grid-cols-[16rem_1fr]">
+      {p.screenshotArtifactId && <img src={`/api/v1/runs/${runId}/artifacts/${p.screenshotArtifactId}/content`} alt="Страница перед действием" className="w-full rounded-md border bg-background" />}
+      <div className="grid content-start gap-2">
+        <p className="text-sm font-medium text-wait">Ждёт подтверждения</p>
+        <p className="text-sm">
+          Следующее действие меняет данные на сайте: <b>{p.intent}</b>
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" disabled={decide.isPending} onClick={() => decide.mutate("confirm")}>
+            <Check aria-hidden />
+            Подтвердить
+          </Button>
+          <Button size="sm" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate("reject")}>
+            <X aria-hidden />
+            Отклонить
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -207,7 +255,7 @@ function RunPanel({ id }: { id: string }) {
       <header className="flex flex-wrap items-start gap-3 border-b p-4">
         <div className="min-w-0 flex-1">
           <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold">
-            {r.scenarioId}@{r.scenarioVersion} <StatusBadge status={r.status} data-testid="run-status" />
+            {runTitle(r)} <StatusBadge status={r.status} data-testid="run-status" />
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
             <span className="font-mono">{r.id}</span>, создано {time(r.createdAt)}
@@ -234,6 +282,7 @@ function RunPanel({ id }: { id: string }) {
         </div>
       </header>
       <div className="grid gap-4 p-4">
+        {r.kind === "record" && !FINAL_RUN.includes(r.status) && <Confirmation runId={r.id} />}
         {r.errorCode && (
           <p data-testid="run-error" className="rounded-md bg-fail-soft px-3 py-2 font-mono text-xs break-words text-fail">
             {r.errorCode}: {r.errorMessage}
@@ -280,7 +329,7 @@ export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus
         </Link>
       ),
     }),
-    c.accessor((r) => `${r.scenarioId}@${r.scenarioVersion}`, { id: "scenario", header: "Сценарий" }),
+    c.accessor(runTitle, { id: "scenario", header: "Сценарий" }),
     c.accessor("status", { header: "Статус", cell: (i) => <StatusBadge status={i.getValue()} data-testid="run-row-status" /> }),
     c.accessor("createdAt", { header: "Создано", cell: (i) => <span className="tabular-nums">{time(i.getValue())}</span> }),
     c.accessor((r) => (r.status === "QUEUED" ? -1 : r.startedAt ? Date.parse(r.startedAt) - Date.parse(r.createdAt) : 0), {

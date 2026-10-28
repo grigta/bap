@@ -9,9 +9,12 @@ import { z } from "zod";
 import { SESSION_COOKIE, checkPassword, hashToken, newToken, requireOperator } from "./auth.ts";
 import { audit } from "./audit.ts";
 import { errorSchema, sendError } from "./errors.ts";
-import { type Coordinator, DEFAULT_SCHEDULER, type SchedulerConfig, createCoordinator } from "./coordinator.ts";
+import { type Coordinator, type CoordinatorHooks, DEFAULT_SCHEDULER, type SchedulerConfig, createCoordinator } from "./coordinator.ts";
 import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
+import { DEFAULT_LIMITS, type LlmLimits, gatedModel } from "./llm/gate.ts";
+import type { Model } from "./llm/model.ts";
 import { registerProfiles } from "./profiles.ts";
+import { registerRecipes } from "./recipes.ts";
 import { registerRuns } from "./runs.ts";
 import { purgeArtifacts } from "./retention.ts";
 import { webHandler } from "./web.ts";
@@ -33,6 +36,9 @@ export interface AppOptions {
   webDir?: string;
   /** Screenshots and reports of finished runs are deleted after this many days (REQ-SEC-010); off when omitted. */
   retention?: { artifactDays: number; sweepIntervalMs?: number };
+  /** Model for recording and healing recipes; without it both are refused. Lives on the server only (REQ-DOM-009). */
+  model?: Model | null;
+  llmLimits?: Partial<LlmLimits>;
 }
 
 export interface RegisteredRoute {
@@ -43,7 +49,7 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir, model = null, llmLimits }: AppOptions) {
   // Request bodies are never logged; credentials in headers are redacted should headers ever be logged (REQ-SEC-008).
   const redact = ["req.headers.authorization", "req.headers.cookie", "req.headers[\"idempotency-key\"]", "res.headers[\"set-cookie\"]"];
   const app = Fastify({
@@ -199,8 +205,11 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     const fleetConfig = { ...DEFAULT_FLEET, ...fleet };
     const agents = registerFleet(scoped as unknown as App, db, fleetConfig, auth);
     registerProfiles(scoped as unknown as App, db, agents, fleetConfig, auth);
-    const coordinator = createCoordinator(db, agents, fleetConfig, { ...DEFAULT_SCHEDULER, ...scheduler });
+    const hooks: CoordinatorHooks = {};
+    const coordinator = createCoordinator(db, agents, fleetConfig, { ...DEFAULT_SCHEDULER, ...scheduler }, hooks);
     registerRuns(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth });
+    const gated = model && gatedModel(db, model, { ...DEFAULT_LIMITS, ...llmLimits }, (entry) => app.log.info(entry, "llm call"));
+    hooks.onSucceeded = registerRecipes(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, model: gated }).onSucceeded;
     internals.coordinator = coordinator;
     coordinator.start();
     scoped.addHook("onClose", () => coordinator.stop());

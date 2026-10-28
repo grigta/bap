@@ -2,13 +2,20 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { type BrowserProvider, type BrowserSession, ProfileNotFoundError } from "@bap/browser-adapters";
-import type { Scenario, StepContext } from "@bap/scenario-sdk";
+import type { Scenario, StepContext, StepNote } from "@bap/scenario-sdk";
+import type { Page } from "playwright-core";
 import { z } from "zod";
 import type { Checkpoint, CheckpointStore } from "./checkpoints.ts";
 import { renderReport } from "./report.ts";
 
 export type RunStatus = "SUCCEEDED" | "FAILED" | "NEEDS_REVIEW" | "CANCELLED";
 export type RunErrorCode = "TIMEOUT" | "STEP_FAILED" | "UNVERIFIED" | "SESSION_START_FAILED" | "PROFILE_NOT_FOUND" | "BROWSER_DISCONNECTED";
+
+/** A step may fail with its own code (e.g. LLM_BUDGET_EXCEEDED from healing) by setting `errorCode` on the error. */
+const ownCode = (e: unknown) => {
+  const code = (e as { errorCode?: unknown } | undefined)?.errorCode;
+  return typeof code === "string" ? code : undefined;
+};
 
 export interface StepRecord {
   /** Position in the scenario (1-based); continues across a resume. */
@@ -21,6 +28,9 @@ export interface StepRecord {
   durationMs: number;
   screenshot?: string;
   error?: string;
+  intent?: string;
+  resolution?: StepNote["resolution"];
+  note?: string;
 }
 
 export interface RunResult {
@@ -29,7 +39,7 @@ export interface RunResult {
   scenarioVersion: string;
   profileId: string;
   status: RunStatus;
-  errorCode?: RunErrorCode;
+  errorCode?: RunErrorCode | string;
   errorMessage?: string;
   /** Last step completed before cancellation, when the run was cancelled. */
   cancelledAfter?: string | null;
@@ -78,7 +88,7 @@ class SessionStartError extends Error {}
 // eslint-disable-next-line no-control-regex
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/\u001b\[[0-9;]*m/g, "");
 
-async function openWithRetries(opts: RunOptions): Promise<BrowserSession> {
+async function openWithRetries(opts: Pick<RunOptions, "provider" | "profileId" | "runId" | "sessionAttempts" | "sessionRetryDelayMs">): Promise<BrowserSession> {
   const attempts = opts.sessionAttempts ?? 3;
   for (let attempt = 1; ; attempt++) {
     // A missing profile is a configuration error: openSession throws it and nothing is retried.
@@ -107,7 +117,7 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
   const deadline = Date.now() + (opts.timeoutMs ?? Number.POSITIVE_INFINITY);
   const steps: StepRecord[] = [];
   let status: RunStatus = "SUCCEEDED";
-  let errorCode: RunErrorCode | undefined;
+  let errorCode: RunErrorCode | string | undefined;
   let errorMessage: string | undefined;
 
   let session: BrowserSession | null = null;
@@ -156,6 +166,8 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
           break;
         }
         const stepStarted = Date.now();
+        let annotation: StepNote = {};
+        ctx.annotate = (note) => void (annotation = { ...annotation, ...note });
         const remaining = deadline - stepStarted;
         page.setDefaultTimeout(Math.max(1, Math.min(opts.stepTimeoutMs ?? 10_000, remaining)));
         // The first step after a crash may have run partly. A mutating one is never repeated:
@@ -200,13 +212,15 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
           durationMs: Date.now() - stepStarted,
           ...(shot && { screenshot: shot }),
           ...(failure && { error: failure + diagnostics }),
+          ...(step.intent && { intent: step.intent }),
+          ...annotation,
         };
         steps.push(record);
 
         if (!ok) {
           await opts.onStep?.(record);
           status = step.mutating ? "NEEDS_REVIEW" : "FAILED";
-          errorCode = timedOut ? "TIMEOUT" : step.mutating ? "UNVERIFIED" : disconnected ? "BROWSER_DISCONNECTED" : "STEP_FAILED";
+          errorCode = timedOut ? "TIMEOUT" : step.mutating ? "UNVERIFIED" : disconnected ? "BROWSER_DISCONNECTED" : (ownCode(error) ?? "STEP_FAILED");
           errorMessage = `step ${step.id}: ${record.error}`;
           break;
         }
@@ -236,4 +250,37 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
   writeFileSync(join(artifactsDir, "run.json"), JSON.stringify(result, null, 2) + "\n");
   writeFileSync(result.reportPath, renderReport(result));
   return result;
+}
+
+export interface RecordingRunOptions {
+  provider: BrowserProvider;
+  profileId: string;
+  runId: string;
+  sessionAttempts?: number;
+  sessionRetryDelayMs?: number;
+  /** Explores the site on the open page; the session is closed afterwards whatever happens. */
+  record: (page: Page) => Promise<RecordingResult>;
+}
+
+export interface RecordingResult {
+  status: "SUCCEEDED" | "FAILED" | "CANCELLED";
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+/** A recording (PRD §16) in a browser session of the profile, with the same session start rules as a run. */
+export async function runRecording(opts: RecordingRunOptions): Promise<RecordingResult> {
+  let session: BrowserSession;
+  try {
+    session = await openWithRetries(opts);
+  } catch (e) {
+    return { status: "FAILED", errorCode: e instanceof ProfileNotFoundError ? "PROFILE_NOT_FOUND" : "SESSION_START_FAILED", errorMessage: message(e) };
+  }
+  try {
+    return await opts.record(await session.getPage());
+  } catch (e) {
+    return { status: "FAILED", errorCode: "RECORDING_FAILED", errorMessage: message(e) };
+  } finally {
+    await session.closeSession();
+  }
 }

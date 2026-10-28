@@ -383,7 +383,9 @@ async function buildSnapshot(url: string, viewport: PageSnapshot["viewport"], pl
       const kept: Record<string, string> = {};
       for (const [k, v] of Object.entries(a)) if (KEPT_ATTR.test(k)) kept[k] = mask(cut(v, 200));
       const isPassword = t === "input" && a.type === "password";
-      let value = inputValue.get(i) ?? textValue.get(i);
+      // A <select> shows its chosen option; the snapshot marks options, not the select.
+      const chosen = t === "select" ? children[i]!.find((c) => tag(c) === "option" && selected.has(c)) : undefined;
+      let value = chosen !== undefined ? collapse(text[chosen]!) : (inputValue.get(i) ?? textValue.get(i));
       if (value !== undefined) value = isPassword && value ? MASK : mask(cut(value, 200));
       const options = t === "select" ? children[i]!.filter((c) => tag(c) === "option").map((c) => mask(collapse(text[c]!))) : undefined;
       const name = mask(cut(collapse(node?.name?.value ?? ""), 120));

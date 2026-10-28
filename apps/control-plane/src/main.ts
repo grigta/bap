@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createDb, migrateToLatest } from "@bap/database";
 import { buildApp } from "./app.ts";
 import { ensureOperator } from "./auth.ts";
+import { claudeCliModel } from "./llm/claude-cli.ts";
 import { s3Store } from "./storage.ts";
 
 const env = (name: string, fallback?: string) => {
@@ -29,5 +30,18 @@ const app = buildApp({
   ...(process.env.TLS_CERT_FILE && { https: { cert: readFileSync(process.env.TLS_CERT_FILE), key: readFileSync(env("TLS_KEY_FILE")) } }),
   ...(process.env.BAP_WEB_DIR && { webDir: process.env.BAP_WEB_DIR }),
   retention: { artifactDays: Number(env("BAP_ARTIFACT_RETENTION_DAYS", "30")) },
+  // Recording and healing recipes: Claude Code headless with the token from `claude setup-token` (ADR-0026).
+  model: process.env.CLAUDE_CODE_OAUTH_TOKEN
+    ? claudeCliModel({
+        command: env("BAP_CLAUDE_BIN", "claude"),
+        cwd: env("BAP_LLM_DIR", `${process.env.HOME ?? "/tmp"}/llm`),
+        models: { record: env("BAP_LLM_RECORD_MODEL", "opus"), heal: env("BAP_LLM_HEAL_MODEL", "sonnet") },
+      })
+    : null,
+  llmLimits: {
+    recordCallsPerRun: Number(env("BAP_LLM_RECORD_CALLS", "60")),
+    healCallsPerRun: Number(env("BAP_LLM_HEAL_CALLS", "20")),
+    callsPerDay: Number(env("BAP_LLM_DAILY_CALLS", "500")),
+  },
 });
 await app.listen({ host: env("HOST", "127.0.0.1"), port: Number(env("PORT", "3000")) });

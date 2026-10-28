@@ -84,6 +84,11 @@ export type RunStatus =
 
 export interface ScenariosTable {
   id: string;
+  kind: Generated<"bundle" | "recipe">;
+  /** Recipes: the task in words, where it starts and its inputs. */
+  goal: string | null;
+  start_url: string | null;
+  inputs: unknown | null;
   created_at: Timestamp;
 }
 
@@ -92,13 +97,21 @@ export interface ScenarioVersionsTable {
   version: string;
   sha256: string;
   bundle_key: string;
+  /** null: a recorded recipe version waiting for the operator. */
+  published_at: Timestamp | null;
+  origin: Generated<"bundle" | "manual" | "recorded" | "healed">;
+  source_run_id: string | null;
+  parent_version: string | null;
+  note: string | null;
   created_at: Timestamp;
 }
 
 export interface RunsTable {
   id: Generated<string>;
   scenario_id: string;
-  scenario_version: string;
+  /** null only for a recording, which produces a version. */
+  scenario_version: string | null;
+  kind: Generated<"run" | "record">;
   profile_id: string;
   agent_id: string;
   input: unknown;
@@ -156,6 +169,43 @@ export interface RunStepsTable {
   duration_ms: number;
   error: string | null;
   screenshot_artifact_id: string | null;
+  intent: string | null;
+  resolution: "found" | "healed" | "confirmed" | "recorded" | null;
+  note: string | null;
+}
+
+export interface RecordingsTable {
+  run_id: string;
+  steps: Generated<unknown>;
+  history: Generated<unknown>;
+  pending: unknown | null;
+  pending_state: "awaiting" | "confirmed" | "rejected" | null;
+  result_version: string | null;
+  updated_at: Timestamp;
+}
+
+export interface HealsTable {
+  id: Generated<string>;
+  run_id: string;
+  scenario_version: string;
+  step_id: string;
+  target: unknown;
+  note: string;
+  at: Timestamp;
+}
+
+export interface LlmCallsTable {
+  id: Generated<string>;
+  at: Timestamp;
+  purpose: "record" | "heal";
+  run_id: string;
+  model: string | null;
+  ok: boolean;
+  duration_ms: number;
+  cost_usd: number | string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  error: string | null;
 }
 
 export interface IdempotencyKeysTable {
@@ -240,6 +290,9 @@ export interface Database {
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   api_tokens: ApiTokensTable;
+  recordings: RecordingsTable;
+  heals: HealsTable;
+  llm_calls: LlmCallsTable;
 }
 
 export type Db = Kysely<Database>;

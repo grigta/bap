@@ -60,7 +60,10 @@ export const CANCELLABLE_RUN: RunStatus[] = ["QUEUED", "ASSIGNED", "ACCEPTED", "
 export interface Run {
   id: string;
   scenarioId: string;
-  scenarioVersion: string;
+  /** null while a recording has not produced its version. */
+  scenarioVersion: string | null;
+  /** record: a recipe being recorded. */
+  kind: "run" | "record";
   profileId: string;
   agentId: string;
   status: RunStatus;
@@ -82,6 +85,49 @@ export interface Step {
   status: "passed" | "failed" | "unverified";
   durationMs: number;
   error: string | null;
+  screenshotArtifactId: string | null;
+  intent: string | null;
+  resolution: StepResolution | null;
+  note: string | null;
+}
+export type StepResolution = "found" | "healed" | "confirmed" | "recorded";
+
+export interface RecipeVersion {
+  version: string;
+  origin: "bundle" | "manual" | "recorded" | "healed";
+  publishedAt: string | null;
+  createdAt: string;
+  sourceRunId: string | null;
+  parentVersion: string | null;
+  note: string | null;
+}
+export interface RecipeSummary {
+  id: string;
+  goal: string;
+  startUrl: string;
+  inputs: { name: string; secret: boolean }[];
+  createdAt: string;
+  versions: RecipeVersion[];
+  lastRecording: { runId: string; status: RunStatus; createdAt: string } | null;
+}
+export interface RecipeStep {
+  id: string;
+  intent: string;
+  action: "click" | "fill" | "select" | "press" | "navigate" | "wait" | "extract";
+  target?: { role: string; name: string; text: string; context: string; frame: string };
+  value?: string;
+  mutating: boolean;
+  postcondition?: { url?: string; text?: string };
+  screenshot?: string;
+}
+export interface RecipeBody {
+  goal: string;
+  startUrl: string;
+  steps: RecipeStep[];
+}
+export interface PendingConfirmation {
+  stepId: string;
+  intent: string;
   screenshotArtifactId: string | null;
 }
 

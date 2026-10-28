@@ -3,15 +3,25 @@ import type { z } from "zod";
 
 export const SDK_VERSION = "0.1.0";
 
+/** How a step found what it acted on; shown in the run's journal (REQ-DOM-012). */
+export interface StepNote {
+  resolution?: "found" | "healed" | "confirmed" | "recorded";
+  note?: string;
+}
+
 export interface StepContext<Input, State> {
   page: Page;
   input: Input;
   /** Serializable scenario state, saved in every checkpoint. */
   state: State;
+  /** Adds to the journal entry of the current step. */
+  annotate?: (note: StepNote) => void;
 }
 
 interface BaseStep<Input, State> {
   id: string;
+  /** What the step does, in words, for the journal. */
+  intent?: string;
   run(ctx: StepContext<Input, State>): Promise<void>;
 }
 

@@ -11,6 +11,7 @@ import { createServer as createViteServer } from "vite";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
 import { memoryStore } from "../../apps/control-plane/src/storage.ts";
+import { fakeShopModel } from "../support/fake-model.ts";
 import { outageProxy } from "../support/outage-proxy.ts";
 import { E2E_OPERATOR, STACK_FLEET, STACK_PORTS, STACK_SCHEDULER } from "./stack-config.ts";
 
@@ -40,7 +41,8 @@ for (const entry of ["scenarios/staging-smoke-test", "scenarios/wizard-order", "
 let app: App | null = null;
 async function startControlPlane() {
   if (app) return;
-  app = buildApp({ db, store, secureCookies: false, fleet: STACK_FLEET, scheduler: STACK_SCHEDULER });
+  // Recording and healing talk to a stand-in model that knows the shapeshift shop (Claude in production).
+  app = buildApp({ db, store, secureCookies: false, fleet: STACK_FLEET, scheduler: STACK_SCHEDULER, model: fakeShopModel() });
   await app.listen({ host: "127.0.0.1", port: STACK_PORTS.controlPlane });
 }
 async function stopControlPlane() {
@@ -62,7 +64,12 @@ createHttpServer(async (req, res) => {
   else if (req.method === "POST" && req.url === "/control-plane/start") await startControlPlane();
   else if (req.method === "POST" && req.url === "/database/down") pgProxy.down();
   else if (req.method === "POST" && req.url === "/database/up") pgProxy.up();
-  else if (req.method === "POST" && req.url === "/enrollments/expire")
+  else if (req.method === "GET" && req.url?.startsWith("/llm-calls?run=")) {
+    // Model calls are counted on the server only, never shown in the panel (ADR-0025).
+    const runId = new URL(req.url, "http://x").searchParams.get("run")!;
+    const { n } = await db.selectFrom("llm_calls").select(db.fn.countAll<string>().as("n")).where("run_id", "=", runId).executeTakeFirstOrThrow();
+    return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ calls: Number(n) }));
+  } else if (req.method === "POST" && req.url === "/enrollments/expire")
     await db.updateTable("agent_enrollments").set({ expires_at: new Date(Date.now() - 1000) }).where("used_at", "is", null).execute();
   else if (req.method === "POST" && bundle && bundleKeys.has(bundle[1]!)) {
     const key = bundleKeys.get(bundle[1]!)!;

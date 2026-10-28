@@ -24,7 +24,10 @@ const canonical = (value: unknown): string =>
 const runSchema = z.object({
   id: z.string(),
   scenarioId: z.string(),
-  scenarioVersion: z.string(),
+  /** null while a recording has not produced its version. */
+  scenarioVersion: z.string().nullable(),
+  /** record: a recording of a recipe (PRD §16). */
+  kind: z.enum(["run", "record"]),
   profileId: z.string(),
   agentId: z.string(),
   status: z.enum(RUN_STATUSES),
@@ -49,6 +52,9 @@ const stepSchema = z.object({
   durationMs: z.number(),
   error: z.string().nullable(),
   screenshotArtifactId: z.string().nullable(),
+  intent: z.string().nullable(),
+  resolution: z.enum(["found", "healed", "confirmed", "recorded"]).nullable(),
+  note: z.string().nullable(),
 });
 const artifactSchema = z.object({ id: z.string(), name: z.string(), contentType: z.string(), sizeBytes: z.number(), sha256: z.string(), createdAt: z.string() });
 const idParams = z.object({ id: z.uuid() });
@@ -96,7 +102,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
 
   const versionSchema = z.object({ version: z.string(), sha256: z.string(), createdAt: z.string() });
   const listVersions = async (id?: string) => {
-    let q = db.selectFrom("scenario_versions").selectAll().orderBy("scenario_id").orderBy("created_at");
+    let q = db.selectFrom("scenario_versions").selectAll().where("published_at", "is not", null).orderBy("scenario_id").orderBy("created_at");
     if (id) q = q.where("scenario_id", "=", id);
     return (await q.execute()).map((v) => ({ scenarioId: v.scenario_id, version: v.version, sha256: v.sha256, createdAt: v.created_at.toISOString() }));
   };
@@ -126,10 +132,11 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
 
   // ---- runs ----
 
-  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; queue_reason: string | null; auto_resume: boolean | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
+  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string | null; kind: "run" | "record"; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; queue_reason: string | null; auto_resume: boolean | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
     id: r.id,
     scenarioId: r.scenario_id,
     scenarioVersion: r.scenario_version,
+    kind: r.kind,
     profileId: r.profile_id,
     agentId: r.agent_id,
     status: r.status,
@@ -182,8 +189,10 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
       const earlier = await replay();
       if (earlier) return earlier;
 
-      const version = await db.selectFrom("scenario_versions").select("version").where("scenario_id", "=", body.scenarioId).where("version", "=", body.scenarioVersion).executeTakeFirst();
+      const version = await db.selectFrom("scenario_versions").select(["version", "published_at"]).where("scenario_id", "=", body.scenarioId).where("version", "=", body.scenarioVersion).executeTakeFirst();
       if (!version) return sendError(reply, request, 409, "SCENARIO_VERSION_MISMATCH", `Scenario ${body.scenarioId}@${body.scenarioVersion} is not registered`);
+      // A recorded recipe runs only after the operator has looked at it (REQ-DOM-011).
+      if (!version.published_at) return sendError(reply, request, 409, "RECIPE_NOT_PUBLISHED", `Recipe ${body.scenarioId}@${body.scenarioVersion} is not published`);
       const profile = await db.selectFrom("profiles").select(["id", "agent_id", "status"]).where("id", "=", body.profileId).executeTakeFirst();
       if (!profile) return sendError(reply, request, 404, "NOT_FOUND", "Profile not found");
       if (profile.status === "NEEDS_REVIEW") return sendError(reply, request, 409, "PROFILE_NEEDS_REVIEW", "The profile needs review before new runs");
@@ -324,6 +333,9 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
       durationMs: s.duration_ms,
       error: s.error,
       screenshotArtifactId: s.screenshot_artifact_id,
+      intent: s.intent,
+      resolution: s.resolution,
+      note: s.note,
     }));
   });
 

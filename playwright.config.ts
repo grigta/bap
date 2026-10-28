@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 import { STACK_PORTS } from "./tests/e2e/stack-config.ts";
 
 const testSitePort = 4310;
+const shapeshiftPort = 4320;
 // Agents enrolled by e2e tests keep their keys in files, never in the developer's login keychain.
 process.env.BAP_KEY_STORAGE = "file";
 
@@ -20,6 +21,12 @@ export default defineConfig({
       command: "node tests/fixtures/test-site/server.ts",
       env: { PORT: String(testSitePort) },
       url: `http://127.0.0.1:${testSitePort}`,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: "node tests/fixtures/shapeshift-site/server.ts",
+      env: { PORT: String(shapeshiftPort) },
+      url: `http://127.0.0.1:${shapeshiftPort}/api/layout`,
       reuseExistingServer: !process.env.CI,
     },
     {

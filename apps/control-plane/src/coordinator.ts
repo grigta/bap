@@ -27,7 +27,12 @@ export type QueueReason =
 
 const ACTIVE_RUN: RunStatus[] = ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED"];
 
-export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig, config: SchedulerConfig) {
+export interface CoordinatorHooks {
+  /** A run reached SUCCEEDED (recipes turn healed steps into a new version here). */
+  onSucceeded?: (runId: string) => Promise<void>;
+}
+
+export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig, config: SchedulerConfig, hooks: CoordinatorHooks = {}) {
   /** Changes run status only from the listed states and journals the change in the same transaction. */
   const transitionRun = (
     runId: string,
@@ -87,17 +92,30 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     const run = await db
       .selectFrom("runs")
       .innerJoin("profiles", "profiles.id", "runs.profile_id")
-      .innerJoin("scenario_versions", (j) => j.onRef("scenario_versions.scenario_id", "=", "runs.scenario_id").onRef("scenario_versions.version", "=", "runs.scenario_version"))
-      .select(["runs.agent_id", "runs.profile_id", "runs.input", "runs.timeout_ms", "runs.scenario_id", "runs.scenario_version", "runs.resume_requested", "scenario_versions.sha256", "profiles.external_profile_id"])
+      .innerJoin("scenarios", "scenarios.id", "runs.scenario_id")
+      .select(["runs.agent_id", "runs.profile_id", "runs.input", "runs.timeout_ms", "runs.scenario_id", "runs.scenario_version", "runs.resume_requested", "runs.kind", "scenarios.kind as scenario_kind", "scenarios.start_url", "scenarios.inputs", "profiles.external_profile_id"])
       .where("runs.id", "=", runId)
       .executeTakeFirstOrThrow();
+    let version = run.scenario_version;
+    // A recipe run takes the newest published version: healing elsewhere may have produced one since it was queued.
+    // A resumed run keeps its version, its checkpoints refer to those steps.
+    if (run.kind === "run" && run.scenario_kind === "recipe" && !run.resume_requested) {
+      const latest = await db.selectFrom("scenario_versions").select("version").where("scenario_id", "=", run.scenario_id).where("published_at", "is not", null).orderBy("published_at", "desc").executeTakeFirst();
+      if (latest && latest.version !== version) {
+        await db.updateTable("runs").set({ scenario_version: latest.version }).where("id", "=", runId).execute();
+        version = latest.version;
+      }
+    }
+    const sha256 = version ? (await db.selectFrom("scenario_versions").select("sha256").where("scenario_id", "=", run.scenario_id).where("version", "=", version).executeTakeFirstOrThrow()).sha256 : "";
+    const inputs = (run.inputs ?? []) as { name: string; secret: boolean }[];
     const sent = fleet.send(
       run.agent_id,
       message({
         type: "run.assign",
         payload: {
           runId,
-          scenario: { id: run.scenario_id, version: run.scenario_version, sha256: run.sha256 },
+          scenario: { id: run.scenario_id, version: version ?? "recording", sha256, kind: run.scenario_kind },
+          ...(run.kind === "record" && { recording: { startUrl: run.start_url!, secretInputs: inputs.filter((i) => i.secret).map((i) => i.name) } }),
           profileExternalId: run.external_profile_id,
           input: run.input,
           timeoutMs: run.timeout_ms,
@@ -381,6 +399,9 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
             duration_ms: step.durationMs,
             error: step.error ?? null,
             screenshot_artifact_id: shot?.id ?? null,
+            intent: step.intent ?? null,
+            resolution: step.resolution ?? null,
+            note: step.note ?? null,
           })
           .onConflict((oc) => oc.columns(["run_id", "sequence"]).doNothing())
           .execute();
@@ -388,7 +409,10 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       }
       case "run.completed":
         // RECOVERY_PENDING: the lease expired but the agent finished after all.
-        if (await transitionRun(runId, ["RUNNING", "RECOVERY_PENDING", "CANCEL_REQUESTED"], "SUCCEEDED", "all steps passed", { finished_at: new Date() })) await afterRun(runId, "release", null);
+        if (await transitionRun(runId, ["RUNNING", "RECOVERY_PENDING", "CANCEL_REQUESTED"], "SUCCEEDED", "all steps passed", { finished_at: new Date() })) {
+          await afterRun(runId, "release", null);
+          await hooks.onSucceeded?.(runId).catch((e) => console.error(`after run ${runId} succeeded`, e));
+        }
         break;
       case "run.failed": {
         const { status, errorCode, message: text } = event.payload;

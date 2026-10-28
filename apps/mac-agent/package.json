@@ -7,6 +7,7 @@
     "@bap/browser-adapters": "workspace:*",
     "@bap/engine": "workspace:*",
     "@bap/protocol": "workspace:*",
+    "@bap/recipe": "workspace:*",
     "ws": "^8.22.0"
   },
   "devDependencies": {

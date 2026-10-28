@@ -65,6 +65,10 @@ export const stepRecord = z.object({
   error: z.string().optional(),
   /** Name of the artifact uploaded before this event. */
   screenshot: z.string().optional(),
+  intent: z.string().optional(),
+  /** Recipes: found by fingerprint, healed, confirmed by the operator, or recorded. */
+  resolution: z.enum(["found", "healed", "confirmed", "recorded"]).optional(),
+  note: z.string().optional(),
 });
 export type StepRecordMessage = z.infer<typeof stepRecord>;
 
@@ -150,7 +154,10 @@ export const runAssign = z.object({
   type: z.literal("run.assign"),
   payload: z.object({
     runId: z.uuid(),
-    scenario: z.object({ id: z.string(), version: z.string(), sha256: z.string() }),
+    /** bundle: JS module; recipe: recipe JSON. Both are fetched from the bundle route and checked by sha256. */
+    scenario: z.object({ id: z.string(), version: z.string(), sha256: z.string(), kind: z.enum(["bundle", "recipe"]).default("bundle") }),
+    /** Set for a recording: the agent explores the site with the server instead of running a scenario. */
+    recording: z.object({ startUrl: z.url(), secretInputs: z.array(z.string()) }).optional(),
     profileExternalId: z.string(),
     input: z.unknown(),
     timeoutMs: z.number().int().positive(),

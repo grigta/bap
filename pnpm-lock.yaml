@@ -190,6 +190,9 @@ importers:
       '@bap/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@bap/recipe':
+        specifier: workspace:*
+        version: link:packages/recipe
       '@bap/scenario-sdk':
         specifier: workspace:*
         version: link:packages/scenario-sdk
@@ -271,9 +274,15 @@ importers:
       '@bap/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@bap/dom-snapshot':
+        specifier: workspace:*
+        version: link:../../packages/dom-snapshot
       '@bap/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@bap/recipe':
+        specifier: workspace:*
+        version: link:../../packages/recipe
       '@fastify/cookie':
         specifier: ^11.1.3
         version: 11.1.3
@@ -313,6 +322,9 @@ importers:
       '@bap/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@bap/recipe':
+        specifier: workspace:*
+        version: link:../../packages/recipe
       ws:
         specifier: ^8.22.0
         version: 8.22.0
@@ -438,6 +450,21 @@ importers:
 
   packages/protocol:
     dependencies:
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/recipe:
+    dependencies:
+      '@bap/dom-snapshot':
+        specifier: workspace:*
+        version: link:../dom-snapshot
+      '@bap/scenario-sdk':
+        specifier: workspace:*
+        version: link:../scenario-sdk
+      playwright-core:
+        specifier: 1.64.1
+        version: 1.64.1
       zod:
         specifier: ^4.6.7
         version: 4.6.7

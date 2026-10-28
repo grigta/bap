@@ -1,0 +1,139 @@
+import { setTimeout as sleep } from "node:timers/promises";
+import { type PageSnapshot, ActionError, act, captureSnapshot, renderTemplate } from "@bap/dom-snapshot";
+import type { Page } from "playwright-core";
+
+/** The server's answer to an observation during a recording (REQ-DOM-004). */
+export type RecordDecision =
+  | {
+      type: "act";
+      stepId: string;
+      intent: string;
+      action: "click" | "fill" | "select" | "press";
+      /** Element of the observed snapshot; none for press. */
+      ref?: string;
+      /** Template: {{input.key}} is filled in here, on the agent; secrets never travel back. */
+      value?: string;
+      mutating: boolean;
+      /** The operator confirmed this mutating action (REQ-DOM-008). */
+      confirmed: boolean;
+    }
+  /** A mutating action waits for the operator: ask again later, the page stays as it is. */
+  | { type: "wait" }
+  | { type: "done"; version: string }
+  | { type: "fail"; code: string; message: string };
+
+export interface Observation {
+  snapshot: PageSnapshot;
+  screenshot: Buffer;
+  /** Outcome of the previous action; null before the first one. */
+  last: { ok: boolean; error?: string } | null;
+}
+
+export interface Recorder {
+  observe(observation: Observation): Promise<RecordDecision>;
+  poll(): Promise<RecordDecision>;
+}
+
+export interface RecordedStep {
+  sequence: number;
+  stepId: string;
+  intent: string;
+  mutating: boolean;
+  resolution: "recorded" | "confirmed";
+  status: "passed" | "failed";
+  startedAt: string;
+  durationMs: number;
+  error?: string;
+  /** The page the step acted on. */
+  screenshot: Buffer;
+}
+
+export interface RecordOptions {
+  page: Page;
+  startUrl: string;
+  input: Record<string, unknown>;
+  secrets: string[];
+  recorder: Recorder;
+  onStep: (step: RecordedStep) => Promise<void>;
+  shouldCancel?: () => boolean;
+  /** Safety net against a loop that never finishes; the server's model budget is the real limit. */
+  maxSteps?: number;
+  pollMs?: number;
+}
+
+export interface RecordOutcome {
+  status: "SUCCEEDED" | "FAILED" | "CANCELLED";
+  errorCode?: string;
+  errorMessage?: string;
+  version?: string;
+}
+
+/** Lets the page finish what the last action started before the next look at it. */
+async function settle(page: Page) {
+  await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => {});
+  await sleep(400);
+}
+
+/**
+ * The agent's half of a recording: shows the page to the server and does what it decides.
+ * The model runs on the server only; the agent never sees it (REQ-DOM-009).
+ */
+export async function recordTask(opts: RecordOptions): Promise<RecordOutcome> {
+  const { page, recorder } = opts;
+  const pollMs = opts.pollMs ?? 1500;
+  const cancelled = (): RecordOutcome | null => (opts.shouldCancel?.() ? { status: "CANCELLED" } : null);
+
+  const opened = Date.now();
+  await page.goto(opts.startUrl);
+  await settle(page);
+  await opts.onStep({ sequence: 1, stepId: "s01", intent: "Открыть сайт", mutating: false, resolution: "recorded", status: "passed", startedAt: new Date(opened).toISOString(), durationMs: Date.now() - opened, screenshot: await page.screenshot() });
+
+  let last: Observation["last"] = null;
+  for (let sequence = 2; sequence <= (opts.maxSteps ?? 60) + 1; sequence++) {
+    const stop = cancelled();
+    if (stop) return stop;
+    const snap = await captureSnapshot(page, { secrets: opts.secrets });
+    try {
+      const screenshot = await page.screenshot();
+      let decision = await recorder.observe({ snapshot: snap.page, screenshot, last });
+      while (decision.type === "wait") {
+        const waiting = cancelled();
+        if (waiting) return waiting;
+        await sleep(pollMs);
+        decision = await recorder.poll();
+      }
+      if (decision.type === "done") return { status: "SUCCEEDED", version: decision.version };
+      if (decision.type === "fail") return { status: "FAILED", errorCode: decision.code, errorMessage: decision.message };
+
+      const started = Date.now();
+      const value = renderTemplate(decision.value ?? "", opts.input);
+      try {
+        if (decision.action === "press") await page.keyboard.press(value);
+        else {
+          const handle = decision.ref ? snap.handles.get(decision.ref) : undefined;
+          if (!handle) throw new ActionError(`element ${decision.ref} is not on the page`);
+          await act(page, handle, decision.action === "click" ? { kind: "click" } : { kind: decision.action, value });
+        }
+        last = { ok: true };
+      } catch (e) {
+        last = { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+      await opts.onStep({
+        sequence,
+        stepId: decision.stepId,
+        intent: decision.intent,
+        mutating: decision.mutating,
+        resolution: decision.confirmed ? "confirmed" : "recorded",
+        status: last.ok ? "passed" : "failed",
+        startedAt: new Date(started).toISOString(),
+        durationMs: Date.now() - started,
+        ...(last.error && { error: last.error }),
+        screenshot,
+      });
+      await settle(page);
+    } finally {
+      await snap.dispose();
+    }
+  }
+  return { status: "FAILED", errorCode: "RECORDING_TOO_LONG", errorMessage: `no result after ${opts.maxSteps ?? 60} steps` };
+}

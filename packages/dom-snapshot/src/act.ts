@@ -12,12 +12,15 @@ export class ActionError extends Error {}
 /** Centre of the element in the top viewport, after scrolling it into view. */
 async function clickPoint(handle: NodeHandle): Promise<{ x: number; y: number }> {
   const { session, backendNodeId } = handle;
+  const quadsOf = async () => ((await session.send("DOM.getContentQuads", { backendNodeId }).catch(() => ({ quads: [] }))) as { quads: number[][] }).quads;
+  const before = JSON.stringify(await quadsOf());
   // Outermost first: the <iframe> must be in view before anything inside it can be.
   for (const owner of [...handle.owners].reverse()) await owner.session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: owner.backendNodeId }).catch(() => {});
   await session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {});
-  // Input to another process's frame is routed by the compositor's hit-test data, which lags a scroll by a frame or two.
-  if (handle.owners.length > 0) await sleep(100);
-  const { quads } = (await session.send("DOM.getContentQuads", { backendNodeId }).catch(() => ({ quads: [] }))) as { quads: number[][] };
+  // Clicks are routed by the compositor's hit-test data, which lags a scroll by a frame or two: right after
+  // scrolling, a click can land on whatever was at that point before (e.g. a cross-origin frame).
+  if (handle.owners.length > 0 || JSON.stringify(await quadsOf()) !== before) await sleep(150);
+  const quads = await quadsOf();
   const quad = quads.find((q) => Math.abs(q[4]! - q[0]!) > 1 && Math.abs(q[5]! - q[1]!) > 1);
   if (!quad) throw new ActionError("the element has no visible box to click");
   let x = (quad[0]! + quad[2]! + quad[4]! + quad[6]!) / 4;
