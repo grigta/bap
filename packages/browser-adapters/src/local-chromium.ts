@@ -68,8 +68,7 @@ export class LocalChromiumProvider implements BrowserProvider {
 class LocalChromiumSession extends CdpSession {
   private readonly userDataDir: string;
   private readonly headless: boolean;
-  private process: ChildProcess | null = null;
-  private cdpPort = 0;
+  private launched: LaunchedChromium | null = null;
 
   constructor(userDataDir: string, profileId: string, runId: string, headless: boolean) {
     super(profileId, runId);
@@ -78,45 +77,58 @@ class LocalChromiumSession extends CdpSession {
   }
 
   protected async start(): Promise<number> {
-    const portFile = join(this.userDataDir, "DevToolsActivePort");
-    rmSync(portFile, { force: true });
-    const args = [`--user-data-dir=${this.userDataDir}`, "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check"];
-    if (this.headless) args.push("--headless=new");
-    // Ubuntu 24.04 blocks the unprivileged user namespaces the sandbox needs; Playwright does the same.
-    if (process.platform === "linux") args.push("--no-sandbox");
-    const proc = spawn(chromium.executablePath(), [...args, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    proc.stderr!.on("data", (chunk) => (stderr = (stderr + chunk).slice(-2000)));
-    this.process = proc;
-    for (let i = 0; i < 300; i++) {
-      // Chromium creates the file before writing it: an empty read is not a port.
-      const port = existsSync(portFile) ? Number(readFileSync(portFile, "utf8").split("\n")[0]) : 0;
-      if (port > 0) return (this.cdpPort = port);
-      if (exited(proc)) break;
-      await sleep(100);
-    }
-    throw new Error(`Chromium for profile ${this.profileId} did not open a CDP port:\n${stderr}`);
+    this.launched = await launchChromium(this.userDataDir, this.headless);
+    return this.launched.port;
   }
 
   protected async stop(): Promise<void> {
-    const proc = this.process;
-    if (!proc || exited(proc)) return;
-    const exit = new Promise((resolve) => proc.once("exit", resolve));
-    // Browser.close lets Chromium flush cookies and localStorage; a signal would lose them.
-    // If the graceful path fails or hangs, the process is killed after 5 s.
-    const graceful = (async () => {
-      if (this.cdpPort <= 0) throw new Error("no CDP port");
-      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${this.cdpPort}`);
-      await (await browser.newBrowserCDPSession()).send("Browser.close").catch(() => {});
-      await exit;
-    })();
-    const timeout = sleep(5000).then(() => "timeout" as const);
-    if ((await Promise.race([graceful.catch(() => "failed" as const), timeout])) !== undefined) {
-      proc.kill("SIGKILL");
-      if (!exited(proc)) await exit;
-    }
-    this.process = null;
-    this.cdpPort = 0;
+    if (this.launched) await closeChromium(this.launched);
+    this.launched = null;
+  }
+}
+
+export interface LaunchedChromium {
+  process: ChildProcess;
+  port: number;
+}
+
+/** Starts Chromium on a user-data-dir with a CDP port chosen by Chromium itself. */
+export async function launchChromium(userDataDir: string, headless: boolean): Promise<LaunchedChromium> {
+  const portFile = join(userDataDir, "DevToolsActivePort");
+  rmSync(portFile, { force: true });
+  const args = [`--user-data-dir=${userDataDir}`, "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check"];
+  if (headless) args.push("--headless=new");
+  // Ubuntu 24.04 blocks the unprivileged user namespaces the sandbox needs; Playwright does the same.
+  if (process.platform === "linux") args.push("--no-sandbox");
+  const proc = spawn(chromium.executablePath(), [...args, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  proc.stderr!.on("data", (chunk) => (stderr = (stderr + chunk).slice(-2000)));
+  for (let i = 0; i < 300; i++) {
+    // Chromium creates the file before writing it: an empty read is not a port.
+    const port = existsSync(portFile) ? Number(readFileSync(portFile, "utf8").split("\n")[0]) : 0;
+    if (port > 0) return { process: proc, port };
+    if (exited(proc)) break;
+    await sleep(100);
+  }
+  throw new Error(`Chromium on ${userDataDir} did not open a CDP port:\n${stderr}`);
+}
+
+/**
+ * Browser.close lets Chromium flush cookies and localStorage; a signal would lose them.
+ * If the graceful path fails or hangs, the process is killed after 5 s.
+ */
+export async function closeChromium({ process: proc, port }: LaunchedChromium): Promise<void> {
+  if (exited(proc)) return;
+  const exit = new Promise((resolve) => proc.once("exit", resolve));
+  const graceful = (async () => {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    await (await browser.newBrowserCDPSession()).send("Browser.close").catch(() => {});
+    await exit;
+  })();
+  const timeout = sleep(5000).then(() => "timeout" as const);
+  if ((await Promise.race([graceful.catch(() => "failed" as const), timeout])) !== undefined) {
+    proc.kill("SIGKILL");
+    if (!exited(proc)) await exit;
   }
 }
 

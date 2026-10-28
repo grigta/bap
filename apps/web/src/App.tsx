@@ -10,18 +10,39 @@ import { HttpError, api } from "./api.ts";
 // Polling every 2 s with a 1.5 s timeout keeps the indicator within the 5 s budget.
 const HEALTH_POLL_MS = 2000;
 
+type Health = { status: "ok" | "degraded"; database: "up" | "down" };
+
+/** null while the Control Plane does not answer; a 503 still carries the health body. */
+async function fetchHealth(): Promise<Health> {
+  try {
+    return await api<Health>("/health", { timeoutMs: 1500 });
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 503) return { status: "degraded", database: "down" };
+    throw e;
+  }
+}
+
+function useHealth() {
+  return useQuery({ queryKey: ["health"], queryFn: fetchHealth, refetchInterval: HEALTH_POLL_MS, refetchIntervalInBackground: true });
+}
+
 function HealthIndicator() {
-  const health = useQuery({
-    queryKey: ["health"],
-    queryFn: () => api<{ status: string }>("/health", { timeoutMs: 1500 }),
-    refetchInterval: HEALTH_POLL_MS,
-    refetchIntervalInBackground: true,
-  });
+  const health = useHealth();
   const online = health.isSuccess && !health.isError;
   return (
     <span className={`health ${online ? "online" : "offline"}`} data-testid="health" role="status">
       Control Plane: {online ? "online" : "offline"}
     </span>
+  );
+}
+
+function DatabaseBanner() {
+  const health = useHealth();
+  if (health.data?.database !== "down" || health.isError) return null;
+  return (
+    <div className="banner" role="alert" data-testid="database-banner">
+      База данных недоступна: изменения не сохраняются, данные на экране могут быть устаревшими. Панель обновится, когда база вернётся.
+    </div>
   );
 }
 
@@ -95,6 +116,7 @@ export function App() {
         <strong>BAP</strong>
         <HealthIndicator />
       </header>
+      <DatabaseBanner />
       {me.data ? <Shell login={me.data.login} /> : unauthorized ? <LoginForm /> : null}
     </div>
   );

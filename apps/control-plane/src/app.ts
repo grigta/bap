@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
-import type { Db } from "@bap/database";
+import { type Db, isDatabaseUnavailable } from "@bap/database";
+import { sql } from "kysely";
 import Fastify, { type FastifySchema } from "fastify";
 import { hasZodFastifySchemaValidationErrors, serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -87,6 +88,10 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     // Fastify's own client errors (malformed body, unsupported media type) keep their 4xx status.
     const status = (err as { statusCode?: number }).statusCode;
     if (status && status >= 400 && status < 500) return sendError(reply, request, status, "BAD_REQUEST", (err as Error).message);
+    if (isDatabaseUnavailable(err)) {
+      request.log.warn(`database unavailable: ${(err as Error).message}`);
+      return sendError(reply, request, 503, "DATABASE_UNAVAILABLE", "The database is unavailable; try again shortly");
+    }
     request.log.error(err);
     return sendError(reply, request, 500, "INTERNAL_ERROR", "Internal server error");
   });
@@ -118,9 +123,26 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
       })),
   );
 
-  app.get("/api/v1/health", { schema: { response: { 200: z.object({ status: z.literal("ok") }) } } }, async () => ({
-    status: "ok" as const,
-  }));
+  // The panel tells "Control Plane down" (no answer) from "database down" (503) by this route.
+  app.get(
+    "/api/v1/health",
+    {
+      schema: {
+        response: {
+          200: z.object({ status: z.literal("ok"), database: z.literal("up") }),
+          503: z.object({ status: z.literal("degraded"), database: z.literal("down") }),
+        },
+      },
+    },
+    async (_request, reply) => {
+      try {
+        await sql`SELECT 1`.execute(db);
+        return { status: "ok" as const, database: "up" as const };
+      } catch {
+        return reply.code(503).send({ status: "degraded", database: "down" });
+      }
+    },
+  );
 
   app.post(
     "/api/v1/auth/login",

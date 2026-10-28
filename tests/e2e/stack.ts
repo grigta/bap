@@ -11,10 +11,15 @@ import { createServer as createViteServer } from "vite";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
 import { memoryStore } from "../../apps/control-plane/src/storage.ts";
-import { E2E_OPERATOR, STACK_FLEET, STACK_PORTS } from "./stack-config.ts";
+import { outageProxy } from "../support/outage-proxy.ts";
+import { E2E_OPERATOR, STACK_FLEET, STACK_PORTS, STACK_SCHEDULER } from "./stack-config.ts";
 
 const postgres = await new PostgreSqlContainer("postgres:17-alpine").start();
-const db = createDb(postgres.getConnectionUri());
+// The Control Plane reaches PostgreSQL through a proxy, so fault tests can take the database away.
+const pgProxy = outageProxy(postgres.getMappedPort(5432));
+const pgUrl = new URL(postgres.getConnectionUri());
+pgUrl.host = `127.0.0.1:${await pgProxy.listen()}`;
+const db = createDb(pgUrl.toString());
 await migrateToLatest(db);
 await ensureOperator(db, E2E_OPERATOR.login, E2E_OPERATOR.password);
 
@@ -35,7 +40,7 @@ for (const entry of ["scenarios/staging-smoke-test", "scenarios/wizard-order", "
 let app: App | null = null;
 async function startControlPlane() {
   if (app) return;
-  app = buildApp({ db, store, secureCookies: false, fleet: STACK_FLEET });
+  app = buildApp({ db, store, secureCookies: false, fleet: STACK_FLEET, scheduler: STACK_SCHEDULER });
   await app.listen({ host: "127.0.0.1", port: STACK_PORTS.controlPlane });
 }
 async function stopControlPlane() {
@@ -49,12 +54,14 @@ process.env.CONTROL_PLANE_URL = `http://127.0.0.1:${STACK_PORTS.controlPlane}`;
 const web = await createViteServer({ root: resolve(import.meta.dirname, "../../apps/web"), logLevel: "warn" });
 await web.listen();
 
-// Security demos: expire open invitations; swap a bundle in storage for other bytes and back.
+// Fault and security demos: take the database away; expire open invitations; swap a bundle in storage for other bytes and back.
 const originals = new Map<string, Buffer>();
 createHttpServer(async (req, res) => {
   const bundle = /^\/bundles\/([\w-]+)\/(tamper|restore)$/.exec(req.url ?? "");
   if (req.method === "POST" && req.url === "/control-plane/stop") await stopControlPlane();
   else if (req.method === "POST" && req.url === "/control-plane/start") await startControlPlane();
+  else if (req.method === "POST" && req.url === "/database/down") pgProxy.down();
+  else if (req.method === "POST" && req.url === "/database/up") pgProxy.up();
   else if (req.method === "POST" && req.url === "/enrollments/expire")
     await db.updateTable("agent_enrollments").set({ expires_at: new Date(Date.now() - 1000) }).where("used_at", "is", null).execute();
   else if (req.method === "POST" && bundle && bundleKeys.has(bundle[1]!)) {

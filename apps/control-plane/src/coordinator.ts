@@ -1,4 +1,4 @@
-import type { Db, RunStatus } from "@bap/database";
+import { type Db, type RunStatus, isDatabaseUnavailable } from "@bap/database";
 import { type RunEvent, message } from "@bap/protocol";
 import { AgentRequestError, type Fleet, type FleetConfig, connection } from "./fleet.ts";
 import { moveProfile } from "./profile-states.ts";
@@ -252,7 +252,10 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     if (stopped) return; // e.g. a heartbeat arriving while the app shuts down
     await maintenance();
     await schedule();
-  }).catch((e) => console.error("scheduler tick failed", e)));
+  }).catch((e) =>
+    // Every tick fails while the database is away; one line each is enough.
+    isDatabaseUnavailable(e) ? console.warn(`scheduler tick skipped: database unavailable (${e.message})`) : console.error("scheduler tick failed", e),
+  ));
 
   const isResume = async (runId: string) =>
     (await db.selectFrom("run_transitions").select("id").where("run_id", "=", runId).where("reason", "like", "resume requested%").executeTakeFirst()) !== undefined;
@@ -308,10 +311,11 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       if (await transitionRun(runId, ["ASSIGNED", "ACCEPTED", "RUNNING"], "RECOVERY_PENDING", "agent restarted mid-run"))
         await moveProfile(db, run.profile_id, ["IN_USE", "RESERVED"], "VERIFYING");
     }
-    // A run the agent kept executing through a dropped connection is not lost.
+    // A run the agent kept executing through a dropped connection, or finished with its result still
+    // on the way, is not lost: it waits for the agent's buffered events instead of being resumed.
     for (const runId of report.activeRuns) {
       const run = await db.selectFrom("runs").select("agent_id").where("id", "=", runId).executeTakeFirst();
-      if (run?.agent_id === agentId) await transitionRun(runId, ["RECOVERY_PENDING"], "RUNNING", "agent reports the run still executing");
+      if (run?.agent_id === agentId) await transitionRun(runId, ["RECOVERY_PENDING"], "RUNNING", "agent still has the run: executing or results on the way");
     }
     const cancelling = await db.selectFrom("runs").select("id").where("agent_id", "=", agentId).where("status", "=", "CANCEL_REQUESTED").execute();
     for (const r of cancelling) fleet.send(agentId, message({ type: "run.cancel", payload: { runId: r.id } }));

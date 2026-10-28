@@ -2,7 +2,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { type Server, type Socket, connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -14,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
 import { memoryStore } from "../../apps/control-plane/src/storage.ts";
+import { outageProxy } from "../support/outage-proxy.ts";
 import { startTestSite } from "../support/test-site.ts";
 
 const FLEET = { heartbeatIntervalMs: 200, suspectAfterMs: 1000, offlineAfterMs: 2000, enrollmentTtlMs: 60_000 };
@@ -28,35 +28,6 @@ let app: App;
 let cookie: string;
 let site: Awaited<ReturnType<typeof startTestSite>>;
 let proxy: ReturnType<typeof outageProxy>;
-
-/** TCP proxy between the agent and the Control Plane that can drop every connection and refuse new ones. */
-function outageProxy(targetPort: number) {
-  const sockets = new Set<Socket>();
-  let down = false;
-  const server: Server = createServer((client) => {
-    if (down) return void client.destroy();
-    const upstream = connect(targetPort, "127.0.0.1");
-    for (const s of [client, upstream]) {
-      sockets.add(s);
-      s.on("close", () => sockets.delete(s));
-      s.on("error", () => {});
-    }
-    client.pipe(upstream).pipe(client);
-    // A killed peer must close both halves, as a real TCP connection would.
-    client.on("close", () => upstream.destroy());
-    upstream.on("close", () => client.destroy());
-  });
-  return {
-    server,
-    listen: () => new Promise<number>((r) => server.listen(0, "127.0.0.1", () => r((server.address() as { port: number }).port))),
-    async outage(ms: number) {
-      down = true;
-      for (const s of sockets) s.destroy();
-      await sleep(ms);
-      down = false;
-    },
-  };
-}
 
 const api = (method: "GET" | "POST", url: string, payload?: object) =>
   app.inject({ method, url, payload, cookies: { bap_session: cookie }, headers: method === "POST" && url === "/api/v1/runs" ? { "idempotency-key": randomUUID() } : {} });
@@ -287,6 +258,20 @@ describe("network loss", () => {
     expect(steps.every((s: { screenshotArtifactId: string | null }) => s.screenshotArtifactId !== null)).toBe(true);
     const progress = await db.selectFrom("agent_events").select("event_type").where("event_type", "=", "run.progress").where("payload", "@>", JSON.stringify({ runId }) as never).execute();
     expect(progress).toHaveLength(5);
+    expect((await orders()).filter((x) => x.item === o.item)).toHaveLength(1);
+  }, 120_000);
+
+  test("[REQ-PROTO-006][REQ-RUN-007] with autoResume, a run the agent finished offline is not resumed again: its buffered result wins", async () => {
+    const a = agents[1]!;
+    await setMode({ holdStep: 3, holdMs: 2500 });
+    const o = order(a, "wizard-order-auto");
+    const runId = await o.start();
+    await until("running", () => runView(runId), (r) => r.status === "RUNNING");
+    // Long enough for the lease to expire (RECOVERY_PENDING) and for the agent to finish offline.
+    await proxy.outage(8000);
+    const done = await settled(runId);
+    expect(done.status).toBe("SUCCEEDED");
+    expect(reasons(done)).not.toContain(expect.stringMatching(/DUPLICATE_ASSIGNMENT/));
     expect((await orders()).filter((x) => x.item === o.item)).toHaveLength(1);
   }, 120_000);
 });

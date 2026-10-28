@@ -84,6 +84,12 @@ export class AgentStore {
     return rows.map((r) => ({ runId: r.run_id, assign: JSON.parse(r.assign) }));
   }
 
+  /** Runs whose events (results included) the server has not acknowledged yet. */
+  runsWithUndeliveredEvents(): string[] {
+    const rows = this.db.prepare("SELECT DISTINCT json_extract(body, '$.payload.runId') AS run_id FROM outbox WHERE kind = 'event'").all() as { run_id: string }[];
+    return rows.map((r) => r.run_id);
+  }
+
   /** Local files of the run may go: it has finished here (or was never assigned) and nothing of it waits for upload. */
   isSettled(runId: string): boolean {
     const status = this.runStatus(runId);

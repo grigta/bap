@@ -54,7 +54,7 @@ test("[REQ-SEC-008] passwords, tokens and agent keys never reach logs, artifacts
   const agentLog: string[] = [];
   const stored = new Map<string, Buffer>();
   const base = memoryStore();
-  const store: ObjectStore = { put: async (k, b, t) => (stored.set(k, b), base.put(k, b, t)), get: (k) => base.get(k), delete: (k) => base.delete(k) };
+  const store: ObjectStore = { put: async (k, b, t) => (stored.set(k, b), base.put(k, b, t)), get: (k) => base.get(k), delete: (k) => base.delete(k), list: () => base.list() };
 
   const operatorPassword = `Operator-Pass-${randomUUID()}`;
   await ensureOperator(db, "operator", operatorPassword);

@@ -1,4 +1,4 @@
-import type { Db } from "@bap/database";
+import { type Db, isDatabaseUnavailable } from "@bap/database";
 import { sql } from "kysely";
 import { AGENT_SOCKET_PATH, type AgentMessage, type AgentRequestPayload, type RunEvent, type ServerMessage, agentMessage, heartbeatPayload, message } from "@bap/protocol";
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
@@ -45,6 +45,8 @@ const agentSchema = z.object({
   heartbeat: heartbeatSchema,
   /** Effective limit of parallel sessions: the operator's limit, else what the agent reports. */
   maxSessions: z.number().nullable(),
+  /** Repeated messages discarded by deduplication. */
+  duplicateMessages: z.number(),
   reportedMaxSessions: z.number().nullable(),
   sessionLimit: z.number().nullable(),
   activeRuns: z.number(),
@@ -99,7 +101,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     let query = db
       .selectFrom("agents")
       .leftJoin("agent_capabilities", "agent_capabilities.agent_id", "agents.id")
-      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "max_sessions", "agent_capabilities.payload as capabilities"])
+      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "max_sessions", "duplicate_messages", "agent_capabilities.payload as capabilities"])
       .orderBy("name");
     if (id) query = query.where("agents.id", "=", id);
     const active = await db
@@ -121,6 +123,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       maxSessions: r.max_sessions ?? (r.capabilities as { maxSessions?: number } | null)?.maxSessions ?? null,
       reportedMaxSessions: (r.capabilities as { maxSessions?: number } | null)?.maxSessions ?? null,
       sessionLimit: r.max_sessions,
+      duplicateMessages: r.duplicate_messages,
       activeRuns: Number(active.find((a) => a.agent_id === r.id)?.n ?? 0),
     }));
   };
@@ -141,7 +144,9 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     "/api/v1/agents/enrollments",
     { preHandler: operatorAuth, schema: { response: { 201: z.object({ id: z.string(), token: z.string(), expiresAt: z.string() }), ...unauthorized } } },
     async (request, reply) => {
-      const token = newToken();
+      // The operator pastes it into `bap-agent enroll --token`: the prefix keeps a leading "-" of
+      // base64url from being read as an option, and makes a leaked invitation easy to recognise.
+      const token = `bapi_${newToken()}`;
       const expiresAt = new Date(Date.now() + config.enrollmentTtlMs);
       const row = await db
         .insertInto("agent_enrollments")
@@ -363,7 +368,13 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         .returning("id")
         .executeTakeFirst();
       const duplicate = !inserted;
-      if (!duplicate) {
+      if (duplicate)
+        await db
+          .updateTable("agents")
+          .set((eb) => ({ duplicate_messages: eb("duplicate_messages", "+", 1) }))
+          .where("id", "=", agentId)
+          .execute();
+      else {
         if (msg.type === "agent.heartbeat") {
           await db.updateTable("agents").set({ last_seen_at: now, last_heartbeat: JSON.stringify(msg.payload) }).where("id", "=", agentId).execute();
           await handlers.onHeartbeat?.(agentId);
@@ -390,7 +401,13 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         void handle(text).catch((e) => request.log.error(e));
         return;
       }
-      queue = queue.then(() => handle(text)).catch((e) => request.log.error(e));
+      queue = queue.then(() => handle(text)).catch((e) => {
+        // Not stored, so not acknowledged: closing makes the agent reconnect and resend it from its outbox.
+        if (isDatabaseUnavailable(e)) {
+          request.log.warn(`agent ${agentId}: message not stored, database unavailable; closing the socket`);
+          socket.close(1011, "storage unavailable");
+        } else request.log.error(e);
+      });
     });
     socket.on("close", () => {
       sockets.get(agentId)?.delete(socket);

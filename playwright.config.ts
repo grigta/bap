@@ -11,7 +11,7 @@ export default defineConfig({
   // One shared stack; some tests stop the Control Plane, so files must not run in parallel.
   workers: 1,
   // Partial or evidence runs set BAP_JUNIT so they do not overwrite the full-suite report.
-  reporter: [["list"], ["junit", { outputFile: process.env.BAP_JUNIT ?? "reports/junit/e2e.xml" }], ["html", { open: "never" }]],
+  reporter: [["list"], ["junit", { outputFile: process.env.BAP_JUNIT ?? "reports/junit/e2e.xml" }], ["html", { open: "never" }], ["./tests/e2e/fault-report.ts"]],
   use: { baseURL: `http://127.0.0.1:${STACK_PORTS.web}`, trace: "retain-on-failure" },
   expect: { toHaveScreenshot: { maxDiffPixelRatio: 0.01 } },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

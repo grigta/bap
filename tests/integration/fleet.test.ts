@@ -88,6 +88,8 @@ describe("enrollment", () => {
   test("[REQ-SEC-004] an invitation is single-use, expires and is stored only as a hash", async () => {
     const inv = await invite();
     expect(new Date(inv.expiresAt).getTime() - Date.now()).toBeGreaterThan(FLEET.enrollmentTtlMs - 5000);
+    // Prefixed, so it never starts with "-" and the CLI never mistakes it for an option.
+    for (const t of [inv.token, ...(await Promise.all(Array.from({ length: 20 }, invite))).map((i) => i.token)]) expect(t).toMatch(/^bapi_[\w-]{43}$/);
     const first = await enroll(inv.token, "mac-enroll");
     expect(first.statusCode).toBe(201);
     expect((await agentView(first.json().agentId)).status).toBe("ACTIVE");
@@ -254,6 +256,8 @@ describe("protocol", () => {
       [w1.payload.epoch, 1],
       [w2.payload.epoch, 1],
     ]);
+    // Discarded repeats are counted on the agent card, so an operator can see redelivery happened.
+    expect((await agentView(agentId)).duplicateMessages).toBe(1);
   });
 });
 

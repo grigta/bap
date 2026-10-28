@@ -21,6 +21,7 @@ interface Agent {
   reportedMaxSessions: number | null;
   sessionLimit: number | null;
   activeRuns: number;
+  duplicateMessages: number;
 }
 
 const POLL_MS = 2000;
@@ -111,6 +112,9 @@ function AgentCard({ id, onClose }: { id: string; onClose: () => void }) {
       <Sparkline label="CPU" values={card.data.heartbeats.map((b) => b.cpuPercent)} />
       <Sparkline label="RAM" values={card.data.heartbeats.map((b) => b.memoryPercent)} />
       <p className="muted">Последние {card.data.heartbeats.length} heartbeat</p>
+      <p className="muted" data-testid="duplicates">
+        Повторно доставленных сообщений отброшено: {card.data.duplicateMessages}
+      </p>
     </section>
   );
 }

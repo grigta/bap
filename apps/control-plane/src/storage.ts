@@ -1,4 +1,4 @@
-import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 /** Artifact and scenario-bundle storage. S3-compatible in production (ADR-0019), in-memory in tests. */
 export interface ObjectStore {
@@ -7,6 +7,8 @@ export interface ObjectStore {
   get(key: string): Promise<{ body: Buffer; contentType: string } | null>;
   /** Deleting a missing object is not an error. */
   delete(key: string): Promise<void>;
+  /** Every key in the store (backups mirror the store by it). */
+  list(): Promise<string[]>;
 }
 
 export function memoryStore(): ObjectStore {
@@ -20,6 +22,9 @@ export function memoryStore(): ObjectStore {
     },
     async delete(key) {
       objects.delete(key);
+    },
+    async list() {
+      return [...objects.keys()];
     },
   };
 }
@@ -59,6 +64,16 @@ export async function s3Store(opts: S3Options): Promise<ObjectStore> {
     },
     async delete(key) {
       await client.send(new DeleteObjectCommand({ Bucket: opts.bucket, Key: key }));
+    },
+    async list() {
+      const keys: string[] = [];
+      let token: string | undefined;
+      do {
+        const page = await client.send(new ListObjectsV2Command({ Bucket: opts.bucket, ContinuationToken: token }));
+        keys.push(...(page.Contents ?? []).map((o) => o.Key!));
+        token = page.NextContinuationToken;
+      } while (token);
+      return keys;
     },
   };
 }

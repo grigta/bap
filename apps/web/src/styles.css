@@ -88,3 +88,4 @@ table.agents th { font-weight: 500; color: #555; font-size: 13px; }
 .review p { margin: 4px 0 0; }
 .outcome-ok { background: #e3f6e8; color: #116b2c; }
 .outcome-denied { background: #fde4e4; color: #a11a1a; }
+.banner { background: #fde7e7; color: #a11a1a; border-bottom: 1px solid #f3c2c2; padding: 10px 20px; font-size: 14px; }

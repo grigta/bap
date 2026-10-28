@@ -17,6 +17,7 @@ export interface AgentsTable {
   last_seen_at: Timestamp | null;
   last_heartbeat: unknown | null;
   max_sessions: number | null;
+  duplicate_messages: Generated<number>;
   created_at: Timestamp;
 }
 
@@ -239,7 +240,23 @@ export interface Database {
 export type Db = Kysely<Database>;
 
 export function createDb(connectionString: string): Db {
-  return new Kysely<Database>({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString }) }) });
+  // Without a connect timeout a request waits forever for a database that is gone.
+  const pool = new pg.Pool({ connectionString, connectionTimeoutMillis: 3000 });
+  // A client losing its connection emits "error" (the pool listens only while it is idle); unhandled,
+  // that kills the process. The query in flight fails on its own, and the pool discards the client.
+  const lost = (e: Error) => console.error(`postgres: connection lost: ${e.message}`);
+  pool.on("error", lost);
+  pool.on("connect", (client) => client.on("error", lost));
+  return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
+}
+
+/** The error means the database cannot be reached right now (as opposed to a bad query). */
+export function isDatabaseUnavailable(e: unknown): boolean {
+  const err = e as { code?: string; message?: string } | null;
+  if (!err) return false;
+  // 08xxx: connection exceptions; 57P0x: server shutting down or restarting.
+  if (typeof err.code === "string" && (/^08/.test(err.code) || /^57P0/.test(err.code) || ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE"].includes(err.code))) return true;
+  return /Connection terminated|timeout exceeded when trying to connect|Client has encountered a connection error/i.test(err.message ?? "");
 }
 
 /** Applies all pending migrations; throws on the first failure. Returns names of applied migrations. */

@@ -247,7 +247,9 @@ export function startAgent(opts: AgentOptions): RunningAgent {
               agentVersion: AGENT_VERSION,
               platform: platform(),
               architecture: arch(),
-              activeRuns: [...runningInThisProcess],
+              // Runs finished while offline still count: their results are in the outbox and arrive next.
+              // Otherwise the server could resume such a run before learning it already ended.
+              activeRuns: [...new Set([...runningInThisProcess, ...store.runsWithUndeliveredEvents()])],
               interruptedRuns: store.runs("interrupted").map((r) => r.runId),
             },
           }),

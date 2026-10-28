@@ -64,3 +64,10 @@ test("[REQ-SEC-010] the S3 store deletes objects; deleting a missing one is not 
   expect(await store.get("runs/r2/01-step.png")).toBeNull();
   await store.delete("runs/r2/01-step.png");
 });
+
+test("[REQ-OPS-001] the S3 store lists every key across pages", async () => {
+  const store = await s3Store({ endpoint: `http://${s3.getHost()}:${s3.getMappedPort(8333)}`, bucket: "bap-list", accessKeyId: "test", secretAccessKey: "test" });
+  const keys = Array.from({ length: 1005 }, (_, i) => `runs/r${i}/01.png`); // more than one ListObjectsV2 page
+  for (let i = 0; i < keys.length; i += 50) await Promise.all(keys.slice(i, i + 50).map((k) => store.put(k, Buffer.from("x"), "image/png")));
+  expect((await store.list()).sort()).toEqual([...keys].sort());
+}, 120_000);
