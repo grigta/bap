@@ -125,7 +125,9 @@ function RunDetail({ id, onClose }: { id: string; onClose: () => void }) {
     refetchInterval: (q) => (q.state.data && FINAL.includes(q.state.data.status) ? false : 1000),
   });
   const steps = useQuery({
-    queryKey: ["run-steps", id],
+    // The status is part of the key: when the run ends, the steps are fetched once more, so the
+    // last steps are not lost to a poll that ran just before they arrived.
+    queryKey: ["run-steps", id, run.data?.status],
     queryFn: () => api<Step[]>(`/runs/${id}/steps`),
     refetchInterval: run.data && FINAL.includes(run.data.status) ? false : 1000,
   });
