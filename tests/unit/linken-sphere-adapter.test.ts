@@ -43,6 +43,10 @@ beforeAll(async () => {
       s.status = "stopped";
       return json(200, { uuid: body.uuid });
     }
+    if (route === "POST /sessions/force_stop") {
+      sessions.get(body.uuid)!.status = "stopped";
+      return json(200, { uuid: body.uuid });
+    }
     if (route === "DELETE /sessions") return sessions.delete(body.uuid) ? json(200, { uuid: body.uuid }) : missing(body.uuid);
     json(404, { error: "unknown route" });
   });
@@ -89,4 +93,26 @@ test("API errors carry the HTTP status and the Linken Sphere message", async () 
 test("an unreachable Local API reports unavailable instead of throwing", async () => {
   const provider = new LinkenSphereProvider({ apiUrl: "http://127.0.0.1:1" });
   expect(await provider.isAvailable()).toBe(false);
+});
+
+test("[REQ-LS-011] profile state comes from the session status; force-release stops only a busy session", async () => {
+  sessions.set("idle", { name: "Idle", status: "stopped" });
+  sessions.set("busy", { name: "Busy", status: "automationRunning" });
+  const provider = new LinkenSphereProvider({ apiUrl });
+  expect(await provider.profileState("idle")).toBe("idle");
+  expect(await provider.profileState("busy")).toBe("busy");
+  expect(await provider.profileState("ghost")).toBe("missing");
+
+  calls.length = 0;
+  await provider.forceRelease("idle");
+  expect(calls.map((c) => c.url)).toEqual(["/sessions"]);
+  await provider.forceRelease("busy");
+  expect(calls.at(-1)).toEqual({ method: "POST", url: "/sessions/force_stop", body: { uuid: "busy" } });
+});
+
+test("openSession returns a session bound to the profile and run", async () => {
+  sessions.set("u2", { name: "Shop 2", status: "stopped" });
+  const session = await new LinkenSphereProvider({ apiUrl }).openSession("u2", "run-7");
+  expect({ profileId: session.profileId, runId: session.runId }).toEqual({ profileId: "u2", runId: "run-7" });
+  expect(await session.inspect()).toEqual({ connected: false });
 });

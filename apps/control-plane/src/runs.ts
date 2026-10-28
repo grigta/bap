@@ -34,6 +34,7 @@ const runSchema = z.object({
   errorMessage: z.string().nullable(),
   /** Why a QUEUED run waits (agent drained, provider down, profile busy, capacity…). */
   queueReason: z.string().nullable(),
+  autoResume: z.boolean().nullable(),
   createdAt: z.string(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
@@ -125,7 +126,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
 
   // ---- runs ----
 
-  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; queue_reason: string | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
+  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; queue_reason: string | null; auto_resume: boolean | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
     id: r.id,
     scenarioId: r.scenario_id,
     scenarioVersion: r.scenario_version,
@@ -137,6 +138,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
     errorCode: r.error_code,
     errorMessage: r.error_message,
     queueReason: r.status === "QUEUED" ? r.queue_reason : null,
+    autoResume: r.auto_resume,
     createdAt: r.created_at.toISOString(),
     startedAt: r.started_at?.toISOString() ?? null,
     finishedAt: r.finished_at?.toISOString() ?? null,
@@ -222,12 +224,91 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
 
   app.get(
     "/api/v1/runs/:id",
-    { preHandler: operatorAuth, schema: { params: idParams, response: { 200: runSchema.extend({ transitions: z.array(transitionSchema) }), ...errors } } },
+    {
+      preHandler: operatorAuth,
+      schema: {
+        params: idParams,
+        response: {
+          200: runSchema.extend({
+            transitions: z.array(transitionSchema),
+            checkpoints: z.array(z.object({ sequence: z.number(), stepId: z.string(), nextStepId: z.string().nullable(), nextStepMutating: z.boolean(), createdAt: z.string() })),
+          }),
+          ...errors,
+        },
+      },
+    },
     async (request, reply) => {
       const run = await loadRun(request.params.id);
       if (!run) return sendError(reply, request, 404, "NOT_FOUND", "Run not found");
       const transitions = await db.selectFrom("run_transitions").selectAll().where("run_id", "=", run.id).orderBy("id").execute();
-      return { ...run, transitions: transitions.map((t) => ({ from: t.from_status, to: t.to_status, reason: t.reason, at: t.at.toISOString() })) };
+      const checkpoints = await db.selectFrom("checkpoints").selectAll().where("run_id", "=", run.id).orderBy("sequence").execute();
+      return {
+        ...run,
+        transitions: transitions.map((t) => ({ from: t.from_status, to: t.to_status, reason: t.reason, at: t.at.toISOString() })),
+        checkpoints: checkpoints.map((c) => ({ sequence: c.sequence, stepId: c.step_id, nextStepId: c.next_step_id, nextStepMutating: c.next_step_mutating, createdAt: c.created_at.toISOString() })),
+      };
+    },
+  );
+
+  app.post(
+    "/api/v1/runs/:id/cancel",
+    { preHandler: operatorAuth, schema: { params: idParams, response: { 202: runSchema, ...errors } } },
+    async (request, reply) => {
+      const outcome = await coordinator.cancel(request.params.id);
+      const run = await loadRun(request.params.id);
+      if (!run) return sendError(reply, request, 404, "NOT_FOUND", "Run not found");
+      if (outcome === "conflict") return sendError(reply, request, 409, "RUN_STATE_CONFLICT", `Cannot cancel a run in status ${run.status}`);
+      return reply.code(202).send(run);
+    },
+  );
+
+  // Accepting a resume request is not a promise that the run will succeed (REQ-API-007).
+  app.post(
+    "/api/v1/runs/:id/resume",
+    {
+      preHandler: operatorAuth,
+      schema: {
+        params: idParams,
+        body: z.object({ mode: z.literal("safe-checkpoint"), operatorConfirmed: z.boolean() }),
+        response: { 202: z.object({ runId: z.string(), accepted: z.literal(true), status: z.enum(RUN_STATUSES) }), 400: errorSchema, ...errors },
+      },
+    },
+    async (request, reply) => {
+      if (!request.body.operatorConfirmed) return sendError(reply, request, 400, "OPERATOR_CONFIRMATION_REQUIRED", "Set operatorConfirmed: true after checking the run");
+      const run = await loadRun(request.params.id);
+      if (!run) return sendError(reply, request, 404, "NOT_FOUND", "Run not found");
+      if (!(await coordinator.requestResume(run.id))) return sendError(reply, request, 409, "RUN_STATE_CONFLICT", `Only RECOVERY_PENDING runs can be resumed; this one is ${run.status}`);
+      return reply.code(202).send({ runId: run.id, accepted: true, status: (await loadRun(run.id))!.status });
+    },
+  );
+
+  app.get(
+    "/api/v1/review",
+    {
+      preHandler: operatorAuth,
+      schema: {
+        response: {
+          200: z.object({
+            runs: z.array(z.object({ id: z.string(), scenarioId: z.string(), profileId: z.string(), status: z.string(), errorCode: z.string().nullable(), errorMessage: z.string().nullable(), finishedAt: z.string().nullable() })),
+            profiles: z.array(z.object({ id: z.string(), name: z.string(), agentName: z.string(), lastError: z.string().nullable(), updatedAt: z.string() })),
+          }),
+          ...errors,
+        },
+      },
+    },
+    async () => {
+      const runs = await db.selectFrom("runs").selectAll().where("status", "in", ["NEEDS_REVIEW", "RECOVERY_PENDING"]).orderBy("updated_at", "desc").limit(200).execute();
+      const profiles = await db
+        .selectFrom("profiles")
+        .innerJoin("agents", "agents.id", "profiles.agent_id")
+        .select(["profiles.id", "profiles.name", "agents.name as agent_name", "profiles.last_error", "profiles.updated_at"])
+        .where("profiles.status", "=", "NEEDS_REVIEW")
+        .orderBy("profiles.updated_at", "desc")
+        .execute();
+      return {
+        runs: runs.map((r) => ({ id: r.id, scenarioId: r.scenario_id, profileId: r.profile_id, status: r.status, errorCode: r.error_code, errorMessage: r.error_message, finishedAt: r.finished_at?.toISOString() ?? null })),
+        profiles: profiles.map((p) => ({ id: p.id, name: p.name, agentName: p.agent_name, lastError: p.last_error, updatedAt: p.updated_at.toISOString() })),
+      };
     },
   );
 

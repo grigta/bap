@@ -33,7 +33,7 @@ describe("defineScenario", () => {
 describe("runScenario", () => {
   test("[REQ-RUN-010] invalid input is rejected before any browser session is opened", async () => {
     const openSession = vi.fn();
-    const provider: BrowserProvider = { isAvailable: async () => true, listProfiles: async () => [], profileState: async () => "idle", openSession };
+    const provider: BrowserProvider = { isAvailable: async () => true, listProfiles: async () => [], profileState: async () => "idle", forceRelease: async () => {}, openSession };
     const scenario = defineScenario({ ...base, steps: [{ id: "a", run: noop }] });
     const checkpoints = new CheckpointStore(":memory:");
     await expect(
@@ -54,8 +54,8 @@ test("report escapes step errors and marks statuses", () => {
     finishedAt: "t1",
     reportPath: "x",
     steps: [
-      { id: "a", mutating: false, status: "passed", startedAt: "t", durationMs: 5, screenshot: "01-a.png" },
-      { id: "pay", mutating: true, status: "unverified", startedAt: "t", durationMs: 7, error: "<script>x</script>" },
+      { sequence: 1, id: "a", mutating: false, status: "passed", startedAt: "t", durationMs: 5, screenshot: "01-a.png" },
+      { sequence: 2, id: "pay", mutating: true, status: "unverified", startedAt: "t", durationMs: 7, error: "<script>x</script>" },
     ],
   });
   expect(html).toContain('<span class="status NEEDS_REVIEW">NEEDS_REVIEW</span>');

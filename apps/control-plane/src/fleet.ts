@@ -76,7 +76,7 @@ export interface Fleet {
   /** Set by the run coordinator. */
   handlers: {
     onRunEvent?: (agentId: string, event: RunEvent) => Promise<void>;
-    onConnected?: (agentId: string) => Promise<void>;
+    onConnected?: (agentId: string, report: { activeRuns: string[]; interruptedRuns: string[] }) => Promise<void>;
     onHeartbeat?: (agentId: string) => Promise<void>;
   };
 }
@@ -306,8 +306,8 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
           .executeTakeFirstOrThrow();
         epoch = Number(row.current_epoch);
         send(message({ type: "server.welcome", payload: { agentId, epoch, heartbeatIntervalMs: config.heartbeatIntervalMs } }));
-        // Runs queued while the agent was away go out now.
-        await handlers.onConnected?.(agentId);
+        // Interrupted and still-running runs are reconciled; runs queued while the agent was away go out.
+        await handlers.onConnected?.(agentId, { activeRuns: msg.payload.activeRuns, interruptedRuns: msg.payload.interruptedRuns });
         return;
       }
       if (epoch === null) return protocolError("HELLO_REQUIRED", "agent.hello must be the first message");
@@ -324,7 +324,8 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       const inserted = await db
         .insertInto("agent_events")
         .values({ agent_id: agentId, epoch, sequence: msg.seq, message_id: msg.id, event_type: msg.type, payload: JSON.stringify(msg.payload), sent_at: msg.ts })
-        .onConflict((oc) => oc.columns(["agent_id", "epoch", "sequence"]).doNothing())
+        // Either key catches a repeat: (epoch, sequence) within a connection, the message id across reconnects.
+        .onConflict((oc) => oc.doNothing())
         .returning("id")
         .executeTakeFirst();
       const duplicate = !inserted;

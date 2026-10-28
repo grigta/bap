@@ -42,6 +42,22 @@ export class LocalChromiumProvider implements BrowserProvider {
     return processes.includes(`--user-data-dir=${dir}`) ? "busy" : "idle";
   }
 
+  async forceRelease(profileId: string): Promise<void> {
+    const dir = join(this.profilesDir, profileId);
+    const lines = execFileSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8" }).split("\n");
+    for (const line of lines) {
+      const [pid, ...command] = line.trim().split(" ");
+      if (command.join(" ").includes(`--user-data-dir=${dir}`)) {
+        try {
+          process.kill(Number(pid), "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    }
+    for (let i = 0; i < 50 && (await this.profileState(profileId)) === "busy"; i++) await sleep(100);
+  }
+
   async openSession(profileId: string, runId: string): Promise<LocalChromiumSession> {
     const dir = join(this.profilesDir, profileId);
     if (!existsSync(dir)) throw new ProfileNotFoundError(profileId);
@@ -76,7 +92,7 @@ class LocalChromiumSession extends CdpSession {
       // Chromium creates the file before writing it: an empty read is not a port.
       const port = existsSync(portFile) ? Number(readFileSync(portFile, "utf8").split("\n")[0]) : 0;
       if (port > 0) return (this.cdpPort = port);
-      if (proc.exitCode !== null) break;
+      if (exited(proc)) break;
       await sleep(100);
     }
     throw new Error(`Chromium for profile ${this.profileId} did not open a CDP port:\n${stderr}`);
@@ -84,22 +100,25 @@ class LocalChromiumSession extends CdpSession {
 
   protected async stop(): Promise<void> {
     const proc = this.process;
-    if (!proc || proc.exitCode !== null) return;
-    const exited = new Promise((resolve) => proc.once("exit", resolve));
+    if (!proc || exited(proc)) return;
+    const exit = new Promise((resolve) => proc.once("exit", resolve));
     // Browser.close lets Chromium flush cookies and localStorage; a signal would lose them.
     // If the graceful path fails or hangs, the process is killed after 5 s.
     const graceful = (async () => {
       if (this.cdpPort <= 0) throw new Error("no CDP port");
       const browser = await chromium.connectOverCDP(`http://127.0.0.1:${this.cdpPort}`);
       await (await browser.newBrowserCDPSession()).send("Browser.close").catch(() => {});
-      await exited;
+      await exit;
     })();
     const timeout = sleep(5000).then(() => "timeout" as const);
     if ((await Promise.race([graceful.catch(() => "failed" as const), timeout])) !== undefined) {
       proc.kill("SIGKILL");
-      await exited;
+      if (!exited(proc)) await exit;
     }
     this.process = null;
     this.cdpPort = 0;
   }
 }
+
+/** A process killed by a signal has exitCode null and signalCode set. */
+const exited = (proc: ChildProcess) => proc.exitCode !== null || proc.signalCode !== null;

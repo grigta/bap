@@ -62,7 +62,7 @@ describe("wizard-order on local Chromium", () => {
       agentId: "agent-1",
       profileId: "p1",
       scenarioId: "wizard-order",
-      scenarioVersion: "1.0.0",
+      scenarioVersion: "1.1.0",
       sdkVersion: "0.1.0",
       lastCompletedStepId: "confirm",
       sequence: 3,
@@ -146,8 +146,8 @@ describe("scenario bundles", () => {
   test("[REQ-SEC-006] a bundle loads only while its bytes match the sha256 manifest", async () => {
     const out = join(work, "bundles");
     const manifest = await buildScenarioBundle(join(repoRoot, "scenarios/wizard-order/index.ts"), out);
-    expect(manifest).toEqual({ id: "wizard-order", version: "1.0.0", file: "wizard-order@1.0.0.mjs", sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
-    const manifestPath = join(out, "wizard-order@1.0.0.json");
+    expect(manifest).toEqual({ id: "wizard-order", version: "1.1.0", file: "wizard-order@1.1.0.mjs", sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    const manifestPath = join(out, "wizard-order@1.1.0.json");
     expect((await loadScenarioBundle(manifestPath)).steps).toHaveLength(5);
 
     const file = join(out, manifest.file);
@@ -193,6 +193,7 @@ describe("session start", () => {
         isAvailable: () => provider.isAvailable(),
         listProfiles: () => provider.listProfiles(),
         profileState: (id: string) => provider.profileState(id),
+        forceRelease: (id: string) => provider.forceRelease(id),
         openSession: async (id: string, runId: string) => {
           const session = await provider.openSession(id, runId);
           const attach = session.attach.bind(session);
@@ -209,7 +210,7 @@ describe("session start", () => {
   const runWith = (p: Parameters<typeof runScenario>[0]["provider"], profileId = "p1") =>
     runScenario({ scenario, input: {}, provider: p, profileId, runId: `run-${++runs}`, agentId: "a", artifactsDir: join(work, "artifacts", `s-${runs}`), checkpoints, sessionRetryDelayMs: 10 });
 
-  test("[REQ-LS-008] a session that fails to start is retried a limited number of times", async () => {
+  test("[REQ-LS-008][REQ-LS-009] a session that fails to start is retried a limited number of times, checking the session each time", async () => {
     const twice = flaky(2);
     expect((await runWith(twice.provider)).status).toBe("SUCCEEDED");
     expect(twice.attempts).toBe(3);
@@ -218,7 +219,31 @@ describe("session start", () => {
     const result = await runWith(never.provider);
     expect(never.attempts).toBe(3);
     expect(result).toMatchObject({ status: "FAILED", errorCode: "SESSION_START_FAILED", steps: [] });
-    expect(result.errorMessage).toMatch(/did not start after 3 attempts: cdp refused \(attempt 3\)/);
+    expect(result.errorMessage).toMatch(/did not start after 3 attempts: cdp refused \(attempt 3\) \(session state: (idle|busy)\)/);
+  });
+
+  test("[REQ-LS-010] a browser that dies mid-step fails the run with diagnostics instead of hanging", async () => {
+    const dying = defineScenario({
+      id: "browser-dies",
+      version: "1.0.0",
+      inputSchema: z.object({ baseUrl: z.url() }),
+      autoResume: true,
+      initialState: () => ({}),
+      steps: [
+        { id: "open", run: async ({ page, input }) => void (await page.goto(input.baseUrl)) },
+        {
+          id: "browser-killed",
+          run: async ({ page, input }) => {
+            await provider.forceRelease("p1"); // the browser process disappears under the step
+            await page.goto(`${input.baseUrl}/orders`);
+          },
+        },
+      ],
+    });
+    const result = await runScenario({ scenario: dying, input: { baseUrl: site.url }, provider, profileId: "p1", runId: `run-${++runs}`, agentId: "a", artifactsDir: join(work, "artifacts", `d-${runs}`), checkpoints });
+    expect(result).toMatchObject({ status: "FAILED", errorCode: "BROWSER_DISCONNECTED" });
+    expect(result.errorMessage).toMatch(/browser disconnected; profile state: (idle|missing); last url: /);
+    expect(result.steps.map((st) => st.status)).toEqual(["passed", "failed"]);
   });
 
   test("[REQ-LS-008] a missing profile is a configuration error and is not retried", async () => {

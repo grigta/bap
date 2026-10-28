@@ -23,11 +23,15 @@ const work = mkdtempSync(join(tmpdir(), "bap-scheduler-"));
 /** Wraps a provider to count browser sessions that are really open, per agent and per profile. */
 function instrumented(base: LocalChromiumProvider) {
   const open = new Map<string, number>();
-  const stats = { current: 0, maxAgent: 0, maxPerProfile: new Map<string, number>(), available: true, leaveBusy: false };
+  const stats = { current: 0, maxAgent: 0, maxPerProfile: new Map<string, number>(), available: true, leaveBusy: false, stateUnknown: false };
   const provider: BrowserProvider = {
     isAvailable: async () => stats.available && (await base.isAvailable()),
     listProfiles: () => base.listProfiles(),
-    profileState: async (id) => (stats.leaveBusy ? "busy" : base.profileState(id)),
+    profileState: async (id) => {
+      if (stats.stateUnknown) throw new Error("Local API returned an unknown session state");
+      return stats.leaveBusy ? "busy" : base.profileState(id);
+    },
+    forceRelease: (id) => base.forceRelease(id),
     openSession: async (id, runId) => {
       const session = await base.openSession(id, runId);
       const attach = session.attach.bind(session);
@@ -244,6 +248,18 @@ describe("after a run", () => {
     await api("POST", `/api/v1/profiles/${a.profiles[2]}/release-review`);
   }, 60_000);
 
+  test("[REQ-LS-011] a profile whose state cannot be determined is not reused until reviewed", async () => {
+    a.inst.stats.stateUnknown = true;
+    const run = (await slow(a.profiles[2]!, 100)).json().runId;
+    await finished(run);
+    const blocked = await until("needs review", () => profileView(a.profiles[2]!), (p) => p.status === "NEEDS_REVIEW");
+    expect(blocked.lastError).toMatch(/unknown session state/);
+    const next = (await slow(a.profiles[2]!, 100)).json();
+    expect(next.error.code).toBe("PROFILE_NEEDS_REVIEW");
+    a.inst.stats.stateUnknown = false;
+    await api("POST", `/api/v1/profiles/${a.profiles[2]}/release-review`);
+  }, 60_000);
+
   test("[REQ-PROF-007] heartbeats extend the lease; when they stop the profile waits in VERIFYING instead of opening a second browser", async () => {
     const profileId = b.profiles[0]!;
     const run = (await slow(profileId, 4000)).json().runId;
@@ -264,8 +280,10 @@ describe("after a run", () => {
 
     connect(b); // the owner is back: once its browser has closed, it confirms the profile is idle
     await idle(profileId);
-    // The old run finished while the agent was away; its events are lost until the S7 event buffer.
-    expect((await runView(run)).status).toBe("RECOVERY_PENDING");
+    // The old run finished while the agent was away; its buffered events arrive after the reconnect (S7).
+    const recovered = await finished(run);
+    expect(recovered.status).toBe("SUCCEEDED");
+    expect(recovered.transitions.map((t: { to: string }) => t.to)).toEqual(expect.arrayContaining(["RECOVERY_PENDING", "SUCCEEDED"]));
     expect((await finished(next)).status).toBe("SUCCEEDED");
     expect(b.inst.stats.maxPerProfile.get("mac-b-p1")).toBe(1);
   }, 90_000);

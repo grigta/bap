@@ -5,6 +5,9 @@ import { createServer, type ServerResponse } from "node:http";
 const index = readFileSync(new URL("./index.html", import.meta.url));
 const port = Number(process.env.PORT ?? 4310);
 const orders: { id: number; item: string; createdAt: string }[] = [];
+/** Failure modes for recovery tests, set with POST /api/mode and cleared by DELETE /api/orders. */
+const NO_FAULTS = { orderHoldMs: 0, ambiguous: false, holdStep: 0, holdMs: 0 };
+let mode = { ...NO_FAULTS };
 
 const page = (title: string, body: string) => `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>${title}</title>
@@ -39,21 +42,34 @@ createServer(async (req, res) => {
 
   if (route === "GET /wizard") {
     const step = Number(url.searchParams.get("step") ?? 1);
+    if (mode.holdStep === step) await new Promise((r) => setTimeout(r, mode.holdMs));
     return send(res, 200, wizardStep(Math.min(Math.max(step, 1), 4), url.searchParams.get("item") ?? ""));
   }
   if (route === "POST /wizard/order") {
     const item = (await readForm(req)).get("item") ?? "";
     const order = { id: orders.length + 1, item, createdAt: new Date().toISOString() };
     orders.push(order);
+    // The order exists from here on, but the browser hears about it only later.
+    if (mode.orderHoldMs) await new Promise((r) => setTimeout(r, mode.orderHoldMs));
     return send(res, 201, page("Шаг 5 из 5: готово", `<p>Заказ <b id="order-id">#${order.id}</b> оформлен.</p><a href="/orders">Все заказы</a>`));
   }
   if (route === "GET /orders") {
     const rows = orders.map((o) => `<tr><td>#${o.id}</td><td>${escape(o.item)}</td></tr>`).join("");
     return send(res, 200, page("Заказы", `<p>Всего: <b id="orders-count">${orders.length}</b></p><table>${rows}</table>`));
   }
-  if (route === "GET /api/orders") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(orders));
+  if (route === "GET /api/orders") {
+    if (mode.ambiguous) return res.writeHead(503).end("orders are temporarily unknown");
+    return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(orders));
+  }
   if (route === "DELETE /api/orders") {
     orders.length = 0;
+    mode = { ...NO_FAULTS };
+    return res.writeHead(204).end();
+  }
+  if (route === "POST /api/mode") {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    mode = { ...NO_FAULTS, ...JSON.parse(body || "{}") };
     return res.writeHead(204).end();
   }
 

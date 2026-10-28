@@ -101,6 +101,8 @@ export interface RunsTable {
   error_code: string | null;
   error_message: string | null;
   queue_reason: string | null;
+  auto_resume: boolean | null;
+  resume_requested: Generated<boolean>;
   created_at: Timestamp;
   updated_at: Timestamp;
   started_at: Timestamp | null;
@@ -157,6 +159,16 @@ export interface IdempotencyKeysTable {
   created_at: Timestamp;
 }
 
+export interface CheckpointsTable {
+  run_id: string;
+  sequence: number;
+  step_id: string;
+  next_step_id: string | null;
+  next_step_mutating: boolean;
+  auto_resume: boolean;
+  created_at: Timestamp;
+}
+
 export interface ProfileLeasesTable {
   profile_id: string;
   run_id: string;
@@ -205,6 +217,7 @@ export interface Database {
   run_steps: RunStepsTable;
   idempotency_keys: IdempotencyKeysTable;
   profile_leases: ProfileLeasesTable;
+  checkpoints: CheckpointsTable;
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   api_tokens: ApiTokensTable;

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { BrowserProvider } from "@bap/browser-adapters";
 import { CheckpointStore, InputValidationError, loadScenarioBundle, runScenario } from "@bap/engine";
 import type { RunAssignPayload, RunEvent } from "@bap/protocol";
+import type { AgentStore } from "./agent-store.ts";
 
 export type EmitRunEvent = (event: Omit<RunEvent, "v" | "id" | "ts" | "seq">) => void;
 
@@ -13,7 +14,10 @@ export interface RunnerDeps {
   agentId: string;
   provider: BrowserProvider;
   dataDir: string;
+  store: AgentStore;
+  /** Queues the event in the outbox; it is delivered once connected and dropped only when acknowledged. */
   emit: EmitRunEvent;
+  isCancelled: () => boolean;
   log: (line: string) => void;
 }
 
@@ -45,16 +49,17 @@ class RunnerError extends Error {
   }
 }
 
-/** Executes one assigned run end to end and reports it as run.* events. */
+/** Executes (or resumes) one assigned run and reports it as run.* events through the outbox. */
 export async function executeRun(assign: RunAssignPayload, deps: RunnerDeps): Promise<void> {
   const { runId } = assign;
   const { emit } = deps;
   emit({ type: "run.accepted", payload: { runId } });
   const checkpoints = new CheckpointStore(join(deps.dataDir, "agent.db"));
+  const artifactsDir = join(deps.dataDir, "runs", runId);
   try {
     const scenario = await loadScenarioBundle(await fetchBundle(assign, deps));
-    emit({ type: "run.started", payload: { runId } });
-    let sequence = 0;
+    const resumeFrom = assign.resume ? checkpoints.latest(runId) : null;
+    emit({ type: "run.started", payload: { runId, autoResume: scenario.autoResume, resumedAfter: resumeFrom?.lastCompletedStepId ?? null } });
     const result = await runScenario({
       scenario,
       input: assign.input,
@@ -62,25 +67,21 @@ export async function executeRun(assign: RunAssignPayload, deps: RunnerDeps): Pr
       profileId: assign.profileExternalId,
       runId,
       agentId: deps.agentId,
-      artifactsDir: join(deps.dataDir, "runs", runId),
+      artifactsDir,
       checkpoints,
       timeoutMs: assign.timeoutMs,
-      onStep: async (step) => {
-        sequence++;
-        if (step.screenshot) {
-          const res = await fetch(`${deps.serverUrl}/api/v1/runs/${runId}/artifacts/${step.screenshot}`, {
-            method: "PUT",
-            headers: { authorization: `Bearer ${deps.agentKey}`, "content-type": "image/png" },
-            body: readFileSync(join(deps.dataDir, "runs", runId, step.screenshot)),
-          });
-          if (!res.ok) deps.log(`screenshot upload for ${runId} failed: HTTP ${res.status}`);
-        }
+      resuming: assign.resume,
+      resumeFrom,
+      shouldCancel: deps.isCancelled,
+      onStep: (step) => {
+        // Upload first: the progress event refers to the screenshot by name.
+        if (step.screenshot) deps.store.enqueueArtifact({ runId, name: step.screenshot, path: join(artifactsDir, step.screenshot) });
         emit({
           type: "run.progress",
           payload: {
             runId,
             step: {
-              sequence,
+              sequence: step.sequence,
               stepId: step.id,
               mutating: step.mutating,
               status: step.status,
@@ -92,8 +93,22 @@ export async function executeRun(assign: RunAssignPayload, deps: RunnerDeps): Pr
           },
         });
       },
+      onCheckpoint: (cp) =>
+        emit({
+          type: "run.checkpoint",
+          payload: {
+            runId,
+            sequence: cp.sequence,
+            stepId: cp.lastCompletedStepId,
+            nextStepId: cp.resume.nextStepId,
+            nextStepMutating: cp.resume.nextStepMutating,
+            autoResume: cp.resume.autoResume,
+            createdAt: cp.createdAt,
+          },
+        }),
     });
     if (result.status === "SUCCEEDED") emit({ type: "run.completed", payload: { runId } });
+    else if (result.status === "CANCELLED") emit({ type: "run.cancelled", payload: { runId, afterStep: result.cancelledAfter ?? null } });
     else emit({ type: "run.failed", payload: { runId, status: result.status, errorCode: result.errorCode ?? "STEP_FAILED", message: result.errorMessage ?? "run failed" } });
     deps.log(`run ${runId}: ${result.status}${result.errorCode ? ` (${result.errorCode})` : ""}`);
   } catch (e) {

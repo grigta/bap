@@ -76,6 +76,10 @@ export class LinkenSphereProvider implements BrowserProvider {
     return !session ? "missing" : session.status === "stopped" ? "idle" : "busy";
   }
 
+  async forceRelease(profileId: string): Promise<void> {
+    if ((await this.profileState(profileId)) === "busy") await this.api.request("POST", "/sessions/force_stop", { uuid: profileId });
+  }
+
   async openSession(profileId: string, runId: string): Promise<LinkenSphereSession> {
     const known = await this.api.listSessions();
     if (!known.some((s) => s.uuid === profileId)) throw new ProfileNotFoundError(profileId);

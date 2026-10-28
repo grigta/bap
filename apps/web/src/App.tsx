@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Agents } from "./Agents.tsx";
 import { Profiles } from "./Profiles.tsx";
+import { Review } from "./Review.tsx";
 import { Runs } from "./Runs.tsx";
 import { HttpError, api } from "./api.ts";
 
@@ -54,7 +55,7 @@ function LoginForm() {
   );
 }
 
-const SECTIONS = ["Agents", "Profiles", "Runs"] as const;
+const SECTIONS = ["Agents", "Profiles", "Runs", "Review"] as const;
 
 function Shell({ login }: { login: string }) {
   const queryClient = useQueryClient();
@@ -78,7 +79,7 @@ function Shell({ login }: { login: string }) {
       </nav>
       <main>
         <h1>{section}</h1>
-        {section === "Agents" ? <Agents /> : section === "Profiles" ? <Profiles /> : <Runs />}
+        {section === "Agents" ? <Agents /> : section === "Profiles" ? <Profiles /> : section === "Runs" ? <Runs /> : <Review />}
       </main>
     </>
   );

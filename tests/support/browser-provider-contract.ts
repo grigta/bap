@@ -65,6 +65,13 @@ export function browserProviderContract(target: ContractTarget) {
     expect(await target.isRunning(profileId)).toBe(false);
     expect(await target.provider.profileState(profileId)).toBe("idle");
     expect(await target.provider.profileState("00000000-0000-0000-0000-000000000000")).toBe("missing");
+
+    // A browser abandoned by a crashed agent is stopped by forceRelease.
+    const abandoned = await target.provider.openSession(profileId, "run-abandoned");
+    await abandoned.attach();
+    expect(await target.provider.profileState(profileId)).toBe("busy");
+    await target.provider.forceRelease(profileId);
+    await expect.poll(() => target.provider.profileState(profileId), { timeout: 15_000 }).toBe("idle");
     await expect(target.provider.openSession(profileId, "run-3")).resolves.toBeDefined();
   });
 

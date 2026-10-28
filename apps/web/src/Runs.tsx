@@ -99,10 +99,29 @@ function NewRun({ onCreated }: { onCreated: (id: string) => void }) {
   );
 }
 
+const CANCELLABLE = ["QUEUED", "ASSIGNED", "ACCEPTED", "RUNNING", "RECOVERY_PENDING"];
+
+export function useRunActions() {
+  const queryClient = useQueryClient();
+  const refresh = () => queryClient.invalidateQueries();
+  const cancel = useMutation({ mutationFn: (id: string) => api(`/runs/${id}/cancel`, { method: "POST" }), onSettled: refresh });
+  const resume = useMutation({
+    mutationFn: (id: string) => api(`/runs/${id}/resume`, { method: "POST", body: JSON.stringify({ mode: "safe-checkpoint", operatorConfirmed: true }) }),
+    onSettled: refresh,
+  });
+  return {
+    cancel: (id: string) => cancel.mutate(id),
+    // Resuming is the operator's call: confirm that the run and the site were checked.
+    resume: (id: string) => confirm("Продолжить задание с последней контрольной точки? Шаг, изменявший данные, будет проверен, а не повторён.") && resume.mutate(id),
+  };
+}
+
 function RunDetail({ id, onClose }: { id: string; onClose: () => void }) {
+  const actions = useRunActions();
   const run = useQuery({
     queryKey: ["run", id],
-    queryFn: () => api<Run & { transitions: { from: string | null; to: string; reason: string | null; at: string }[] }>(`/runs/${id}`),
+    queryFn: () =>
+      api<Run & { transitions: { from: string | null; to: string; reason: string | null; at: string }[]; checkpoints: { sequence: number; stepId: string }[] }>(`/runs/${id}`),
     refetchInterval: (q) => (q.state.data && FINAL.includes(q.state.data.status) ? false : 1000),
   });
   const steps = useQuery({
@@ -118,7 +137,11 @@ function RunDetail({ id, onClose }: { id: string; onClose: () => void }) {
         <h2>
           {r.scenarioId}@{r.scenarioVersion} <span className={`badge run-${r.status}`} data-testid="run-status">{r.status}</span>
         </h2>
-        <button onClick={onClose}>Закрыть</button>
+        <span className="actions">
+          {CANCELLABLE.includes(r.status) && <button onClick={() => actions.cancel(r.id)}>Cancel</button>}
+          {r.status === "RECOVERY_PENDING" && <button onClick={() => actions.resume(r.id)}>Resume</button>}
+          <button onClick={onClose}>Закрыть</button>
+        </span>
       </header>
       <p className="muted">
         run {r.id} · создан {new Date(r.createdAt).toLocaleTimeString()}
@@ -137,6 +160,7 @@ function RunDetail({ id, onClose }: { id: string; onClose: () => void }) {
                 {MARK[s.status]} {s.sequence}. {s.stepId}
               </b>
               {s.mutating && <span className="tag">mutating</span>}
+              {r.checkpoints.some((c) => c.sequence === s.sequence) && <span className="tag checkpoint">checkpoint</span>}
               <span>{s.durationMs} мс</span>
             </div>
             {s.error && <pre className="error">{s.error}</pre>}

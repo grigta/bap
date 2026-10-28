@@ -7,5 +7,5 @@ export async function evidence(page: Page, stage: string, name: string): Promise
   if (!process.env.BAP_EVIDENCE) return;
   const dir = resolve(import.meta.dirname, "../../docs/evidence", stage);
   mkdirSync(dir, { recursive: true });
-  await page.screenshot({ path: `${dir}/${name}.png` });
+  await page.screenshot({ path: `${dir}/${name}.png`, fullPage: true });
 }

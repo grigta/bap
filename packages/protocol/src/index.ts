@@ -13,7 +13,15 @@ const event = { ...envelope, seq: z.number().int().positive() };
 export const agentHello = z.object({
   ...envelope,
   type: z.literal("agent.hello"),
-  payload: z.object({ agentVersion: z.string(), platform: z.string(), architecture: z.string() }),
+  payload: z.object({
+    agentVersion: z.string(),
+    platform: z.string(),
+    architecture: z.string(),
+    /** Runs executing right now on this agent (they survive a dropped connection). */
+    activeRuns: z.array(z.uuid()).default([]),
+    /** Runs that were executing when the agent process died; their sessions have been closed. */
+    interruptedRuns: z.array(z.uuid()).default([]),
+  }),
 });
 
 export const agentCapabilities = z.object({
@@ -47,7 +55,25 @@ export type StepRecordMessage = z.infer<typeof stepRecord>;
 
 const runId = { runId: z.uuid() };
 export const runAccepted = z.object({ ...event, type: z.literal("run.accepted"), payload: z.object(runId) });
-export const runStarted = z.object({ ...event, type: z.literal("run.started"), payload: z.object(runId) });
+export const runStarted = z.object({
+  ...event,
+  type: z.literal("run.started"),
+  payload: z.object({ ...runId, autoResume: z.boolean(), resumedAfter: z.string().nullable().default(null) }),
+});
+export const runCheckpoint = z.object({
+  ...event,
+  type: z.literal("run.checkpoint"),
+  payload: z.object({
+    ...runId,
+    sequence: z.number().int().positive(),
+    stepId: z.string(),
+    nextStepId: z.string().nullable(),
+    nextStepMutating: z.boolean(),
+    autoResume: z.boolean(),
+    createdAt: z.iso.datetime(),
+  }),
+});
+export const runCancelled = z.object({ ...event, type: z.literal("run.cancelled"), payload: z.object({ ...runId, afterStep: z.string().nullable() }) });
 export const runProgress = z.object({ ...event, type: z.literal("run.progress"), payload: z.object({ ...runId, step: stepRecord }) });
 export const runCompleted = z.object({ ...event, type: z.literal("run.completed"), payload: z.object(runId) });
 export const runFailed = z.object({
@@ -86,6 +112,8 @@ export const agentMessage = z.discriminatedUnion("type", [
   runProgress,
   runCompleted,
   runFailed,
+  runCheckpoint,
+  runCancelled,
 ]);
 export type AgentMessage = z.infer<typeof agentMessage>;
 /** Messages that are logged and deduplicated by (epoch, sequence). */
@@ -111,6 +139,8 @@ export const runAssign = z.object({
     profileExternalId: z.string(),
     input: z.unknown(),
     timeoutMs: z.number().int().positive(),
+    /** Continue from the agent's last checkpoint instead of starting over. */
+    resume: z.boolean().default(false),
   }),
 });
 export type RunAssignPayload = z.infer<typeof runAssign>["payload"];
@@ -118,7 +148,10 @@ export type RunAssignPayload = z.infer<typeof runAssign>["payload"];
 /** The operator drained the agent: it keeps its runs but gets no new ones. */
 export const agentDrain = z.object({ ...envelope, type: z.literal("agent.drain"), payload: z.object({ draining: z.boolean() }) });
 
-export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain]);
+/** Stop at the next step boundary; a mutating step in progress finishes and is verified first. */
+export const runCancel = z.object({ ...envelope, type: z.literal("run.cancel"), payload: z.object({ runId: z.uuid() }) });
+
+export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain, runCancel]);
 export type ServerMessage = z.infer<typeof serverMessage>;
 
 /** Builds a message with a fresh envelope. */

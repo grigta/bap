@@ -76,6 +76,8 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
   /** Releases a reservation that never turned into a running browser. */
   const unreserve = async (runId: string, profileId: string, reason: string) => {
     await transitionRun(runId, ["ASSIGNED"], "QUEUED", reason);
+    // Close this attempt so that the accept timeout of the next one starts from its own assignment.
+    await db.updateTable("run_assignments").set({ status: "ABANDONED", finished_at: new Date() }).where("run_id", "=", runId).where("finished_at", "is", null).execute();
     await moveProfile(db, profileId, ["RESERVED"], "AVAILABLE", { active_run_id: null });
     await db.deleteFrom("profile_leases").where("run_id", "=", runId).execute();
   };
@@ -85,7 +87,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       .selectFrom("runs")
       .innerJoin("profiles", "profiles.id", "runs.profile_id")
       .innerJoin("scenario_versions", (j) => j.onRef("scenario_versions.scenario_id", "=", "runs.scenario_id").onRef("scenario_versions.version", "=", "runs.scenario_version"))
-      .select(["runs.agent_id", "runs.profile_id", "runs.input", "runs.timeout_ms", "runs.scenario_id", "runs.scenario_version", "scenario_versions.sha256", "profiles.external_profile_id"])
+      .select(["runs.agent_id", "runs.profile_id", "runs.input", "runs.timeout_ms", "runs.scenario_id", "runs.scenario_version", "runs.resume_requested", "scenario_versions.sha256", "profiles.external_profile_id"])
       .where("runs.id", "=", runId)
       .executeTakeFirstOrThrow();
     const sent = fleet.send(
@@ -98,6 +100,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
           profileExternalId: run.external_profile_id,
           input: run.input,
           timeoutMs: run.timeout_ms,
+          resume: run.resume_requested,
         },
       }),
     );
@@ -203,6 +206,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       .select(["runs.id", "runs.profile_id"])
       .where("runs.status", "=", "ASSIGNED")
       .where("run_assignments.acknowledged_at", "is", null)
+      .where("run_assignments.finished_at", "is", null)
       .where("run_assignments.assigned_at", "<", new Date(now.getTime() - config.acceptTimeoutMs))
       .execute();
     for (const r of stale) await unreserve(r.id, r.profile_id, `agent did not accept within ${config.acceptTimeoutMs} ms`);
@@ -222,6 +226,17 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
         await transitionRun(l.run_id, ["ACCEPTED", "RUNNING", "CANCEL_REQUESTED"], "RECOVERY_PENDING", "lease expired: no heartbeat from the agent");
     }
 
+    // autoResume (REQ-RUN-007): once the owner is back and the profile is confirmed idle, continue by itself.
+    const recoverable = await db
+      .selectFrom("runs")
+      .leftJoin("profile_leases", "profile_leases.run_id", "runs.id")
+      .select(["runs.id", "runs.agent_id"])
+      .where("runs.status", "=", "RECOVERY_PENDING")
+      .where("runs.auto_resume", "=", true)
+      .where("profile_leases.run_id", "is", null)
+      .execute();
+    for (const r of recoverable) if (fleet.isConnected(r.agent_id)) await requestResume(r.id, "autoResume");
+
     const verifying = await db
       .selectFrom("profile_leases")
       .innerJoin("profiles", "profiles.id", "profile_leases.profile_id")
@@ -239,6 +254,28 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     await schedule();
   }).catch((e) => console.error("scheduler tick failed", e)));
 
+  const isResume = async (runId: string) =>
+    (await db.selectFrom("run_transitions").select("id").where("run_id", "=", runId).where("reason", "like", "resume requested%").executeTakeFirst()) !== undefined;
+
+  /** RECOVERY_PENDING → QUEUED with the resume flag: the agent continues from its last checkpoint. */
+  const requestResume = async (runId: string, by: "operator" | "autoResume") => {
+    const last = await db.selectFrom("checkpoints").select(["sequence", "step_id"]).where("run_id", "=", runId).orderBy("sequence", "desc").executeTakeFirst();
+    const from = last ? `checkpoint ${last.sequence} (${last.step_id})` : "the start";
+    const moved = await transitionRun(runId, ["RECOVERY_PENDING"], "QUEUED", `resume requested by ${by} from ${from}`);
+    if (moved) await db.updateTable("runs").set({ resume_requested: true }).where("id", "=", runId).execute();
+    return moved;
+  };
+
+  /** Cancel (REQ-RUN-003): queued or stalled runs stop at once; running ones at the next step boundary. */
+  const cancel = async (runId: string): Promise<"cancelled" | "requested" | "conflict"> => {
+    if (await transitionRun(runId, ["QUEUED"], "CANCELLED", "cancelled by the operator before it started", { finished_at: new Date() })) return "cancelled";
+    if (await transitionRun(runId, ["RECOVERY_PENDING"], "CANCELLED", "cancelled by the operator during recovery", { finished_at: new Date() })) return "cancelled";
+    const run = await db.selectFrom("runs").select("agent_id").where("id", "=", runId).executeTakeFirst();
+    if (!run || !(await transitionRun(runId, ["ASSIGNED", "ACCEPTED", "RUNNING"], "CANCEL_REQUESTED", "cancel requested by the operator"))) return "conflict";
+    fleet.send(run.agent_id, message({ type: "run.cancel", payload: { runId } })); // resent when the agent reconnects
+    return "requested";
+  };
+
   const afterRun = async (runId: string, outcome: "release" | "review", lastError: string | null) => {
     const run = await db.selectFrom("runs").select("profile_id").where("id", "=", runId).executeTakeFirstOrThrow();
     await moveProfile(db, run.profile_id, ["IN_USE", "RESERVED"], "VERIFYING");
@@ -250,7 +287,27 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     await db.updateTable("run_assignments").set({ status: "FINISHED", finished_at: new Date() }).where("run_id", "=", runId).execute();
   };
 
-  fleet.handlers.onConnected = async () => void tick();
+  fleet.handlers.onConnected = async (agentId, report) => {
+    for (const runId of report.interruptedRuns) {
+      const run = await db.selectFrom("runs").select(["status", "profile_id", "agent_id"]).where("id", "=", runId).executeTakeFirst();
+      if (run?.agent_id !== agentId) continue;
+      if (await transitionRun(runId, ["CANCEL_REQUESTED"], "CANCELLED", "agent restarted while the cancel was pending", { finished_at: new Date() })) {
+        await moveProfile(db, run.profile_id, ["IN_USE", "RESERVED"], "VERIFYING");
+        continue;
+      }
+      // The browser died with the agent: the profile is checked before anything else uses it.
+      if (await transitionRun(runId, ["ASSIGNED", "ACCEPTED", "RUNNING"], "RECOVERY_PENDING", "agent restarted mid-run"))
+        await moveProfile(db, run.profile_id, ["IN_USE", "RESERVED"], "VERIFYING");
+    }
+    // A run the agent kept executing through a dropped connection is not lost.
+    for (const runId of report.activeRuns) {
+      const run = await db.selectFrom("runs").select("agent_id").where("id", "=", runId).executeTakeFirst();
+      if (run?.agent_id === agentId) await transitionRun(runId, ["RECOVERY_PENDING"], "RUNNING", "agent reports the run still executing");
+    }
+    const cancelling = await db.selectFrom("runs").select("id").where("agent_id", "=", agentId).where("status", "=", "CANCEL_REQUESTED").execute();
+    for (const r of cancelling) fleet.send(agentId, message({ type: "run.cancel", payload: { runId: r.id } }));
+    void tick();
+  };
   fleet.handlers.onHeartbeat = async (agentId) => {
     await db.updateTable("profile_leases").set({ expires_at: new Date(Date.now() + config.leaseTtlMs) }).where("owner_agent_id", "=", agentId).execute();
     void tick();
@@ -262,10 +319,32 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     switch (event.type) {
       case "run.accepted":
         if (await transitionRun(runId, ["ASSIGNED"], "ACCEPTED", "agent accepted")) await moveProfile(db, owner.profile_id, ["RESERVED"], "IN_USE");
+        await db.updateTable("runs").set({ resume_requested: false }).where("id", "=", runId).execute();
         await db.updateTable("run_assignments").set({ status: "ACCEPTED", acknowledged_at: new Date() }).where("run_id", "=", runId).where("acknowledged_at", "is", null).execute();
         break;
-      case "run.started":
-        await transitionRun(runId, ["ACCEPTED"], "RUNNING", "agent started the scenario", { started_at: new Date() });
+      case "run.started": {
+        const { autoResume, resumedAfter } = event.payload;
+        await db.updateTable("runs").set({ auto_resume: autoResume }).where("id", "=", runId).execute();
+        const reason = resumedAfter ? `resumed after checkpoint ${resumedAfter}` : (await isResume(runId)) ? "resumed from the start (no checkpoint)" : "agent started the scenario";
+        await transitionRun(runId, ["ACCEPTED"], "RUNNING", reason, { started_at: new Date() });
+        break;
+      }
+      case "run.checkpoint": {
+        const c = event.payload;
+        await db
+          .insertInto("checkpoints")
+          .values({ run_id: runId, sequence: c.sequence, step_id: c.stepId, next_step_id: c.nextStepId, next_step_mutating: c.nextStepMutating, auto_resume: c.autoResume, created_at: c.createdAt })
+          .onConflict((oc) => oc.columns(["run_id", "sequence"]).doNothing())
+          .execute();
+        break;
+      }
+      case "run.cancelled":
+        if (
+          await transitionRun(runId, ["CANCEL_REQUESTED", "ACCEPTED", "RUNNING", "RECOVERY_PENDING"], "CANCELLED", event.payload.afterStep ? `cancelled after step ${event.payload.afterStep}` : "cancelled before the first step", {
+            finished_at: new Date(),
+          })
+        )
+          await afterRun(runId, "release", null);
         break;
       case "run.progress": {
         const step = event.payload.step;
@@ -291,11 +370,12 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       }
       case "run.completed":
         // RECOVERY_PENDING: the lease expired but the agent finished after all.
-        if (await transitionRun(runId, ["RUNNING", "RECOVERY_PENDING"], "SUCCEEDED", "all steps passed", { finished_at: new Date() })) await afterRun(runId, "release", null);
+        if (await transitionRun(runId, ["RUNNING", "RECOVERY_PENDING", "CANCEL_REQUESTED"], "SUCCEEDED", "all steps passed", { finished_at: new Date() })) await afterRun(runId, "release", null);
         break;
       case "run.failed": {
         const { status, errorCode, message: text } = event.payload;
-        const moved = await transitionRun(runId, ["ACCEPTED", "RUNNING", "RECOVERY_PENDING"], status, `${errorCode}: ${text}`, { error_code: errorCode, error_message: text, finished_at: new Date() });
+        // ASSIGNED: the agent may refuse an assignment outright (e.g. DUPLICATE_ASSIGNMENT).
+        const moved = await transitionRun(runId, ["ASSIGNED", "ACCEPTED", "RUNNING", "RECOVERY_PENDING", "CANCEL_REQUESTED"], status, `${errorCode}: ${text}`, { error_code: errorCode, error_message: text, finished_at: new Date() });
         if (moved) await afterRun(runId, status === "NEEDS_REVIEW" ? "review" : "release", `run ${runId}: ${text}`);
         break;
       }
@@ -307,6 +387,8 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
   return {
     transitionRun,
     reserve,
+    requestResume: (runId: string) => requestResume(runId, "operator").then(async (ok) => (void tick(), ok)),
+    cancel,
     tick,
     start() {
       timer ??= setInterval(() => void tick(), config.tickMs);

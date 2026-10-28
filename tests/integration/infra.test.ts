@@ -3,6 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import pg from "pg";
 import * as Minio from "minio";
+import { s3Store } from "../../apps/control-plane/src/storage.ts";
 
 let postgres: StartedPostgreSqlContainer;
 let s3: StartedTestContainer;
@@ -44,4 +45,14 @@ test("S3 container stores and returns an object", async () => {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(chunk as Buffer);
   expect(Buffer.concat(chunks).toString()).toBe("bap");
+});
+
+test("the Control Plane S3 store creates its bucket, stores objects and reports missing ones", async () => {
+  const opts = { endpoint: `http://${s3.getHost()}:${s3.getMappedPort(8333)}`, bucket: "bap-artifacts", accessKeyId: "test", secretAccessKey: "test" };
+  const store = await s3Store(opts);
+  await store.put("runs/r1/01-step.png", Buffer.from([0x89, 0x50, 0x4e, 0x47]), "image/png");
+  expect(await store.get("runs/r1/01-step.png")).toEqual({ body: Buffer.from([0x89, 0x50, 0x4e, 0x47]), contentType: "image/png" });
+  expect(await store.get("runs/r1/missing.png")).toBeNull();
+  // Opening the store again finds the existing bucket instead of failing.
+  expect(await (await s3Store(opts)).get("runs/r1/01-step.png")).not.toBeNull();
 });

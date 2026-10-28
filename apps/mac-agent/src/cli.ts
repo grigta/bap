@@ -17,7 +17,7 @@ const USAGE = `usage:
   bap-agent install-launchagent [--load]
   bap-agent run <scenario-id> --profile <id> [--input '<json>'] [--version x.y.z]
                 [--provider ls|local] [--bundles dist/scenarios] [--artifacts artifacts]`;
-const EXIT: Record<RunStatus, number> = { SUCCEEDED: 0, FAILED: 1, NEEDS_REVIEW: 2 };
+const EXIT: Record<RunStatus, number> = { SUCCEEDED: 0, FAILED: 1, NEEDS_REVIEW: 2, CANCELLED: 4 };
 const EXIT_USAGE = 3;
 const lsApiUrl = process.env.BAP_LS_API_URL ?? "http://127.0.0.1:41234";
 

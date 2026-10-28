@@ -30,6 +30,8 @@ export interface BrowserProvider {
   listProfiles(): Promise<ProfileSummary[]>;
   /** Whether the profile exists and no browser holds it: what VERIFYING checks after a run. */
   profileState(profileId: string): Promise<ProfileState>;
+  /** Stops whatever browser still holds the profile, e.g. after the agent crashed mid-run. */
+  forceRelease(profileId: string): Promise<void>;
   openSession(profileId: string, runId: string): Promise<BrowserSession>;
 }
 
