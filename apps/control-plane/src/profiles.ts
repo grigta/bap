@@ -23,6 +23,9 @@ const profileSchema = z.object({
   activeRunId: z.string().nullable(),
   lastError: z.string().nullable(),
   lastVerifiedAt: z.string().nullable(),
+  /** Successful warm-up sessions, and failed ones in a row (PRD §17). */
+  warmups: z.number(),
+  warmupFailures: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -58,13 +61,15 @@ export function registerProfiles(app: App, db: Db, fleet: Fleet, config: FleetCo
         activeRunId: r.active_run_id,
         lastError: r.last_error,
         lastVerifiedAt: r.last_verified_at?.toISOString() ?? null,
+        warmups: r.warmups,
+        warmupFailures: r.warmup_failures,
         createdAt: r.created_at.toISOString(),
         updatedAt: r.updated_at.toISOString(),
       };
     });
   };
 
-  const transition = (id: string, from: ProfileStatus[], to: ProfileStatus, extra: { last_error?: string | null } = {}) => moveProfile(db, id, from, to, extra);
+  const transition = (id: string, from: ProfileStatus[], to: ProfileStatus, extra: { last_error?: string | null; warmup_failures?: number } = {}) => moveProfile(db, id, from, to, extra);
 
   const conflict = async (request: FastifyRequest, reply: FastifyReply, id: string, action: string) => {
     const [profile] = await load(id);
@@ -179,7 +184,7 @@ export function registerProfiles(app: App, db: Db, fleet: Fleet, config: FleetCo
     ["release-review", ["NEEDS_REVIEW"], "AVAILABLE"],
   ] as const) {
     app.post(`/api/v1/profiles/:id/${action}`, { preHandler: operatorAuth, schema: { params: idParams, response: { 200: profileSchema, ...responses } } }, async (request, reply) => {
-      const row = await transition(request.params.id, [...from], to, action === "release-review" ? { last_error: null } : {});
+      const row = await transition(request.params.id, [...from], to, action === "release-review" ? { last_error: null, warmup_failures: 0 } : {});
       if (!row) return conflict(request, reply, request.params.id, action);
       return (await load(row.id))[0]!;
     });

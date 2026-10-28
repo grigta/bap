@@ -14,6 +14,7 @@ import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 import { fakeShopModel } from "../support/fake-model.ts";
 import { outageProxy } from "../support/outage-proxy.ts";
 import { E2E_OPERATOR, STACK_FLEET, STACK_PORTS, STACK_SCHEDULER } from "./stack-config.ts";
+import { withoutWarmup } from "../support/no-warmup.ts";
 
 const postgres = await new PostgreSqlContainer("postgres:17-alpine").start();
 // The Control Plane reaches PostgreSQL through a proxy, so fault tests can take the database away.
@@ -23,6 +24,7 @@ pgUrl.host = `127.0.0.1:${await pgProxy.listen()}`;
 const db = createDb(pgUrl.toString());
 await migrateToLatest(db);
 await ensureOperator(db, E2E_OPERATOR.login, E2E_OPERATOR.password);
+await withoutWarmup(db);
 
 // One store for the whole stack: bundles and screenshots survive Control Plane restarts in tests.
 const store = memoryStore();

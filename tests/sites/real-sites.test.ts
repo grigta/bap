@@ -16,6 +16,7 @@ import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
 import { claudeCliModel } from "../../apps/control-plane/src/llm/claude-cli.ts";
 import type { Model } from "../../apps/control-plane/src/llm/model.ts";
 import { memoryStore } from "../../apps/control-plane/src/storage.ts";
+import { withoutWarmup } from "../support/no-warmup.ts";
 
 interface Task {
   id: string;
@@ -101,6 +102,7 @@ beforeAll(async () => {
   db = createDb(postgres.getConnectionUri());
   await migrateToLatest(db);
   await ensureOperator(db, "operator", "pw");
+  await withoutWarmup(db);
   const claude = claudeCliModel({ cwd: join(work, "llm"), models: { record: process.env.BAP_LLM_RECORD_MODEL ?? "opus", heal: process.env.BAP_LLM_HEAL_MODEL ?? "sonnet" } });
   // Every prompt is kept to check that secrets never reach the model (REQ-DOM-003).
   const model: Model = { ask: (req) => (prompts.push(req.prompt), claude.ask(req)) };

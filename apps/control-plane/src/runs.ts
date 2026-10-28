@@ -26,8 +26,8 @@ const runSchema = z.object({
   scenarioId: z.string(),
   /** null while a recording has not produced its version. */
   scenarioVersion: z.string().nullable(),
-  /** record: a recording of a recipe (PRD §16). */
-  kind: z.enum(["run", "record"]),
+  /** record: a recording of a recipe (PRD §16); farm: a warm-up session of the profile (PRD §17). */
+  kind: z.enum(["run", "record", "farm"]),
   profileId: z.string(),
   agentId: z.string(),
   status: z.enum(RUN_STATUSES),
@@ -132,7 +132,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
 
   // ---- runs ----
 
-  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string | null; kind: "run" | "record"; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; queue_reason: string | null; auto_resume: boolean | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
+  const viewRun = (r: { id: string; scenario_id: string; scenario_version: string | null; kind: "run" | "record" | "farm"; profile_id: string; agent_id: string; status: RunStatus; input: unknown; timeout_ms: number; error_code: string | null; error_message: string | null; queue_reason: string | null; auto_resume: boolean | null; created_at: Date; started_at: Date | null; finished_at: Date | null }) => ({
     id: r.id,
     scenarioId: r.scenario_id,
     scenarioVersion: r.scenario_version,

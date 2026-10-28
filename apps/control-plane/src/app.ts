@@ -13,6 +13,7 @@ import { type Coordinator, type CoordinatorHooks, DEFAULT_SCHEDULER, type Schedu
 import { DEFAULT_FLEET, type FleetConfig, registerFleet } from "./fleet.ts";
 import { DEFAULT_LIMITS, type LlmLimits, gatedModel } from "./llm/gate.ts";
 import type { Model } from "./llm/model.ts";
+import { registerFarming } from "./farming.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerRecipes } from "./recipes.ts";
 import { registerRuns } from "./runs.ts";
@@ -208,6 +209,7 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     const hooks: CoordinatorHooks = {};
     const coordinator = createCoordinator(db, agents, fleetConfig, { ...DEFAULT_SCHEDULER, ...scheduler }, hooks);
     registerRuns(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth });
+    registerFarming(scoped as unknown as App, { db, coordinator, operatorAuth: auth });
     const gated = model && gatedModel(db, model, { ...DEFAULT_LIMITS, ...llmLimits }, (entry) => app.log.info(entry, "llm call"));
     hooks.onSucceeded = registerRecipes(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, model: gated }).onSucceeded;
     internals.coordinator = coordinator;

@@ -50,6 +50,17 @@ export interface Profile {
   activeRunId: string | null;
   lastError: string | null;
   lastVerifiedAt: string | null;
+  /** Successful warm-up sessions, and failed ones in a row. */
+  warmups: number;
+  warmupFailures: number;
+}
+
+export interface FarmingSettings {
+  queries: string[];
+  requiredWarmups: number;
+  sites: number;
+  dwellSeconds: number;
+  searchUrl: string;
 }
 
 export const RUN_STATUSES = ["QUEUED", "ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED", "RECOVERY_PENDING", "SUCCEEDED", "FAILED", "NEEDS_REVIEW", "CANCELLED"] as const;
@@ -62,8 +73,9 @@ export interface Run {
   scenarioId: string;
   /** null while a recording has not produced its version. */
   scenarioVersion: string | null;
-  /** record: a recipe being recorded. */
-  kind: "run" | "record";
+  /** record: a recipe being recorded; farm: a warm-up session of the profile. */
+  kind: "run" | "record" | "farm";
+  input: unknown;
   profileId: string;
   agentId: string;
   status: RunStatus;

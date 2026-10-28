@@ -1,6 +1,7 @@
 import { type Db, type RunStatus, isDatabaseUnavailable } from "@bap/database";
 import { sql } from "kysely";
 import { type RunEvent, message } from "@bap/protocol";
+import { WARMUP_FAILURES_TO_REVIEW, farmingSettings, needsWarmProfile, queueWarmup } from "./farming.ts";
 import { AgentRequestError, type Fleet, type FleetConfig, connection } from "./fleet.ts";
 import { moveProfile } from "./profile-states.ts";
 
@@ -23,7 +24,9 @@ export type QueueReason =
   | "AGENT_AT_CAPACITY"
   | "PROFILE_BUSY"
   | "PROFILE_NEEDS_REVIEW"
-  | "PROFILE_DISABLED";
+  | "PROFILE_DISABLED"
+  /** A recipe waits until its profile has had enough warm-up sessions (PRD §17). */
+  | "PROFILE_WARMING";
 
 const ACTIVE_RUN: RunStatus[] = ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED"];
 
@@ -114,7 +117,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
         type: "run.assign",
         payload: {
           runId,
-          scenario: { id: run.scenario_id, version: version ?? "recording", sha256, kind: run.scenario_kind },
+          scenario: { id: run.scenario_id, version: version ?? (run.kind === "farm" ? "builtin" : "recording"), sha256, kind: run.scenario_kind },
           ...(run.kind === "record" && { recording: { startUrl: run.start_url!, secretInputs: inputs.filter((i) => i.secret).map((i) => i.name) } }),
           profileExternalId: run.external_profile_id,
           input: run.input,
@@ -126,6 +129,25 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     if (!sent) await unreserve(runId, run.profile_id, "agent disconnected before the assignment was sent");
   };
 
+  /** One warm-up at a time per profile: a new one is queued only when none is waiting or running. */
+  const warmUp = async (profileId: string, agentId: string, done: number, required: number) => {
+    const pending = await db.selectFrom("runs").select("id").where("profile_id", "=", profileId).where("kind", "=", "farm").where("status", "not in", ["SUCCEEDED", "FAILED", "CANCELLED", "NEEDS_REVIEW"]).executeTakeFirst();
+    if (!pending) await queueWarmup(db, { id: profileId, agent_id: agentId }, await farmingSettings(db), `warm-up ${done + 1} of ${required} before a recipe`);
+  };
+
+  /** Counts a finished warm-up; the third failure in a row sends the profile to review (PRD §17.3). */
+  const countWarmup = async (runId: string, ok: boolean): Promise<boolean> => {
+    const run = await db.selectFrom("runs").select(["kind", "profile_id"]).where("id", "=", runId).executeTakeFirstOrThrow();
+    if (run.kind !== "farm") return false;
+    const counted = await db
+      .updateTable("profiles")
+      .set(ok ? { warmups: sql`warmups + 1`, warmup_failures: 0 } : { warmup_failures: sql`warmup_failures + 1` })
+      .where("id", "=", run.profile_id)
+      .returning("warmup_failures")
+      .executeTakeFirstOrThrow();
+    return !ok && counted.warmup_failures >= WARMUP_FAILURES_TO_REVIEW;
+  };
+
   /** Walks the queue oldest first and assigns what the §7.4 criteria allow; records why the rest waits. */
   const schedule = async () => {
     const queued = await db
@@ -133,11 +155,16 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       .innerJoin("profiles", "profiles.id", "runs.profile_id")
       .innerJoin("agents", "agents.id", "runs.agent_id")
       .leftJoin("agent_capabilities", "agent_capabilities.agent_id", "agents.id")
+      .innerJoin("scenarios", "scenarios.id", "runs.scenario_id")
       .select([
         "runs.id",
         "runs.agent_id",
+        "runs.profile_id",
+        "runs.kind",
         "runs.queue_reason",
+        "scenarios.kind as scenario_kind",
         "profiles.status as profile_status",
+        "profiles.warmups",
         "agents.status as agent_status",
         "agents.last_seen_at",
         "agents.last_heartbeat",
@@ -150,6 +177,8 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     if (queued.length === 0) return;
     const active = await db.selectFrom("runs").select(["agent_id", db.fn.countAll<string>().as("n")]).where("status", "in", ACTIVE_RUN).groupBy("agent_id").execute();
     const busy = new Map(active.map((a) => [a.agent_id, Number(a.n)]));
+    const { requiredWarmups } = await farmingSettings(db);
+    const warming = new Set<string>();
 
     for (const r of queued) {
       const reason: QueueReason | null =
@@ -165,11 +194,17 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
                   ? "PROFILE_NEEDS_REVIEW"
                   : r.profile_status === "DISABLED"
                     ? "PROFILE_DISABLED"
-                    : r.profile_status !== "AVAILABLE"
+                    : needsWarmProfile(r.kind, r.scenario_kind) && r.warmups < requiredWarmups
+                      ? "PROFILE_WARMING"
+                      : r.profile_status !== "AVAILABLE"
                       ? "PROFILE_BUSY"
                       : (busy.get(r.agent_id) ?? 0) >= effectiveLimit(r)
                         ? "AGENT_AT_CAPACITY"
                         : null;
+      if (reason === "PROFILE_WARMING" && !warming.has(r.profile_id)) {
+        warming.add(r.profile_id);
+        await warmUp(r.profile_id, r.agent_id, r.warmups, requiredWarmups);
+      }
       if (reason === null && (await reserve(r.id))) {
         busy.set(r.agent_id, (busy.get(r.agent_id) ?? 0) + 1);
         await send(r.id);
@@ -410,6 +445,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       case "run.completed":
         // RECOVERY_PENDING: the lease expired but the agent finished after all.
         if (await transitionRun(runId, ["RUNNING", "RECOVERY_PENDING", "CANCEL_REQUESTED"], "SUCCEEDED", "all steps passed", { finished_at: new Date() })) {
+          await countWarmup(runId, true);
           await afterRun(runId, "release", null);
           await hooks.onSucceeded?.(runId).catch((e) => console.error(`after run ${runId} succeeded`, e));
         }
@@ -418,7 +454,10 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
         const { status, errorCode, message: text } = event.payload;
         // ASSIGNED: the agent may refuse an assignment outright (e.g. DUPLICATE_ASSIGNMENT).
         const moved = await transitionRun(runId, ["ASSIGNED", "ACCEPTED", "RUNNING", "RECOVERY_PENDING", "CANCEL_REQUESTED"], status, `${errorCode}: ${text}`, { error_code: errorCode, error_message: text, finished_at: new Date() });
-        if (moved) await afterRun(runId, status === "NEEDS_REVIEW" ? "review" : "release", `run ${runId}: ${text}`);
+        if (moved) {
+          const giveUp = await countWarmup(runId, false);
+          await afterRun(runId, status === "NEEDS_REVIEW" || giveUp ? "review" : "release", giveUp ? `warm-up failed ${WARMUP_FAILURES_TO_REVIEW} times in a row; last: ${errorCode}: ${text}` : `run ${runId}: ${text}`);
+        }
         break;
       }
     }

@@ -17,6 +17,7 @@ import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 import { type FakeModel, fakeShopModel } from "../support/fake-model.ts";
 import { SHOP_INPUT, shapeshiftRecipe } from "../support/shapeshift-recipe.ts";
 import { startTestSite } from "../support/test-site.ts";
+import { withoutWarmup } from "../support/no-warmup.ts";
 
 const FLEET = { heartbeatIntervalMs: 200, suspectAfterMs: 1000, offlineAfterMs: 2000, enrollmentTtlMs: 60_000 };
 const DAILY_CALLS = 400;
@@ -71,6 +72,7 @@ beforeAll(async () => {
   db = createDb(postgres.getConnectionUri());
   await migrateToLatest(db);
   await ensureOperator(db, "operator", "pw");
+  await withoutWarmup(db);
   model = fakeShopModel();
   app = buildApp({ db, store: memoryStore(), secureCookies: false, fleet: FLEET, model, llmLimits: { recordCallsPerRun: 40, healCallsPerRun: 20, callsPerDay: DAILY_CALLS } });
   const baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });

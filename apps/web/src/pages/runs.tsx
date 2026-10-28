@@ -28,7 +28,7 @@ const RESOLUTION: Record<StepResolution, [string, string]> = {
   confirmed: ["подтверждён", "bg-wait-soft text-wait"],
   recorded: ["записан", "bg-idle-soft text-idle"],
 };
-const runTitle = (r: Run) => `${r.scenarioId}@${r.scenarioVersion ?? "запись"}`;
+const runTitle = (r: Run) => (r.kind === "farm" ? `Прогрев: ${(r.input as { query?: string }).query ?? ""}` : `${r.scenarioId}@${r.scenarioVersion ?? "запись"}`);
 
 function NewRun({ onCreated }: { onCreated: (id: string) => void }) {
   const queryClient = useQueryClient();
@@ -183,8 +183,8 @@ function Filmstrip({ run, steps }: { run: RunDetail; steps: Step[] }) {
                     )}
                   </div>
                 )}
-                {/* Why it was healed, and what proved a step that changed data (REQ-DOM-012, REQ-DOM-014). */}
-                {s.note && (s.resolution === "healed" || s.mutating) && (
+                {/* Why it was healed, what proved a step that changed data (REQ-DOM-012, REQ-DOM-014), where a warm-up went (REQ-FARM-001). */}
+                {s.note && (s.resolution === "healed" || s.mutating || run.kind === "farm") && (
                   <p data-testid="step-note" className="text-[11px] text-muted-foreground">
                     {s.note}
                   </p>

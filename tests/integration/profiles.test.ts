@@ -72,7 +72,7 @@ describe("import", () => {
     expect(created.statusCode).toBe(201);
     const body = created.json();
     expect(Object.keys(body).sort()).toEqual(
-      ["activeRunId", "agentConnection", "agentId", "agentName", "assignable", "createdAt", "externalProfileId", "id", "lastError", "lastVerifiedAt", "name", "provider", "status", "updatedAt"].sort(),
+      ["activeRunId", "agentConnection", "agentId", "agentName", "assignable", "createdAt", "externalProfileId", "id", "lastError", "lastVerifiedAt", "name", "provider", "status", "updatedAt", "warmupFailures", "warmups"].sort(),
     );
     expect(body).toMatchObject({ provider: "local-chromium", externalProfileId: "shop-1", name: "Shop 1", agentName: "mac-1", status: "AVAILABLE", assignable: true });
     expect((await api("GET", `/api/v1/agents/${agentId}/provider-profiles`)).json()).toContainEqual({ id: "shop-1", name: "shop-1", importedAs: body.id });

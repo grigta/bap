@@ -4,3 +4,4 @@ export {
   type Postcondition, RECIPE_ACTIONS, type RequestProof, matchesProof, pathPattern, requestProofSchema, statusClass, type Recipe, type RecipeInput, type RecipeStep, fingerprintSchema, postconditionSchema, recipeInputSchema,
   recipeJsonSchema, recipeSchema, recipeStepSchema, secretValues,
 } from "./schema.ts";
+export { type FarmInput, FarmError, dwell, farmInputSchema, farmScenario, pickResults } from "./farm.ts";

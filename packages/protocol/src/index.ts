@@ -155,7 +155,7 @@ export const runAssign = z.object({
   payload: z.object({
     runId: z.uuid(),
     /** bundle: JS module; recipe: recipe JSON. Both are fetched from the bundle route and checked by sha256. */
-    scenario: z.object({ id: z.string(), version: z.string(), sha256: z.string(), kind: z.enum(["bundle", "recipe"]).default("bundle") }),
+    scenario: z.object({ id: z.string(), version: z.string(), sha256: z.string(), kind: z.enum(["bundle", "recipe", "farm"]).default("bundle") }),
     /** Set for a recording: the agent explores the site with the server instead of running a scenario. */
     recording: z.object({ startUrl: z.url(), secretInputs: z.array(z.string()) }).optional(),
     profileExternalId: z.string(),

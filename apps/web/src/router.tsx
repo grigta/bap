@@ -17,6 +17,7 @@ const RunsPage = page(() => import("@/pages/runs"), "RunsPage");
 const ReviewPage = page(() => import("@/pages/review"), "ReviewPage");
 const RecipesPage = page(() => import("@/pages/recipes"), "RecipesPage");
 const AuditPage = page(() => import("@/pages/audit"), "AuditPage");
+const FarmingPage = page(() => import("@/pages/farming"), "FarmingPage");
 
 /** Signed in: the panel; 401: the login form in place, so the URL (a deep link) survives signing in. */
 function Root() {
@@ -53,6 +54,7 @@ const recipeRoute = createRoute({
   validateSearch: z.object({ version: z.string().optional().catch(undefined) }),
   component: () => <RecipesPage recipeId={recipeRoute.useParams().recipeId} version={recipeRoute.useSearch().version} />,
 });
+const farmingRoute = createRoute({ getParentRoute: () => rootRoute, path: "/farming", component: FarmingPage });
 const reviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/review", component: ReviewPage });
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -61,7 +63,7 @@ const auditRoute = createRoute({
   component: () => <AuditPage denied={!!auditRoute.useSearch().denied} />,
 });
 
-const routeTree = rootRoute.addChildren([overviewRoute, agentsRoute, agentRoute, profilesRoute, runsRoute, runRoute, recipesRoute, recipeRoute, reviewRoute, auditRoute]);
+const routeTree = rootRoute.addChildren([overviewRoute, agentsRoute, agentRoute, profilesRoute, runsRoute, runRoute, recipesRoute, recipeRoute, farmingRoute, reviewRoute, auditRoute]);
 
 /** A page that throws shows what failed in place of the page, not a blank panel. */
 function PageError({ error, reset }: ErrorComponentProps) {

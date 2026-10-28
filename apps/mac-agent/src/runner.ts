@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BrowserProvider } from "@bap/browser-adapters";
 import { CheckpointStore, InputValidationError, type StepRecord, loadScenarioBundle, runRecording, runScenario } from "@bap/engine";
-import { type Healer, type RecordDecision, type Recorder, recipeScenario, recipeSchema, recordTask, secretValues } from "@bap/recipe";
+import { type Healer, type RecordDecision, type Recorder, farmInputSchema, farmScenario, recipeScenario, recipeSchema, recordTask, secretValues } from "@bap/recipe";
 import type { RunAssignPayload, RunEvent } from "@bap/protocol";
 import type { AgentStore } from "./agent-store.ts";
 
@@ -87,16 +87,7 @@ export async function executeRun(assign: RunAssignPayload, deps: RunnerDeps): Pr
   };
   try {
     if (assign.recording) return await record(assign, deps, artifactsDir, reportStep);
-    const manifest = await fetchBundle(assign, deps);
-    const scenario =
-      assign.scenario.kind === "recipe"
-        ? recipeScenario({
-            id: assign.scenario.id,
-            version: assign.scenario.version,
-            recipe: recipeSchema.parse(JSON.parse(readFileSync(join(dirname(manifest), (JSON.parse(readFileSync(manifest, "utf8")) as { file: string }).file), "utf8"))),
-            heal: healer(runId, deps),
-          })
-        : await loadScenarioBundle(manifest);
+    const scenario = assign.scenario.kind === "farm" ? farmScenario(farmInputSchema.parse(assign.input)) : await downloaded(assign, deps);
     const resumeFrom = assign.resume ? checkpoints.latest(runId) : null;
     emit({ type: "run.started", payload: { runId, autoResume: scenario.autoResume, resumedAfter: resumeFrom?.lastCompletedStepId ?? null } });
     const result = await runScenario({
@@ -138,6 +129,18 @@ export async function executeRun(assign: RunAssignPayload, deps: RunnerDeps): Pr
   } finally {
     checkpoints.close();
   }
+}
+
+/** A scenario that comes from the server: a code bundle or a recipe. A warm-up is built in and downloads nothing. */
+async function downloaded(assign: RunAssignPayload, deps: RunnerDeps) {
+  const manifest = await fetchBundle(assign, deps);
+  if (assign.scenario.kind !== "recipe") return loadScenarioBundle(manifest);
+  return recipeScenario({
+    id: assign.scenario.id,
+    version: assign.scenario.version,
+    recipe: recipeSchema.parse(JSON.parse(readFileSync(join(dirname(manifest), (JSON.parse(readFileSync(manifest, "utf8")) as { file: string }).file), "utf8"))),
+    heal: healer(assign.runId, deps),
+  });
 }
 
 /** Calls the agent API of the Control Plane with the agent key; errors carry the server's code. */

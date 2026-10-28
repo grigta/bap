@@ -13,7 +13,8 @@ import { PageHeader } from "@/layout/app-shell";
 import { api } from "@/lib/api";
 import { dateTime, shortId } from "@/lib/format";
 import { notifyError } from "@/lib/notify";
-import type { Agent, Profile } from "@/lib/types";
+import type { Agent, FarmingSettings, Profile } from "@/lib/types";
+import { warmth } from "@/pages/farming";
 
 type Action = "verify" | "disable" | "enable" | "release-review";
 const ACTIONS: { action: Action; label: string; from: Profile["status"][] }[] = [
@@ -87,6 +88,7 @@ export function ProfilesPage() {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const profiles = useQuery({ queryKey: ["profiles"], queryFn: () => api<Profile[]>("/profiles"), refetchInterval: POLL_MS });
+  const farming = useQuery({ queryKey: ["farming-settings"], queryFn: () => api<FarmingSettings>("/farming/settings") });
   const act = useMutation({
     mutationFn: ({ id, action }: { id: string; action: Action }) => api(`/profiles/${id}/${action}`, { method: "POST" }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["profiles"] }),
@@ -135,6 +137,14 @@ export function ProfilesPage() {
       ),
     }),
     c.accessor("status", { header: "Статус", cell: (i) => <StatusBadge status={i.getValue()} data-testid="profile-status" /> }),
+    c.accessor("warmups", {
+      header: "Прогрев",
+      cell: (i) => (
+        <span data-testid="profile-warmth" className="tabular-nums text-muted-foreground">
+          {warmth(i.row.original, farming.data)}
+        </span>
+      ),
+    }),
     c.accessor("activeRunId", {
       header: "Задание",
       cell: (i) => {

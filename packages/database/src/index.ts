@@ -74,8 +74,17 @@ export interface ProfilesTable {
   last_verified_at: Timestamp | null;
   /** Set when its agent is deleted. */
   archived_at: Timestamp | null;
+  /** Successful warm-up sessions, and failed ones in a row (PRD §17). */
+  warmups: Generated<number>;
+  warmup_failures: Generated<number>;
   created_at: Timestamp;
   updated_at: Timestamp;
+}
+
+export interface SettingsTable {
+  key: string;
+  value: unknown;
+  updated_at: Generated<Timestamp>;
 }
 
 export type RunStatus =
@@ -84,7 +93,7 @@ export type RunStatus =
 
 export interface ScenariosTable {
   id: string;
-  kind: Generated<"bundle" | "recipe">;
+  kind: Generated<"bundle" | "recipe" | "farm">;
   /** Recipes: the task in words, where it starts and its inputs. */
   goal: string | null;
   start_url: string | null;
@@ -111,7 +120,7 @@ export interface RunsTable {
   scenario_id: string;
   /** null only for a recording, which produces a version. */
   scenario_version: string | null;
-  kind: Generated<"run" | "record">;
+  kind: Generated<"run" | "record" | "farm">;
   profile_id: string;
   agent_id: string;
   input: unknown;
@@ -293,6 +302,7 @@ export interface Database {
   recordings: RecordingsTable;
   heals: HealsTable;
   llm_calls: LlmCallsTable;
+  settings: SettingsTable;
 }
 
 export type Db = Kysely<Database>;

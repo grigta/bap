@@ -27,7 +27,7 @@ export async function moveProfile(
   id: string,
   from: ProfileStatus[],
   to: ProfileStatus,
-  extra: { last_error?: string | null; active_run_id?: string | null; last_verified_at?: Date } = {},
+  extra: { last_error?: string | null; active_run_id?: string | null; last_verified_at?: Date; warmup_failures?: number } = {},
 ): Promise<{ id: string; agent_id: string; external_profile_id: string } | undefined> {
   for (const f of from) if (!canMoveProfile(f, to)) throw new IllegalProfileTransition(`profile transition ${f} → ${to} is not allowed`);
   return db
