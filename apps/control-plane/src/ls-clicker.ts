@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@bap/database";
-import { DONE_STATUSES, type LsClickerState, lsClickerState, statusColumn } from "@bap/protocol";
+import { DONE_STATUSES, type LsClickerState, lsClickerState, numberColumn, statusColumn } from "@bap/protocol";
 import type { preHandlerAsyncHookHandler } from "fastify";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -26,6 +26,8 @@ const idParams = z.object({ id: z.uuid() });
  */
 const flowSchema = z.array(z.object({ key: z.string().min(1), label: z.string().min(1), aliases: z.array(z.string()), action: z.string().default(""), fields: z.array(z.string()).default([]) })).max(100);
 const FLOW_KEY = "ls_clicker_flow";
+/** After an automatic start, heartbeats that may predate the run are not taken as «idle». */
+const AUTO_SETTLE_MS = 15_000;
 const buildSchema = z.object({ sha256: z.string(), sizeBytes: z.number(), uploadedAt: z.string(), uploadedBy: z.string().nullable() });
 type Build = z.infer<typeof buildSchema>;
 /** The agent's codes as HTTP: a run in progress is a conflict, an agent away is unavailable, the rest a bad gateway. */
@@ -54,10 +56,10 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
   };
   /** Agents that run LS Clicker, with their last reported state. */
   const macs = async () => {
-    const rows = await db.selectFrom("agents").select(["id", "name", "model", "last_seen_at", "last_heartbeat", "status"]).where("deleted_at", "is", null).where("status", "!=", "REVOKED").orderBy("name").execute();
+    const rows = await db.selectFrom("agents").select(["id", "name", "model", "lsc_auto", "last_seen_at", "last_heartbeat", "status"]).where("deleted_at", "is", null).where("status", "!=", "REVOKED").orderBy("name").execute();
     return rows.flatMap((r) => {
       const state = lsClickerState.safeParse((r.last_heartbeat as { lsClicker?: unknown } | null)?.lsClicker ?? null);
-      return state.success && state.data ? [{ agentId: r.id, name: r.name, model: r.model, connection: connection(r.last_seen_at, fleetConfig), state: state.data }] : [];
+      return state.success && state.data ? [{ agentId: r.id, name: r.name, model: r.model, auto: r.lsc_auto, connection: connection(r.last_seen_at, fleetConfig), state: state.data }] : [];
     });
   };
 
@@ -109,6 +111,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     // Not awaited: an agent request must never be awaited inside its own socket handler.
     void rollout(agentId, state.data).catch((e) => app.log.error(e, "ls-clicker rollout"));
     void syncOutput(agentId, state.data).catch((e) => app.log.error(e, "ls-clicker output sync"));
+    void autoRun(agentId, state.data).catch((e) => app.log.error(e, "ls-clicker auto run"));
   };
 
   // ---- builds ----
@@ -157,7 +160,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
   });
 
   // ---- overview ----
-  const macView = z.object({ agentId: z.string(), name: z.string(), model: z.string().nullable(), connection: z.string(), state: lsClickerState.unwrap(), sent: z.number(), processed: z.number() });
+  const macView = z.object({ agentId: z.string(), name: z.string(), model: z.string().nullable(), auto: z.boolean(), connection: z.string(), state: lsClickerState.unwrap(), sent: z.number(), processed: z.number() });
   app.get(
     "/api/v1/ls-clicker",
     { preHandler: operatorAuth, schema: { response: { 200: z.object({ build: buildSchema.nullable(), macs: z.array(macView), unsent: z.number() }), 401: errorSchema } } },
@@ -202,6 +205,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     const imp = await db.selectFrom("pipeline_import").select(["id", "columns", "lsc_from"]).orderBy("created_at", "desc").executeTakeFirst();
     if (!imp) return [];
     const status = statusColumn(imp.columns as string[]);
+    const number = numberColumn(imp.columns as string[]);
     return db
       .selectFrom("pipeline_rows")
       .leftJoin("lsclicker_queue", (j) => j.onRef("lsclicker_queue.import_id", "=", "pipeline_rows.import_id").onRef("lsclicker_queue.row_n", "=", "pipeline_rows.n"))
@@ -212,6 +216,9 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       .where("pipeline_rows.n", ">=", imp.lsc_from ?? 1)
       // A row whose status is already good or bad has been done: it is not run again.
       .$if(status >= 0, (q) => q.where(sql<string>`lower(trim(coalesce(pipeline_rows.cells->>${sql.lit(status)}, '')))`, "not in", [...DONE_STATUSES]))
+      // «wait info»: a row runs only once its number and proxy are filled in.
+      .where(sql<string>`trim(coalesce(pipeline_rows.proxy, ''))`, "!=", "")
+      .$if(number >= 0, (q) => q.where(sql<string>`trim(coalesce(pipeline_rows.cells->>${sql.lit(number)}, ''))`, "!=", ""))
       .orderBy("pipeline_rows.n")
       .execute();
   }
@@ -257,6 +264,41 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       if (!answer.ok && answer.code === "LS_CLICKER_NO_ROWS") return { ok: false as const, code: "NO_ROWS", message: "The table has no rows left to run" };
       return answer;
     });
+
+  // ---- automatic runs: a ticked Mac takes the next ready row whenever it is idle ----
+  /** The last automatic start per Mac: when, and the end of the run before it as the Mac reported it. */
+  const autoStarted = new Map<string, { at: number; finishedAt: string | null }>();
+  const checking = new Set<string>();
+  const autoRun = async (agentId: string, state: NonNullable<LsClickerState>) => {
+    // A failed run stops the Mac's automatic runs: it would retry the same row; the operator repeats it by hand.
+    if (state.run.running || state.run.ok === false || checking.has(agentId) || !fleet.isConnected(agentId)) return;
+    // A heartbeat after a start may predate the run: until a new end is reported, wait a while.
+    const last = autoStarted.get(agentId);
+    if (last && state.run.finishedAt === last.finishedAt && Date.now() - last.at < AUTO_SETTLE_MS) return;
+    checking.add(agentId);
+    try {
+      const agent = await db.selectFrom("agents").select("lsc_auto").where("id", "=", agentId).executeTakeFirst();
+      const build = await currentBuild();
+      if (!agent?.lsc_auto || !build || state.sha256 !== build.sha256 || (await unsentRows()).length === 0) return;
+      autoStarted.set(agentId, { at: Date.now(), finishedAt: state.run.finishedAt });
+      const answer = await start(agentId);
+      if (!answer.ok) app.log.warn({ agentId, code: answer.code }, "ls-clicker auto run not started");
+    } finally {
+      checking.delete(agentId);
+    }
+  };
+
+  app.put(
+    "/api/v1/agents/:id/ls-clicker/auto",
+    { preHandler: operatorAuth, schema: { params: idParams, body: z.object({ enabled: z.boolean() }), response: { 204: z.null(), ...errors } } },
+    async (request, reply) => {
+      const updated = await db.updateTable("agents").set({ lsc_auto: request.body.enabled }).where("id", "=", request.params.id).where("deleted_at", "is", null).executeTakeFirst();
+      if (updated.numUpdatedRows === 0n) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+      const mac = (await macs()).find((m) => m.agentId === request.params.id);
+      if (request.body.enabled && mac) void autoRun(mac.agentId, mac.state).catch((e) => app.log.error(e, "ls-clicker auto run"));
+      return reply.code(204).send(null);
+    },
+  );
 
   app.post(
     "/api/v1/agents/:id/ls-clicker/runs",

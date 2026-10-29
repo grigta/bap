@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileUp, ListChecks, Play, ScrollText, Square } from "lucide-react";
+import { FileUp, ListChecks, RotateCcw, ScrollText, Square } from "lucide-react";
 import { useRef, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { dateTime } from "@/lib/format";
@@ -21,6 +22,8 @@ interface ClickerMac {
   agentId: string;
   name: string;
   model: string | null;
+  /** Ticked: the Mac takes ready table rows by itself. */
+  auto: boolean;
   connection: string;
   state: ClickerState;
   sent: number;
@@ -67,6 +70,11 @@ function MacRow({ mac, build, flow, selected, onSelect, onPlan }: { mac: Clicker
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["ls-clicker"] });
   const run = useMutation({ mutationFn: () => api(`/agents/${mac.agentId}/ls-clicker/runs`, { method: "POST" }), onSuccess: refresh, onError: notifyError(`Запуск на ${mac.name}`) });
   const stop = useMutation({ mutationFn: () => api(`/agents/${mac.agentId}/ls-clicker/stop`, { method: "POST" }), onSuccess: refresh, onError: notifyError(`Остановка на ${mac.name}`) });
+  const auto = useMutation({
+    mutationFn: (enabled: boolean) => api(`/agents/${mac.agentId}/ls-clicker/auto`, { method: "PUT", body: JSON.stringify({ enabled }) }),
+    onSuccess: refresh,
+    onError: notifyError(`Прогоны на ${mac.name}`),
+  });
   const s = mac.state;
   const online = mac.connection === "ONLINE";
   const pending = s.inputRows - s.outputRows;
@@ -109,13 +117,19 @@ function MacRow({ mac, build, flow, selected, onSelect, onPlan }: { mac: Clicker
         )}
       </span>
       <span className="flex justify-end gap-1">
-        {s.run.running ? (
+        {/* Ticked Macs take ready rows by themselves; after a failed run the operator repeats it by hand. */}
+        <label className="mr-1 flex items-center gap-1.5" title="Брать готовые строки таблицы на этом Mac">
+          <Checkbox checked={mac.auto} disabled={auto.isPending} onCheckedChange={(v) => auto.mutate(!!v)} aria-label={`Использовать ${mac.name} для прогонов`} />
+          <span className="text-muted-foreground">прогоны</span>
+        </label>
+        {s.run.running && (
           <Button size="icon-xs" variant="outline" aria-label="Остановить" title="Остановить" disabled={!online || stop.isPending} onClick={() => stop.mutate()}>
             <Square aria-hidden />
           </Button>
-        ) : (
-          <Button size="icon-xs" aria-label="Запустить строку" title="Запустить строку" disabled={!online || !s.sha256 || run.isPending} onClick={() => run.mutate()}>
-            <Play aria-hidden />
+        )}
+        {!s.run.running && s.run.ok === false && (
+          <Button size="icon-xs" variant="outline" aria-label="Повторить" title="Прогон упал: автозапуск на этом Mac ждёт. Повторить строку" disabled={!online || !s.sha256 || run.isPending} onClick={() => run.mutate()}>
+            <RotateCcw aria-hidden />
           </Button>
         )}
         <Button size="icon-xs" variant="ghost" aria-label="Журнал" title="Журнал" aria-pressed={selected} onClick={onSelect}>
@@ -174,14 +188,6 @@ export function LsClickerPanel() {
   const overview = useQuery({ queryKey: ["ls-clicker"], queryFn: () => api<Overview>("/ls-clicker"), refetchInterval: POLL_MS });
   const flow = useQuery({ queryKey: ["ls-clicker-flow"], queryFn: () => api<Flow>("/ls-clicker/flow") });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["ls-clicker"] });
-  const runAll = useMutation({
-    mutationFn: () => api<{ started: string[]; skipped: { name: string; reason: string }[] }>("/ls-clicker/runs", { method: "POST", timeoutMs: 60_000 }),
-    onSuccess: (r) => {
-      void refresh();
-      notifyDone(r.started.length ? `Запущено: ${r.started.join(", ")}` : "Ничего не запущено", r.skipped.map((s) => `${s.name}: ${s.reason}`).join("; ") || undefined);
-    },
-    onError: notifyError("Запуск на всех"),
-  });
   const upload = useMutation({
     mutationFn: async (f: File) => api<{ sha256: string }>("/ls-clicker/builds", { method: "POST", body: await f.arrayBuffer(), headers: { "content-type": "application/octet-stream" }, timeoutMs: 60_000 }),
     onSuccess: (b) => {
@@ -228,12 +234,8 @@ export function LsClickerPanel() {
           Загрузить сборку
         </Button>
         <span data-testid="clicker-unsent" className="ml-auto text-muted-foreground">
-          В таблице ждут: {data?.unsent ?? 0}
+          Готовы к прогону: {data?.unsent ?? 0} · прогоны на Mac: {macs.filter((m) => m.auto).length} из {macs.length}
         </span>
-        <Button size="sm" disabled={macs.length === 0 || runAll.isPending} onClick={() => runAll.mutate()}>
-          <Play aria-hidden />
-          Запустить на всех
-        </Button>
       </div>
       {data && macs.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">Нет Mac с LS Clicker: агент сообщает о нём, когда на Mac есть каталог ~/Developer/ls-clicker.</p>}
       {macs.length > 0 && (

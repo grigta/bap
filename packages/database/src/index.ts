@@ -12,6 +12,8 @@ export interface AgentsTable {
   platform: string;
   architecture: string;
   model: string | null;
+  /** LS Clicker runs ready table rows on this Mac by itself. */
+  lsc_auto: Generated<boolean>;
   status: Generated<string>;
   current_epoch: Generated<string>;
   agent_version: string | null;

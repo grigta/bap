@@ -29,7 +29,8 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
 
   expect((await page.request.put("/api/v1/pipeline/profile-column", { data: { column: 2 } })).status()).toBe(204);
   await page.reload();
-  const [mine, stranger] = [table.getByTestId("pipeline-row").nth(0), table.getByTestId("pipeline-row").nth(1)];
+  // Rows waiting for their proxy move to the top, so rows are found by their text.
+  const [mine, stranger] = [table.getByTestId("pipeline-row").filter({ hasText: "Иванов" }), table.getByTestId("pipeline-row").filter({ hasText: "Петров" })];
   await expect(mine.getByTestId("pipeline-profile-status")).toHaveText("AVAILABLE");
   await expect(stranger.getByTestId("pipeline-profile-status")).toHaveCount(0);
   // Like a spreadsheet: every value on one line.
@@ -41,7 +42,8 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
   await expect(page.getByTestId("pipeline-lsc-from")).toContainText("LS Clicker берёт строки с 3-й, выше — история");
   await expect(mine.getByTestId("pipeline-lsc")).toHaveText("история");
   await page.getByRole("button", { name: "брать с первой" }).click();
-  await expect(mine.getByTestId("pipeline-lsc")).toHaveText("—");
+  // No proxy yet: the row waits for it.
+  await expect(mine.getByTestId("pipeline-lsc")).toHaveText("wait info");
 
   // «Настройка» picks the columns of the collapsed view; «Развернуть» shows them all.
   await page.getByRole("button", { name: "Настройка" }).click();
@@ -84,7 +86,7 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
   await page.getByLabel("Новая строка: Должность").fill("практикант");
   await page.getByRole("heading", { level: 1 }).click();
   await expect(table.getByTestId("pipeline-row")).toHaveCount(3);
-  await expect(table.getByTestId("pipeline-row").nth(2)).toContainText("Сидоров Опыт Опытович");
+  await expect(table.getByTestId("pipeline-row").filter({ hasText: "Сидоров Опыт Опытович" })).toHaveCount(1);
   await expect(page.getByLabel("Новая строка: ФИО")).toHaveValue("");
 
   // «Строки списком»: comma-separated values in the column order, one row per line.
@@ -92,11 +94,11 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
   await page.getByRole("textbox", { name: "Строки" }).fill("\"Кузнецова, Проба\",,нет");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(table.getByTestId("pipeline-row")).toHaveCount(4);
-  await expect(table.getByTestId("pipeline-row").nth(3)).toContainText("Кузнецова, Проба");
+  await expect(table.getByTestId("pipeline-row").filter({ hasText: "Кузнецова, Проба" })).toHaveCount(1);
   await evidence(page, "S22", "1-add-rows");
 
   // A row that has not gone to a Mac can be deleted from its card.
-  await table.getByTestId("pipeline-row").nth(3).click();
+  await table.getByTestId("pipeline-row").filter({ hasText: "Кузнецова, Проба" }).click();
   await page.getByRole("button", { name: "Удалить строку" }).click();
   await confirmDialog(page);
   await expect(table.getByTestId("pipeline-row")).toHaveCount(3);

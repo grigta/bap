@@ -53,6 +53,8 @@ export const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
 export const DONE_STATUSES = ["good", "bad", "гуд", "бед"] as const;
 /** The table's status column (by its name), or -1. */
 export const statusColumn = (columns: string[]) => columns.findIndex((c) => ["status", "статус"].includes(c.trim().toLowerCase()));
+/** The table's number column (by its name), or -1: a row without a number waits for it («wait info»). */
+export const numberColumn = (columns: string[]) => columns.findIndex((c) => c.trim().toLowerCase() === "number");
 
 export const lsClickerState = z
   .object({

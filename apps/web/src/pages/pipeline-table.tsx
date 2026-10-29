@@ -26,6 +26,8 @@ const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
 /** A row whose status column says good or bad has been done: LS Clicker skips it (as on the server). */
 const DONE_STATUSES = ["good", "bad", "гуд", "бед"];
 const statusColumn = (columns: string[]) => columns.findIndex((c) => ["status", "статус"].includes(c.trim().toLowerCase()));
+/** «wait info»: a row runs only once its number and proxy are filled in (as on the server). */
+const numberColumn = (columns: string[]) => columns.findIndex((c) => c.trim().toLowerCase() === "number");
 /** The password is not on screen until the cell is opened. */
 const maskProxy = (p: string) => p.replace(/^([^@]+@[^:]+:).+$/, "$1•••");
 
@@ -238,13 +240,19 @@ export function PipelineTable() {
   const visible = expanded ? all : collapsedColumns;
   const span = visible.length + 4;
   const status = statusColumn(imp.columns);
+  const number = numberColumn(imp.columns);
   /** Why LS Clicker will not take a row it has not taken: its status, or it is above the starting row. */
   const skipped = (r: Pipeline["rows"][number]) => {
     const value = status >= 0 ? (r.cells[status] ?? "").trim().toLowerCase() : "";
     if (DONE_STATUSES.includes(value)) return { text: "пропуск", title: `статус ${value}: не запускается` };
     if (imp.lscFrom && r.n < imp.lscFrom) return { text: "история", title: "история: не запускается" };
+    const missing = [number >= 0 && !(r.cells[number] ?? "").trim() && "number", !r.proxy?.trim() && "прокси"].filter(Boolean);
+    if (missing.length) return { text: "wait info", title: `ждёт: ${missing.join(" и ")}` };
     return null;
   };
+  // Rows waiting for their number or proxy come first: they are the ones to fill in.
+  const waits = (r: Pipeline["rows"][number]) => !r.lsc && skipped(r)?.text === "wait info";
+  const ordered = [...rows].sort((a, b) => Number(waits(b)) - Number(waits(a)) || a.n - b.n);
   return (
     <section aria-label="Таблица" className="grid gap-3">
       <div className="flex flex-wrap items-end gap-3">
@@ -341,7 +349,7 @@ export function PipelineTable() {
             </tr>
           </thead>
           <tbody>
-            {rows.slice(current * pageSize, (current + 1) * pageSize).map((r) => (
+            {ordered.slice(current * pageSize, (current + 1) * pageSize).map((r) => (
               <tr key={r.n} data-testid="pipeline-row" onClick={() => setOpen(r.n)} className={cn("cursor-pointer border-t hover:bg-accent/60", open === r.n && "bg-accent")}>
                 <td className="border-r px-2 py-1 text-muted-foreground tabular-nums">
                   <button type="button" className="hover:underline" aria-label={`Открыть строку ${r.n}`} onClick={() => setOpen(r.n)}>
@@ -354,8 +362,8 @@ export function PipelineTable() {
                 <Cell className="border-l font-mono" data-testid="pipeline-proxy">
                   {r.proxy ? maskProxy(r.proxy) : <span className="text-muted-foreground">—</span>}
                 </Cell>
-                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : (skipped(r)?.title ?? "не отправлена")}>
-                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">{skipped(r)?.text ?? "—"}</span>}
+                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : (skipped(r)?.title ?? "готова к прогону")}>
+                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">{skipped(r)?.text ?? "готова"}</span>}
                 </Cell>
                 <Cell>{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</Cell>
               </tr>

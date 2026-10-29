@@ -14,7 +14,7 @@ const fake = resolve(import.meta.dirname, "../fixtures/ls-clicker/fake-ls-clicke
 const agents: ChildProcess[] = [];
 test.afterAll(() => agents.forEach(killAgent));
 
-test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac takes the next table row, log, stage and plan are shown", async ({ page }) => {
+test("[REQ-LSC-004][REQ-LSC-008] LS Clicker is run from BAP: the build rolls out, every ticked Mac takes the next ready table row by itself, log, stage and plan are shown", async ({ page }) => {
   test.setTimeout(120_000);
   await logIn(page);
   // Two Macs with an LS Clicker directory; the engine is a stand-in that registers nothing.
@@ -30,6 +30,8 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac t
   await page.request.put("/api/v1/ls-clicker/flow", { data: [{ key: "start", label: "Начало", aliases: ["start"] }, { key: "form", label: "Бизнес-форма", aliases: ["businessdetails"], action: "Next", fields: ["Название ← колонка"] }, { key: "done", label: "Готово", aliases: ["done"] }] });
   // Made-up rows.
   await page.request.post("/api/v1/pipeline/import?name=lsc.csv", { data: "who,company\nann,Acme\nbob,Beta\ncarl,Gamma\n", headers: { "content-type": "text/csv" } });
+  // carl has no proxy yet: he waits («wait info»).
+  for (const n of [1, 2]) await page.request.patch(`/api/v1/pipeline/rows/${n}`, { data: { proxy: "10.9.9.9:1080" } });
 
   // LS Clicker is on «Конвейер», above the table and the runs.
   await goTo(page, "Конвейер");
@@ -37,12 +39,12 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac t
   await page.getByLabel("Файл сборки ls-clicker").setInputFiles({ name: "ls-clicker", mimeType: "application/octet-stream", buffer: readFileSync(fake) });
   for (const name of names) await expect(page.getByTestId(`clicker-${name}`).getByTestId("clicker-version")).toHaveText("fake-ls-clicker 1.0", { timeout: 20_000 });
 
-  await expect(page.getByTestId("clicker-unsent")).toHaveText("В таблице ждут: 3");
-  // Each Mac takes the next row of the table.
-  await page.getByRole("button", { name: "Запустить на всех" }).click();
+  await expect(page.getByTestId("clicker-unsent")).toHaveText("Готовы к прогону: 2 · прогоны на Mac: 0 из 2");
+  // A ticked Mac takes the next ready row by itself.
+  for (const name of names) await page.getByRole("checkbox", { name: `Использовать ${name} для прогонов` }).click();
   for (const name of names) await expect(page.getByTestId(`clicker-${name}`).getByTestId("clicker-run")).toHaveText("SUCCEEDED", { timeout: 15_000 });
   for (const name of names) await expect(page.getByTestId(`clicker-${name}`).getByTestId("clicker-rows")).toHaveText("1 из 1 обработано");
-  await expect(page.getByTestId("clicker-unsent")).toHaveText("В таблице ждут: 1");
+  await expect(page.getByTestId("clicker-unsent")).toHaveText("Готовы к прогону: 0 · прогоны на Mac: 2 из 2");
   const first = page.getByTestId(`clicker-${names[0]}`);
   await expect(first.getByTestId("clicker-stage")).toHaveText("Бизнес-форма");
   await first.getByRole("button", { name: "Журнал" }).click();
@@ -57,7 +59,10 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac t
   await page.keyboard.press("Escape");
 
   // The rows' results are in the table below, on the same page.
-  await expect(page.getByTestId("pipeline-lsc").nth(0)).toHaveText(/clicker-[ab]-\w+ · обработана/, { timeout: 10_000 });
-  await expect(page.getByTestId("pipeline-lsc").nth(2)).toHaveText("—");
+  // carl waits for his proxy at the top of the table; the rows done follow.
+  await expect(page.getByTestId("pipeline-lsc").nth(0)).toHaveText("wait info");
+  await expect(page.getByTestId("pipeline-lsc").nth(1)).toHaveText(/clicker-[ab]-\w+ · обработана/, { timeout: 10_000 });
   await evidence(page, "S19", "2-table-results");
+  for (const name of names) await page.getByRole("checkbox", { name: `Использовать ${name} для прогонов` }).click();
+  await expect(page.getByTestId("clicker-unsent")).toContainText("прогоны на Mac: 0 из 2");
 });
