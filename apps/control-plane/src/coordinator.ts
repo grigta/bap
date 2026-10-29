@@ -281,10 +281,11 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       .where("profiles.status", "in", ["RESERVED", "IN_USE"])
       .execute();
     for (const l of expired) {
-      await moveProfile(db, l.profile_id, ["RESERVED", "IN_USE"], "VERIFYING");
+      // The run first: whoever sees the profile in VERIFYING already sees its run waiting for recovery.
       // Not accepted yet: the run can wait in the queue, the kept lease blocks the profile until the owner confirms it is idle.
       if (!(await transitionRun(l.run_id, ["ASSIGNED"], "QUEUED", "lease expired before the agent accepted")))
         await transitionRun(l.run_id, ["ACCEPTED", "RUNNING", "CANCEL_REQUESTED"], "RECOVERY_PENDING", "lease expired: no heartbeat from the agent");
+      await moveProfile(db, l.profile_id, ["RESERVED", "IN_USE"], "VERIFYING");
     }
 
     // autoResume (REQ-RUN-007): once the owner is back and the profile is confirmed idle, continue by itself.
