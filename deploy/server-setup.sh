@@ -91,6 +91,21 @@ upsert BAP_LLM_DIR "$BAP/data/llm"
 if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then upsert CLAUDE_CODE_OAUTH_TOKEN "$CLAUDE_CODE_OAUTH_TOKEN"; echo "model token stored in $ENV"; fi
 grep -q "^CLAUDE_CODE_OAUTH_TOKEN=" "$ENV" || echo "no model token: recording and healing are off until CLAUDE_CODE_OAUTH_TOKEN is set"
 
+say "api-anything (Spokeo lookups for LS Clicker on the server, ADR-0035)"
+if [ ! -x "$BAP/node/bin/api-anything" ]; then
+  tmp="$(mktemp -d)"; chown bap:bap "$tmp"
+  as_bap git clone -q --depth 1 https://github.com/goodnight000/api-anything.git "$tmp/src"
+  (cd "$tmp/src" && as_bap "$BAP/node/bin/npm" ci --no-audit --no-fund --silent >/dev/null && as_bap "$BAP/node/bin/npm" install -g --prefix "$BAP/node" --silent "$(as_bap "$BAP/node/bin/npm" pack --silent)" >/dev/null)
+  rm -rf "$tmp"
+fi
+echo "api-anything $(as_bap "$BAP/node/bin/api-anything" --version 2>/dev/null || echo installed)"
+mkdir -p "$BAP/data/api-anything/.api-anything/sites" "$BAP/data/api-anything/.api-anything/sessions"
+chown -R bap:bap "$BAP/data/api-anything"; chmod 700 "$BAP/data/api-anything"
+upsert BAP_API_ANYTHING_BIN "$BAP/node/bin/api-anything"
+upsert BAP_SPOKEO_HOME "$BAP/data/api-anything"
+# Provider keys (GotSMS, RuCaptcha) are passed once as environment variables of this script, never in the repo.
+for k in BAP_GOTSMS_KEY BAP_RUCAPTCHA_KEY; do if [ -n "${!k:-}" ]; then upsert "$k" "${!k}"; echo "$k stored in $ENV"; fi; done
+
 say "Services"
 cat > /etc/systemd/system/bap-seaweed.service <<EOF
 [Unit]

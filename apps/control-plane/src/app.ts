@@ -17,6 +17,7 @@ import { registerFarming } from "./farming.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerRecipes } from "./recipes.ts";
 import { registerPipeline } from "./pipeline.ts";
+import { DEFAULT_PROVIDERS, type ProvidersConfig, registerProviders } from "./providers.ts";
 import { DEFAULT_REMOTE, type RemoteConfig, registerRemote } from "./remote.ts";
 import { registerRuns } from "./runs.ts";
 import { registerLsClicker } from "./ls-clicker.ts";
@@ -45,6 +46,8 @@ export interface AppOptions {
   llmLimits?: Partial<LlmLimits>;
   /** Timeouts of the operator's remote browser sessions. */
   remote?: Partial<RemoteConfig>;
+  /** LS Clicker's providers and their keys, held by the server only (ADR-0035). */
+  providers?: Partial<ProvidersConfig>;
 }
 
 export interface RegisteredRoute {
@@ -55,7 +58,7 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir, model = null, llmLimits, remote }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir, model = null, llmLimits, remote, providers }: AppOptions) {
   // Request bodies are never logged; credentials in headers are redacted should headers ever be logged (REQ-SEC-008).
   const redact = ["req.headers.authorization", "req.headers.cookie", "req.headers[\"idempotency-key\"]", "res.headers[\"set-cookie\"]"];
   const app = Fastify({
@@ -219,6 +222,7 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     registerLsClicker(scoped as unknown as App, { db, fleet: agents, fleetConfig, store, operatorAuth: auth });
     registerFarming(scoped as unknown as App, { db, coordinator, operatorAuth: auth });
     registerPipeline(scoped as unknown as App, { db, operatorAuth: auth });
+    registerProviders(scoped as unknown as App, { db, config: { ...DEFAULT_PROVIDERS, ...providers } });
     const gated = model && gatedModel(db, model, { ...DEFAULT_LIMITS, ...llmLimits }, (entry) => app.log.info(entry, "llm call"));
     hooks.onSucceeded = registerRecipes(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, model: gated }).onSucceeded;
     internals.coordinator = coordinator;

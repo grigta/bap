@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import { AgentRequestError, type Fleet, type FleetConfig, connection } from "./fleet.ts";
+import { issueRunToken } from "./providers.ts";
 import type { ObjectStore } from "./storage.ts";
 
 export interface LsClickerOptions {
@@ -226,7 +227,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       const imp = await db.selectFrom("pipeline_import").select(["id", "columns"]).orderBy("created_at", "desc").executeTakeFirst();
       const next = (await unsentRows())[0];
       const row = imp && next ? { header: imp.columns as string[], cells: next.cells as string[] } : undefined;
-      const answer = await ask(agentId, { method: "lsclicker.run", ...(row && { row }) });
+      const answer = await ask(agentId, { method: "lsclicker.run", token: await issueRunToken(db, agentId), ...(row && { row }) });
       if (answer.ok && next) {
         const { appended } = z.object({ appended: z.number().int().nullable() }).parse(answer.result);
         if (appended !== null)

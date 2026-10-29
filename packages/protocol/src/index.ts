@@ -137,7 +137,12 @@ export const agentRequestPayload = z.discriminatedUnion("method", [
    * Starts the next row. With `row` (the operator's next table row) the agent first appends it to
    * input.csv, matched to its header by column names, unless the Mac still has an unprocessed row of its own.
    */
-  z.object({ method: z.literal("lsclicker.run"), row: z.object({ header: z.array(z.string()), cells: z.array(z.string()) }).optional() }),
+  z.object({
+    method: z.literal("lsclicker.run"),
+    row: z.object({ header: z.array(z.string()), cells: z.array(z.string()) }).optional(),
+    /** The run's token: the engine calls its providers through the server with it (ADR-0035). */
+    token: z.string().optional(),
+  }),
   z.object({ method: z.literal("lsclicker.stop") }),
   /** The latest lines of the engine's output. */
   z.object({ method: z.literal("lsclicker.log") }),

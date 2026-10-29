@@ -24,6 +24,14 @@ if (!row) {
   process.exit(0);
 }
 const first = row.split(",")[0];
+// Like the real engine under BAP: providers only through the server, with the run's token.
+if (process.env.BAP_RUN_TOKEN) {
+  const call = async (path, body) => {
+    const res = await fetch(`${process.env.BAP_SERVER}/api/v1/providers/${path}`, { method: body ? "POST" : "GET", headers: { authorization: `Bearer ${process.env.BAP_RUN_TOKEN}`, ...(body && { "content-type": "application/json" }) }, body: body && JSON.stringify(body) });
+    return { status: res.status, body: await res.json() };
+  };
+  writeFileSync("provider.json", JSON.stringify({ server: process.env.BAP_SERVER, gotsms: await call("gotsms/api/account"), spokeo: await call("spokeo/phone-lookup", { phone: "415-712-3489" }) }));
+}
 console.log(`строка ${done + 1}: начинаю`);
 writeFileSync("state.json", JSON.stringify({ node: "businessDetails", errors: [], ts: Date.now() / 1000, url: "https://qbo.example/businessdetails" }));
 await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LS_MS ?? 300)));

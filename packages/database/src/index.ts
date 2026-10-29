@@ -191,6 +191,13 @@ export interface LsClickerMacsTable {
   output_hash: string | null;
 }
 
+export interface LsClickerTokensTable {
+  token_hash: string;
+  agent_id: string;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+}
+
 export interface RunTransitionsTable {
   id: Generated<string>;
   run_id: string;
@@ -364,6 +371,7 @@ export interface Database {
   lsclicker_queue: LsClickerQueueTable;
   lsclicker_results: LsClickerResultsTable;
   lsclicker_macs: LsClickerMacsTable;
+  lsclicker_tokens: LsClickerTokensTable;
 }
 
 export type Db = Kysely<Database>;

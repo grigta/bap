@@ -103,6 +103,8 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   const clicker = opts.lsClickerDir
     ? lsClicker(opts.lsClickerDir, {
         log,
+        serverUrl: opts.serverUrl,
+        caCert: process.env.NODE_EXTRA_CA_CERTS,
         download: async (sha256) => {
           const res = await fetch(`${opts.serverUrl}/api/v1/agents/me/ls-clicker/build?sha256=${sha256}`, { headers: { authorization: `Bearer ${agentKey}` } });
           if (!res.ok) throw new LsClickerError("LS_CLICKER_DOWNLOAD_FAILED", `the server answered HTTP ${res.status} for the build`);
@@ -161,7 +163,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
       try {
         switch (req.method) {
           case "lsclicker.run":
-            return clicker.start(req.row);
+            return clicker.start(req.row, req.token);
           case "lsclicker.stop":
             return clicker.stop();
           case "lsclicker.log":

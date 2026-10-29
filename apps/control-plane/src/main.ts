@@ -43,5 +43,11 @@ const app = buildApp({
     healCallsPerRun: Number(env("BAP_LLM_HEAL_CALLS", "20")),
     callsPerDay: Number(env("BAP_LLM_DAILY_CALLS", "500")),
   },
+  // LS Clicker's providers: the keys live here only, never on the Macs (ADR-0035).
+  providers: {
+    gotsms: { url: env("BAP_GOTSMS_URL", "https://app.gotsms.org"), key: process.env.BAP_GOTSMS_KEY || null },
+    rucaptcha: { url: env("BAP_RUCAPTCHA_URL", "https://rucaptcha.com"), key: process.env.BAP_RUCAPTCHA_KEY || null },
+    spokeo: process.env.BAP_SPOKEO_HOME ? { bin: env("BAP_API_ANYTHING_BIN", "api-anything"), home: process.env.BAP_SPOKEO_HOME } : null,
+  },
 });
 await app.listen({ host: env("HOST", "127.0.0.1"), port: Number(env("PORT", "3000")) });

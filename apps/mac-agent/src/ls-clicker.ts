@@ -41,7 +41,7 @@ const writeAtomically = (path: string, data: string | Buffer, mode?: number) => 
  * appends rows the operator sent to input.csv and installs the build the server rolls out.
  * Rows are only ever appended: row N of output.csv is the result of row N of input.csv.
  */
-export function lsClicker(dir: string, opts: { download: (sha256: string) => Promise<Buffer>; log: (line: string) => void }) {
+export function lsClicker(dir: string, opts: { download: (sha256: string) => Promise<Buffer>; log: (line: string) => void; serverUrl: string; caCert?: string }) {
   const bin = join(dir, "ls-clicker");
   const input = join(dir, "input.csv");
   const output = join(dir, "output.csv");
@@ -92,7 +92,7 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
     },
 
     /** A Mac with an unprocessed row of its own runs that first; otherwise the operator's row is appended and run. */
-    start(row?: { header: string[]; cells: string[] }) {
+    start(row?: { header: string[]; cells: string[] }, token?: string) {
       running();
       if (!existsSync(bin)) throw new LsClickerError("LS_CLICKER_MISSING", "ls-clicker is not installed on this Mac yet");
       const pending = rowsOf(read(input)).rows.length > rowsOf(read(output)).rows.length;
@@ -100,7 +100,9 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       const appended = pending ? null : this.append(row!.header, row!.cells);
       tail = [];
       Object.assign(run, { running: true, startedAt: new Date().toISOString(), finishedAt: null, ok: null });
-      const p = spawn(bin, ["--find-number", "--first-row"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+      // The engine reaches its providers through the server with the run's token; no key is on this Mac (ADR-0035).
+      const env = { ...process.env, ...(token && { BAP_SERVER: opts.serverUrl, BAP_RUN_TOKEN: token, ...(opts.caCert && { BAP_CA_CERT: opts.caCert }) }) };
+      const p = spawn(bin, ["--find-number", "--first-row"], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
       child = p;
       let rest = "";
       const onData = (chunk: Buffer) => {
