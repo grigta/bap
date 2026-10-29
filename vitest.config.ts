@@ -5,7 +5,8 @@ export const coverageThresholds = { lines: 80, branches: 80, functions: 80, stat
 export default defineConfig({
   test: {
     // Agents started by tests keep their keys in files, never in the developer's login keychain.
-    env: { BAP_KEY_STORAGE: "file" },
+    // ... and never touch a real LS Clicker in the developer's ~/Developer/ls-clicker.
+    env: { BAP_KEY_STORAGE: "file", BAP_LS_CLICKER_DIR: "" },
     projects: [
       {
         test: {

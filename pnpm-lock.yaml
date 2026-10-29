@@ -175,6 +175,9 @@ importers:
       '@bap/browser-adapters':
         specifier: workspace:*
         version: link:packages/browser-adapters
+      '@bap/csv':
+        specifier: workspace:*
+        version: link:packages/csv
       '@bap/database':
         specifier: workspace:*
         version: link:packages/database
@@ -271,6 +274,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1157.0
         version: 3.1157.0
+      '@bap/csv':
+        specifier: workspace:*
+        version: link:../../packages/csv
       '@bap/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -316,6 +322,9 @@ importers:
       '@bap/browser-adapters':
         specifier: workspace:*
         version: link:../../packages/browser-adapters
+      '@bap/csv':
+        specifier: workspace:*
+        version: link:../../packages/csv
       '@bap/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -411,6 +420,8 @@ importers:
       playwright-core:
         specifier: 1.64.1
         version: 1.64.1
+
+  packages/csv: {}
 
   packages/database:
     dependencies:

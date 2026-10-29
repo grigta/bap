@@ -45,6 +45,23 @@ export const powerState = z.object({
 });
 export type PowerState = z.infer<typeof powerState>;
 
+/** What a Mac's agent reports about LS Clicker there; null when the Mac has no LS Clicker directory. */
+export const lsClickerState = z
+  .object({
+    /** `ls-clicker --version`, and the binary's sha256 (what BAP rolls out). */
+    version: z.string().nullable(),
+    sha256: z.string().nullable(),
+    inputRows: z.number().int().nonnegative(),
+    outputRows: z.number().int().nonnegative(),
+    /** Changes whenever output.csv does: the server fetches it then. */
+    outputHash: z.string().nullable(),
+    run: z.object({ running: z.boolean(), startedAt: z.string().nullable(), finishedAt: z.string().nullable(), ok: z.boolean().nullable() }),
+    /** The engine's live heartbeat (state.json): where on the site it is, its errors, how fresh. */
+    stage: z.object({ node: z.string(), errors: z.array(z.string()), ageSeconds: z.number().nullable(), url: z.string(), assist: z.unknown().optional() }).nullable(),
+  })
+  .nullable();
+export type LsClickerState = z.infer<typeof lsClickerState>;
+
 export const heartbeatPayload = z.object({
   cpuPercent: z.number().min(0).max(100),
   memoryPercent: z.number().min(0).max(100),
@@ -52,6 +69,8 @@ export const heartbeatPayload = z.object({
   activeSessions: z.number().int().nonnegative(),
   /** null off macOS; absent from agents older than this field. */
   power: powerState.nullable().optional(),
+  /** LS Clicker on this Mac; absent from agents older than this field. */
+  lsClicker: lsClickerState.optional(),
 });
 export type HeartbeatPayload = z.infer<typeof heartbeatPayload>;
 
@@ -113,7 +132,22 @@ export const agentRequestPayload = z.discriminatedUnion("method", [
   z.object({ method: z.literal("profiles.check"), externalId: z.string().min(1) }),
   /** Starts the browser provider app (Linken Sphere) and answers once its API responds. */
   z.object({ method: z.literal("provider.start") }),
+  // ---- LS Clicker on this Mac (ADR-0034): BAP runs it, the agent executes; the command and row choice are fixed ----
+  z.object({ method: z.literal("lsclicker.run") }),
+  z.object({ method: z.literal("lsclicker.stop") }),
+  /** The latest lines of the engine's output. */
+  z.object({ method: z.literal("lsclicker.log") }),
+  /** The input plan for the next row (ls-clicker --plan → plan.json): for the operator only. */
+  z.object({ method: z.literal("lsclicker.plan") }),
+  /** output.csv as it is: header and rows; row N is the result of input row N. */
+  z.object({ method: z.literal("lsclicker.output") }),
+  /** Appends rows to input.csv; refused while a run goes on or when the file has changed since the server last saw it. */
+  z.object({ method: z.literal("lsclicker.append"), header: z.array(z.string()), rows: z.array(z.array(z.string())).min(1), expectedInputRows: z.number().int().nonnegative() }),
+  /** Installs the server's ls-clicker build with this sha256 (not during a run). */
+  z.object({ method: z.literal("lsclicker.install"), sha256: z.string().regex(/^[0-9a-f]{64}$/) }),
 ]);
+
+
 export type AgentRequestPayload = z.infer<typeof agentRequestPayload>;
 
 export const agentResponse = z.object({

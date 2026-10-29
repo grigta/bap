@@ -137,7 +137,7 @@ export function PipelineTable() {
                   {c || `колонка ${i + 1}`}
                 </th>
               ))}
-              {["Статус профиля", "Mac", "Последний проход", "Ошибка"].map((c) => (
+              {["Статус профиля", "Mac", "Последний проход", "Ошибка", "LS Clicker"].map((c) => (
                 <th key={c} scope="col" className="border-l px-3 py-2 font-medium">
                   {c}
                 </th>
@@ -174,6 +174,9 @@ export function PipelineTable() {
                   )}
                 </td>
                 <td className="max-w-64 px-3 py-2 text-xs text-fail">{r.ours?.lastRun?.errorCode ? `${r.ours.lastRun.errorCode}: ${r.ours.lastRun.errorMessage ?? ""}` : (r.ours?.profileLastError ?? "")}</td>
+                <td data-testid="pipeline-lsc" className="px-3 py-2 text-xs" title={r.lsc?.result ? r.lsc.result.header.map((h, i) => `${h}: ${r.lsc!.result!.cells[i] ?? ""}`).join("\n") : undefined}>
+                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">—</span>}
+                </td>
               </tr>
             ))}
           </tbody>

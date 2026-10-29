@@ -150,36 +150,3 @@ test("[REQ-API-001] the generated Postman collection runs in Newman against a li
     "GET /api/v1/agents": 200,
   });
 });
-
-test("LS Clicker status and next-row launch are proxied only for an authenticated operator", async () => {
-  let running = false;
-  const calls: { url: string; method: string }[] = [];
-  const panelFetch: typeof fetch = async (input, init) => {
-    calls.push({ url: String(input), method: init?.method ?? "GET" });
-    if (new URL(String(input)).pathname === "/api/run") {
-      if (running) return new Response("{}", { status: 409 });
-      running = true;
-      return new Response("{}", { status: 202 });
-    }
-    return Response.json({ run: { running, started_at: "2026-10-29T12:00:00", finished_at: null, ok: null, tail: ["started"] } });
-  };
-  const linked = buildApp({ db, store: memoryStore(), secureCookies: false, lsClicker: { panelUrl: "http://ls-clicker.local:8080", fetch: panelFetch } });
-  const loggedIn = await linked.inject({ method: "POST", url: "/api/v1/auth/login", payload: { login: "operator", password: "s3cret-pass" } });
-  const cookie = sessionCookie(loggedIn).value;
-
-  expect((await linked.inject({ method: "GET", url: "/api/v1/ls-clicker/status" })).statusCode).toBe(401);
-  expect((await linked.inject({ method: "GET", url: "/api/v1/ls-clicker/status", cookies: { bap_session: cookie } })).json()).toEqual({
-    configured: true,
-    run: { running: false, started_at: "2026-10-29T12:00:00", finished_at: null, ok: null, tail: ["started"] },
-  });
-  expect((await linked.inject({ method: "POST", url: "/api/v1/ls-clicker/runs", cookies: { bap_session: cookie } })).statusCode).toBe(202);
-  const duplicate = await linked.inject({ method: "POST", url: "/api/v1/ls-clicker/runs", cookies: { bap_session: cookie } });
-  expect(duplicate.statusCode).toBe(409);
-  expect(duplicate.json().error.code).toBe("LS_CLICKER_RUNNING");
-  expect(calls).toEqual([
-    { url: "http://ls-clicker.local:8080/api/status", method: "GET" },
-    { url: "http://ls-clicker.local:8080/api/run", method: "POST" },
-    { url: "http://ls-clicker.local:8080/api/run", method: "POST" },
-  ]);
-  await linked.close();
-});

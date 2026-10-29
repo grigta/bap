@@ -184,6 +184,8 @@ export interface Pipeline {
       agentModel: string | null;
       lastRun: { id: string; scenarioId: string; status: RunStatus; errorCode: string | null; errorMessage: string | null; at: string } | null;
     } | null;
+    /** LS Clicker: the Mac the row was sent to, and its result once processed. */
+    lsc: { agentName: string; result: { header: string[]; cells: string[] } | null } | null;
   }[];
 }
 export interface ReviewQueue {

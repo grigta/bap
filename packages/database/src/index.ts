@@ -170,6 +170,27 @@ export interface PipelineRowsTable {
   cells: unknown;
 }
 
+export interface LsClickerQueueTable {
+  agent_id: string;
+  position: number;
+  import_id: string | null;
+  row_n: number | null;
+  sent_at: Generated<Timestamp>;
+}
+
+export interface LsClickerResultsTable {
+  agent_id: string;
+  position: number;
+  header: unknown;
+  cells: unknown;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface LsClickerMacsTable {
+  agent_id: string;
+  output_hash: string | null;
+}
+
 export interface RunTransitionsTable {
   id: Generated<string>;
   run_id: string;
@@ -340,6 +361,9 @@ export interface Database {
   remote_sessions: RemoteSessionsTable;
   pipeline_import: PipelineImportTable;
   pipeline_rows: PipelineRowsTable;
+  lsclicker_queue: LsClickerQueueTable;
+  lsclicker_results: LsClickerResultsTable;
+  lsclicker_macs: LsClickerMacsTable;
 }
 
 export type Db = Kysely<Database>;

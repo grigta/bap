@@ -3,7 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
 import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
-import { parseCsv } from "../../apps/control-plane/src/pipeline-csv.ts";
+import { parseCsv } from "@bap/csv";
 import { memoryStore } from "../../apps/control-plane/src/storage.ts";
 
 // Made-up rows only: the owner's real table holds employees' data and never appears in tests.
@@ -78,11 +78,11 @@ describe("the operator's table in «Конвейер»", () => {
     expect(res.headers["content-disposition"]).toContain(encodeURIComponent("люди-конвейер.csv"));
     const csv = parseCsv(res.body);
     expect(csv.delimiter).toBe(";");
-    expect(csv.columns).toEqual(["Сотрудник", "Профиль", "Заметка", "Статус профиля", "Mac", "Последний проход", "Статус прохода", "Ошибка", "Когда"]);
-    expect(csv.rows[0]).toEqual(["Иван Тестов", "shop-a", "первая", "AVAILABLE", "mac-table · MacBook Air · Apple M5 · 16 GB", "table-test", "FAILED", "STEP_FAILED: кнопки нет", "2026-10-02T10:00:00.000Z"]);
+    expect(csv.columns).toEqual(["Сотрудник", "Профиль", "Заметка", "Статус профиля", "Mac", "Последний проход", "Статус прохода", "Ошибка", "Когда", "LS Clicker: Mac"]);
+    expect(csv.rows[0]).toEqual(["Иван Тестов", "shop-a", "первая", "AVAILABLE", "mac-table · MacBook Air · Apple M5 · 16 GB", "table-test", "FAILED", "STEP_FAILED: кнопки нет", "2026-10-02T10:00:00.000Z", ""]);
     expect(csv.rows[1]!.slice(3, 5)).toEqual(["NEEDS_REVIEW", "mac-table · MacBook Air · Apple M5 · 16 GB"]);
     expect(csv.rows[1]![7]).toBe("капча");
-    expect(csv.rows[2]!.slice(3)).toEqual(["", "", "", "", "", ""]);
+    expect(csv.rows[2]!.slice(3)).toEqual(["", "", "", "", "", "", ""]);
   });
 
   test("[REQ-UI-012] a new upload replaces the table; clearing removes it; a broken file is refused with the line, not the values", async () => {

@@ -8,11 +8,14 @@ import { AgentStore, type OutboxEvent } from "./agent-store.ts";
 import { checkServerUrl } from "./config.ts";
 import { readModel } from "./model.ts";
 import { readPower } from "./power.ts";
+import { LsClickerError, lsClicker } from "./ls-clicker.ts";
 import { remoteBrowser } from "./remote.ts";
 import { devBuild, installBuild } from "./self-update.ts";
 import { purgeLocalRuns } from "./retention.ts";
 import { type EmitRunEvent, executeRun } from "./runner.ts";
 
+
+const isLsClickerRequest = (r: AgentRequestPayload): r is Extract<AgentRequestPayload, { method: `lsclicker.${string}` }> => r.method.startsWith("lsclicker.");
 
 class CodedError extends Error {
   readonly code: string;
@@ -44,6 +47,8 @@ export interface AgentOptions {
   retentionDays?: number;
   /** The Mac model shown in the panel; read from system_profiler when omitted. */
   model?: string | null;
+  /** LS Clicker's directory on this Mac (ADR-0034); null when BAP does not run LS Clicker here. */
+  lsClickerDir?: string | null;
 }
 
 export interface RunningAgent {
@@ -95,6 +100,16 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   const log = opts.log ?? ((line: string) => console.log(line));
   const cpu = cpuSampler();
   const model = opts.model === undefined ? readModel() : opts.model;
+  const clicker = opts.lsClickerDir
+    ? lsClicker(opts.lsClickerDir, {
+        log,
+        download: async (sha256) => {
+          const res = await fetch(`${opts.serverUrl}/api/v1/agents/me/ls-clicker/build?sha256=${sha256}`, { headers: { authorization: `Bearer ${agentKey}` } });
+          if (!res.ok) throw new LsClickerError("LS_CLICKER_DOWNLOAD_FAILED", `the server answered HTTP ${res.status} for the build`);
+          return Buffer.from(await res.arrayBuffer());
+        },
+      })
+    : null;
   const url = opts.serverUrl.replace(/^http/, "ws") + AGENT_SOCKET_PATH;
   const store = new AgentStore(opts.dataDir);
   let agentKey = opts.agentKey;
@@ -137,9 +152,33 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     lsAvailable: opts.provider ? await opts.provider.isAvailable() : false,
     activeSessions: activeRuns.size,
     power: readPower(),
+    lsClicker: clicker ? await clicker.state().catch(() => null) : null,
   });
 
   const handleRequest = async (req: AgentRequestPayload, requestId: string): Promise<unknown> => {
+    if (isLsClickerRequest(req)) {
+      if (!clicker) throw new CodedError("LS_CLICKER_UNAVAILABLE", "LS Clicker is not set up on this Mac");
+      try {
+        switch (req.method) {
+          case "lsclicker.run":
+            return clicker.start();
+          case "lsclicker.stop":
+            return clicker.stop();
+          case "lsclicker.log":
+            return clicker.log();
+          case "lsclicker.plan":
+            return await clicker.plan();
+          case "lsclicker.output":
+            return clicker.output();
+          case "lsclicker.append":
+            return clicker.append(req.header, req.rows, req.expectedInputRows);
+          case "lsclicker.install":
+            return await clicker.install(req.sha256);
+        }
+      } catch (e) {
+        throw e instanceof LsClickerError ? new CodedError(e.code, e.message) : e;
+      }
+    }
     const provider = opts.provider;
     if (!provider) throw new CodedError("PROVIDER_UNAVAILABLE", "this agent has no browser provider");
     if (req.method === "provider.start") {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { CsvError, parseCsv, toCsv } from "../../apps/control-plane/src/pipeline-csv.ts";
+import { CsvError, parseCsv, toCsv } from "@bap/csv";
 
 // Made-up rows only: the real table holds the owner's employees' data and is never seen here.
 describe("CSV import", () => {

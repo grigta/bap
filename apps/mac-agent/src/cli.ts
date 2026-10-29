@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { parseArgs, promisify } from "node:util";
@@ -88,6 +88,8 @@ if (command === "enroll") {
     maxSessions: Number(process.env.BAP_MAX_SESSIONS ?? 2),
     dataDir: dataDir(),
     retentionDays: Number(process.env.BAP_RETENTION_DAYS ?? 7),
+    // LS Clicker's directory on this Mac (ADR-0034); BAP_LS_CLICKER_DIR="" turns LS Clicker off here.
+    lsClickerDir: process.env.BAP_LS_CLICKER_DIR === "" ? null : (process.env.BAP_LS_CLICKER_DIR ?? join(homedir(), "Developer", "ls-clicker")),
     ...(installed && { selfUpdate: { file: self, build: buildOf(self), restart: () => process.exit(EXIT_RESTART) } }),
   });
   console.log(`agent ${config.name} → ${config.serverUrl}`);

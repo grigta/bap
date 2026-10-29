@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { parseCsv } from "../../apps/control-plane/src/pipeline-csv.ts";
+import { parseCsv } from "@bap/csv";
 import { evidence } from "./evidence.ts";
 import { confirmDialog, goTo, killAgent, localMac, logIn } from "./helpers.ts";
 
@@ -17,13 +17,15 @@ test("[REQ-UI-012] the operator imports a table, links it to profiles by a colum
   // Made-up people: the owner's real table never appears in tests or screenshots.
   const csv = `ФИО;Должность;Профиль\nИванов Тест Тестович;оператор;${profile}\nПетров Проба Пробович;стажёр;нет-такого\n`;
 
+  // Another spec may have left its table: this one starts from none.
+  await page.request.delete("/api/v1/pipeline");
   await goTo(page, "Конвейер");
   await page.getByRole("button", { name: "Таблица" }).click();
   await expect(page.getByText("Таблица не загружена")).toBeVisible();
   await page.getByLabel("Файл CSV").setInputFiles({ name: "сотрудники.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
   await expect(page.getByTestId("pipeline-file")).toHaveText("сотрудники.csv");
   const table = page.getByTestId("pipeline-table");
-  await expect(table.getByRole("columnheader")).toHaveText(["ФИО", "Должность", "Профиль", "Статус профиля", "Mac", "Последний проход", "Ошибка"]);
+  await expect(table.getByRole("columnheader")).toHaveText(["ФИО", "Должность", "Профиль", "Статус профиля", "Mac", "Последний проход", "Ошибка", "LS Clicker"]);
   await expect(table.getByTestId("pipeline-profile-status")).toHaveCount(0);
 
   await page.getByLabel("Колонка с профилем").selectOption({ label: "Профиль" });
@@ -42,9 +44,9 @@ test("[REQ-UI-012] the operator imports a table, links it to profiles by a colum
   const file = await download;
   expect(file.suggestedFilename()).toBe("сотрудники-конвейер.csv");
   const exported = parseCsv(readFileSync((await file.path())!, "utf8"));
-  expect(exported.columns).toEqual(["ФИО", "Должность", "Профиль", "Статус профиля", "Mac", "Последний проход", "Статус прохода", "Ошибка", "Когда"]);
+  expect(exported.columns).toEqual(["ФИО", "Должность", "Профиль", "Статус профиля", "Mac", "Последний проход", "Статус прохода", "Ошибка", "Когда", "LS Clicker: Mac"]);
   expect(exported.rows[0]!.slice(0, 4)).toEqual(["Иванов Тест Тестович", "оператор", profile, "AVAILABLE"]);
-  expect(exported.rows[1]!.slice(3)).toEqual(["", "", "", "", "", ""]);
+  expect(exported.rows[1]!.slice(3)).toEqual(["", "", "", "", "", "", ""]);
 
   await page.getByRole("button", { name: "Очистить таблицу" }).click();
   await confirmDialog(page);

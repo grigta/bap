@@ -43,6 +43,5 @@ const app = buildApp({
     healCallsPerRun: Number(env("BAP_LLM_HEAL_CALLS", "20")),
     callsPerDay: Number(env("BAP_LLM_DAILY_CALLS", "500")),
   },
-  ...(process.env.BAP_LS_CLICKER_PANEL_URL && { lsClicker: { panelUrl: process.env.BAP_LS_CLICKER_PANEL_URL } }),
 });
 await app.listen({ host: env("HOST", "127.0.0.1"), port: Number(env("PORT", "3000")) });

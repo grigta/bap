@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@bap/browser-adapters": "workspace:*",
+    "@bap/csv": "workspace:*",
     "@bap/engine": "workspace:*",
     "@bap/protocol": "workspace:*",
     "@bap/recipe": "workspace:*",

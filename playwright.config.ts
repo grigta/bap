@@ -6,6 +6,8 @@ const shapeshiftPort = 4320;
 const farmPort = 4330;
 // Agents enrolled by e2e tests keep their keys in files, never in the developer's login keychain.
 process.env.BAP_KEY_STORAGE = "file";
+// ... and never touch a real LS Clicker in the developer's ~/Developer/ls-clicker (a test passes its own directory).
+process.env.BAP_LS_CLICKER_DIR = "";
 
 export default defineConfig({
   testDir: "tests/e2e",

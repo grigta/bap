@@ -3,7 +3,7 @@ import type { preHandlerAsyncHookHandler } from "fastify";
 import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
-import { CsvError, parseCsv, toCsv } from "./pipeline-csv.ts";
+import { CsvError, parseCsv, toCsv } from "@bap/csv";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 /** Our columns, appended to the operator's own in the table and the export. */
@@ -20,9 +20,12 @@ const ours = z
     lastRun: z.object({ id: z.string(), scenarioId: z.string(), status: z.string(), errorCode: z.string().nullable(), errorMessage: z.string().nullable(), at: z.string() }).nullable(),
   })
   .nullable();
+/** Where LS Clicker has the row: which Mac, and its output.csv result once processed (ADR-0034). */
+const lsc = z.object({ agentName: z.string(), result: z.object({ header: z.array(z.string()), cells: z.array(z.string()) }).nullable() }).nullable();
+type Lsc = z.infer<typeof lsc>;
 const pipelineSchema = z.object({
   import: z.object({ fileName: z.string(), columns: z.array(z.string()), profileColumn: z.number().nullable(), rowCount: z.number(), createdAt: z.string(), createdBy: z.string().nullable() }).nullable(),
-  rows: z.array(z.object({ cells: z.array(z.string()), ours })),
+  rows: z.array(z.object({ cells: z.array(z.string()), ours, lsc })),
 });
 type Ours = z.infer<typeof ours>;
 
@@ -37,13 +40,28 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
 
   const current = () => db.selectFrom("pipeline_import").selectAll().orderBy("created_at", "desc").executeTakeFirst();
 
+  /** LS Clicker's side of each row: the Mac it was sent to and the result that came back. */
+  const lscOf = async (importId: string) => {
+    const queued = await db
+      .selectFrom("lsclicker_queue")
+      .innerJoin("agents", "agents.id", "lsclicker_queue.agent_id")
+      .leftJoin("lsclicker_results", (j) => j.onRef("lsclicker_results.agent_id", "=", "lsclicker_queue.agent_id").onRef("lsclicker_results.position", "=", "lsclicker_queue.position"))
+      .select(["lsclicker_queue.row_n", "agents.name", "lsclicker_results.header", "lsclicker_results.cells"])
+      .where("lsclicker_queue.import_id", "=", importId)
+      .execute();
+    return new Map<number, Lsc>(queued.map((q) => [q.row_n!, { agentName: q.name, result: q.cells ? { header: q.header as string[], cells: q.cells as string[] } : null }]));
+  };
+
   /** Our side of each row: the profile named in the chosen column, its Mac and its latest run. */
   const load = async () => {
     const imp = await current();
-    if (!imp) return { imp: null, rows: [] as { cells: string[]; ours: Ours }[] };
-    const cells = (await db.selectFrom("pipeline_rows").select("cells").where("import_id", "=", imp.id).orderBy("n").execute()).map((r) => r.cells as string[]);
+    if (!imp) return { imp: null, rows: [] as { cells: string[]; ours: Ours; lsc: Lsc }[] };
+    const stored = await db.selectFrom("pipeline_rows").select(["n", "cells"]).where("import_id", "=", imp.id).orderBy("n").execute();
+    const cells = stored.map((r) => r.cells as string[]);
+    const sent = await lscOf(imp.id);
+    const lscAt = (i: number) => sent.get(stored[i]!.n) ?? null;
     const col = imp.profile_column;
-    if (col === null) return { imp, rows: cells.map((c) => ({ cells: c, ours: null })) };
+    if (col === null) return { imp, rows: cells.map((c, i) => ({ cells: c, ours: null, lsc: lscAt(i) })) };
     const profiles = await db
       .selectFrom("profiles")
       .innerJoin("agents", "agents.id", "profiles.agent_id")
@@ -69,7 +87,7 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       : [];
     return {
       imp,
-      rows: cells.map((c) => {
+      rows: cells.map((c, i) => {
         const p = byKey.get(key(c[col] ?? ""));
         const run = p && latest.find((r) => r.profile_id === p.id);
         return {
@@ -85,6 +103,7 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
                 lastRun: run ? { id: run.id, scenarioId: run.scenario_id, status: run.status, errorCode: run.error_code, errorMessage: run.error_message, at: (run.finished_at ?? run.created_at).toISOString() } : null,
               }
             : null,
+          lsc: lscAt(i),
         };
       }),
     };
@@ -151,7 +170,13 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       o
         ? [o.profileStatus, [o.agentName, o.agentModel].filter(Boolean).join(" · "), o.lastRun?.scenarioId ?? "", o.lastRun?.status ?? "", o.lastRun?.errorCode ? `${o.lastRun.errorCode}: ${o.lastRun.errorMessage ?? ""}` : (o.profileLastError ?? ""), o.lastRun?.at ?? ""]
         : OUR_COLUMNS.map(() => "");
-    const csv = toCsv(imp.delimiter, [[...(imp.columns as string[]), ...OUR_COLUMNS], ...rows.map((r) => [...r.cells, ...extra(r.ours)])]);
+    // LS Clicker's result columns (output.csv) follow ours, under its own header.
+    const resultHeader = rows.find((r) => r.lsc?.result)?.lsc?.result?.header ?? [];
+    const lscCells = (l: Lsc) => [l?.agentName ?? "", ...resultHeader.map((_, i) => l?.result?.cells[i] ?? "")];
+    const csv = toCsv(imp.delimiter, [
+      [...(imp.columns as string[]), ...OUR_COLUMNS, "LS Clicker: Mac", ...resultHeader],
+      ...rows.map((r) => [...r.cells, ...extra(r.ours), ...lscCells(r.lsc)]),
+    ]);
     const name = imp.file_name.replace(/\.csv$/i, "") + "-конвейер.csv";
     return reply
       .header("content-type", "text/csv; charset=utf-8")

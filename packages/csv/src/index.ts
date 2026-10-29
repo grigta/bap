@@ -81,3 +81,6 @@ const escape = (value: string, delimiter: string) => (value.includes(delimiter) 
 
 /** CSV for spreadsheets: a BOM so Excel reads UTF-8, CRLF between records. */
 export const toCsv = (delimiter: string, records: string[][]) => "\uFEFF" + records.map((r) => r.map((v) => escape(v, delimiter)).join(delimiter) + "\r\n").join("");
+
+/** Lines as ls-clicker writes and reads them: comma, LF, no BOM (its parser keeps a BOM in the first name). */
+export const toEngineCsv = (records: string[][]) => records.map((r) => r.map((v) => escape(v, ",")).join(",") + "\n").join("");
