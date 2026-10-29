@@ -33,12 +33,12 @@ function Root() {
 }
 
 const rootRoute = createRootRoute({ component: Root });
-const runsSearch = z.object({ status: z.enum(RUN_STATUSES).optional().catch(undefined) });
+const runsSearch = z.object({ status: z.enum(RUN_STATUSES).optional().catch(undefined), tab: z.enum(["runs", "table"]).optional().catch(undefined) });
 
 const overviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: OverviewPage });
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/agents", component: () => <AgentsPage /> });
 const agentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/agents/$agentId", component: () => <AgentsPage agentId={agentRoute.useParams().agentId} /> });
-const runsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/runs", validateSearch: runsSearch, component: () => <RunsPage status={runsRoute.useSearch().status} /> });
+const runsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/runs", validateSearch: runsSearch, component: () => <RunsPage status={runsRoute.useSearch().status} tab={runsRoute.useSearch().tab} /> });
 const runRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/runs/$runId",

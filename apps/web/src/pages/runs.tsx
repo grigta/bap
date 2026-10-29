@@ -18,6 +18,7 @@ import { seconds, shortId, time } from "@/lib/format";
 import { notifyError } from "@/lib/notify";
 import { CANCELLABLE_RUN, FINAL_RUN, type ListedRun, type PendingConfirmation, type Profile, RUN_STATUSES, type Run, type RunDetail, type RunStatus, type Step, type StepResolution } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { PipelineTable } from "./pipeline-table";
 
 const MARK = { passed: "✓", failed: "✗", unverified: "?" } as const;
 const MARK_TONE = { passed: "bg-ok-soft text-ok", failed: "bg-fail-soft text-fail", unverified: "bg-wait-soft text-wait" } as const;
@@ -319,7 +320,7 @@ function waiting(r: Run) {
   return r.startedAt ? seconds(r.createdAt, r.startedAt) : "—";
 }
 
-export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus }) {
+export function RunsPage({ runId, status, tab = "runs" }: { runId?: string; status?: RunStatus; tab?: "runs" | "table" }) {
   const navigate = useNavigate();
   const runs = useQuery({ queryKey: ["runs", status ?? ""], queryFn: () => api<ListedRun[]>(`/runs${status ? `?status=${status}` : ""}`), refetchInterval: 2000 });
 
@@ -385,7 +386,28 @@ export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus
 
   return (
     <>
-      <PageHeader title="Конвейер" description="Все проходы: сценарий, профиль и его состояние, Mac, ход выполнения со скриншотами и журналом переходов." />
+      <PageHeader
+        title="Конвейер"
+        description="Все проходы: сценарий, профиль и его состояние, Mac, ход выполнения со скриншотами и журналом переходов. Во вкладке «Таблица» — ваша таблица рядом с состоянием профилей."
+        actions={
+          <div className="flex rounded-md border p-0.5" role="group" aria-label="Что показать">
+            {(["runs", "table"] as const).map((t) => (
+              <Button key={t} size="sm" variant={tab === t ? "secondary" : "ghost"} aria-pressed={tab === t} onClick={() => navigate({ to: "/runs", search: t === "table" ? { tab: t } : {} })}>
+                {t === "table" ? "Таблица" : "Проходы"}
+              </Button>
+            ))}
+          </div>
+        }
+      />
+      {tab === "table" ? <PipelineTable /> : <RunsList runId={runId} status={status} runs={runs.data} cols={cols} />}
+    </>
+  );
+}
+
+function RunsList({ runId, status, runs, cols }: { runId?: string; status?: RunStatus; runs: ListedRun[] | undefined; cols: Column<ListedRun>[] }) {
+  const navigate = useNavigate();
+  return (
+    <>
       <NewRun onCreated={(id) => navigate({ to: "/runs/$runId", params: { runId: id }, search: (s) => s })} />
       {runId && <RunPanel key={runId} id={runId} />}
       <div className="mb-3 flex items-center gap-2">
@@ -406,8 +428,8 @@ export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus
           ))}
         </NativeSelect>
       </div>
-      {runs.data?.length === 0 && <EmptyState icon={status ? Flag : PlayCircle} title={status ? `Заданий в статусе ${status} нет` : "Заданий пока нет"} description={status ? "Сбросьте фильтр, чтобы увидеть все." : "Запустите сценарий формой выше."} />}
-      {!!runs.data?.length && <DataTable id="runs" data={runs.data} columns={cols} rowTestId={(r) => `run-${r.id}`} rowClassName={(r) => (r.id === runId ? "bg-accent/60" : undefined)} />}
+      {runs?.length === 0 && <EmptyState icon={status ? Flag : PlayCircle} title={status ? `Заданий в статусе ${status} нет` : "Заданий пока нет"} description={status ? "Сбросьте фильтр, чтобы увидеть все." : "Запустите сценарий формой выше."} />}
+      {!!runs?.length && <DataTable id="runs" data={runs} columns={cols} rowTestId={(r) => `run-${r.id}`} rowClassName={(r) => (r.id === runId ? "bg-accent/60" : undefined)} />}
     </>
   );
 }

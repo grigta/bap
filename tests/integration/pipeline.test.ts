@@ -1,0 +1,112 @@
+import { type Db, createDb, migrateToLatest } from "@bap/database";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { type App, buildApp } from "../../apps/control-plane/src/app.ts";
+import { ensureOperator } from "../../apps/control-plane/src/auth.ts";
+import { parseCsv } from "../../apps/control-plane/src/pipeline-csv.ts";
+import { memoryStore } from "../../apps/control-plane/src/storage.ts";
+
+// Made-up rows only: the owner's real table holds employees' data and never appears in tests.
+const TABLE = "Сотрудник;Профиль;Заметка\nИван Тестов;shop-a;первая\nПётр Пробный;SHOP-B ;вторая\nАнна Нетпрофиля;nobody;третья\n";
+
+let postgres: StartedPostgreSqlContainer;
+let db: Db;
+let app: App;
+let cookie: string;
+let agentId: string;
+
+const api = (method: "GET" | "POST" | "PUT" | "DELETE", url: string, payload?: object) => app.inject({ method, url, payload, cookies: { bap_session: cookie } });
+const upload = (csv: string, name = "люди.csv") =>
+  app.inject({ method: "POST", url: `/api/v1/pipeline/import?name=${encodeURIComponent(name)}`, payload: csv, headers: { "content-type": "text/csv" }, cookies: { bap_session: cookie } });
+
+beforeAll(async () => {
+  postgres = await new PostgreSqlContainer("postgres:17-alpine").start();
+  db = createDb(postgres.getConnectionUri());
+  await migrateToLatest(db);
+  await ensureOperator(db, "operator", "pw");
+  app = buildApp({ db, store: memoryStore(), secureCookies: false, fleet: { heartbeatIntervalMs: 200, suspectAfterMs: 1000, offlineAfterMs: 2000, enrollmentTtlMs: 60_000 } });
+  await app.ready();
+  cookie = (await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { login: "operator", password: "pw" } })).cookies[0]!.value;
+  const { token } = (await api("POST", "/api/v1/agents/enrollments")).json();
+  agentId = (await app.inject({ method: "POST", url: "/api/v1/agents/enroll", payload: { token, name: "mac-table", platform: "darwin", architecture: "arm64" } })).json().agentId;
+  await db.updateTable("agents").set({ model: "MacBook Air · Apple M5 · 16 GB" }).where("id", "=", agentId).execute();
+  const a = await db.insertInto("profiles").values({ provider: "linken-sphere", external_profile_id: "uuid-a", name: "shop-a", agent_id: agentId }).returning("id").executeTakeFirstOrThrow();
+  await db.insertInto("profiles").values({ provider: "linken-sphere", external_profile_id: "shop-b", name: "Магазин Б", agent_id: agentId, status: "NEEDS_REVIEW", last_error: "капча" }).execute();
+  await db.insertInto("scenarios").values({ id: "table-test" }).execute();
+  await db.insertInto("scenario_versions").values({ scenario_id: "table-test", version: "1.0.0", sha256: "0".repeat(64), bundle_key: "unused" }).execute();
+  for (const [status, at] of [["SUCCEEDED", "2026-10-01T10:00:00Z"], ["FAILED", "2026-10-02T10:00:00Z"]] as const)
+    await db
+      .insertInto("runs")
+      .values({ scenario_id: "table-test", scenario_version: "1.0.0", profile_id: a.id, agent_id: agentId, input: {}, timeout_ms: 1000, status, error_code: status === "FAILED" ? "STEP_FAILED" : null, error_message: status === "FAILED" ? "кнопки нет" : null, created_at: at, finished_at: at })
+      .execute();
+});
+
+afterAll(async () => {
+  await app?.close();
+  await db?.destroy();
+  await postgres?.stop();
+});
+
+describe("the operator's table in «Конвейер»", () => {
+  test("[REQ-UI-012] any CSV is stored as it came; the answer has counts, not values", async () => {
+    expect((await api("GET", "/api/v1/pipeline")).json()).toEqual({ import: null, rows: [] });
+    const res = await upload(TABLE);
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toEqual({ rows: 3, columns: 3 });
+    const view = (await api("GET", "/api/v1/pipeline")).json();
+    expect(view.import).toMatchObject({ fileName: "люди.csv", columns: ["Сотрудник", "Профиль", "Заметка"], profileColumn: null, rowCount: 3, createdBy: "operator" });
+    expect(view.rows.map((r: { cells: string[]; ours: unknown }) => [r.cells[0], r.ours])).toEqual([
+      ["Иван Тестов", null],
+      ["Пётр Пробный", null],
+      ["Анна Нетпрофиля", null],
+    ]);
+  });
+
+  test("[REQ-UI-012] the profile column links rows to profiles by name or LS id: their state, Mac and latest run", async () => {
+    expect((await api("PUT", "/api/v1/pipeline/profile-column", { column: 5 })).statusCode).toBe(400);
+    expect((await api("PUT", "/api/v1/pipeline/profile-column", { column: 1 })).statusCode).toBe(204);
+    const rows = (await api("GET", "/api/v1/pipeline")).json().rows;
+    expect(rows[0].ours).toMatchObject({ profileName: "shop-a", profileStatus: "AVAILABLE", agentName: "mac-table", agentModel: "MacBook Air · Apple M5 · 16 GB", lastRun: { scenarioId: "table-test", status: "FAILED", errorCode: "STEP_FAILED" } });
+    expect(rows[1].ours).toMatchObject({ profileName: "Магазин Б", profileStatus: "NEEDS_REVIEW", profileLastError: "капча", lastRun: null });
+    expect(rows[2].ours).toBeNull();
+  });
+
+  test("[REQ-UI-012] the export is the operator's columns plus ours, in the same delimiter", async () => {
+    const res = await api("GET", "/api/v1/pipeline/export");
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("text/csv; charset=utf-8");
+    expect(res.headers["content-disposition"]).toContain(encodeURIComponent("люди-конвейер.csv"));
+    const csv = parseCsv(res.body);
+    expect(csv.delimiter).toBe(";");
+    expect(csv.columns).toEqual(["Сотрудник", "Профиль", "Заметка", "Статус профиля", "Mac", "Последний проход", "Статус прохода", "Ошибка", "Когда"]);
+    expect(csv.rows[0]).toEqual(["Иван Тестов", "shop-a", "первая", "AVAILABLE", "mac-table · MacBook Air · Apple M5 · 16 GB", "table-test", "FAILED", "STEP_FAILED: кнопки нет", "2026-10-02T10:00:00.000Z"]);
+    expect(csv.rows[1]!.slice(3, 5)).toEqual(["NEEDS_REVIEW", "mac-table · MacBook Air · Apple M5 · 16 GB"]);
+    expect(csv.rows[1]![7]).toBe("капча");
+    expect(csv.rows[2]!.slice(3)).toEqual(["", "", "", "", "", ""]);
+  });
+
+  test("[REQ-UI-012] a new upload replaces the table; clearing removes it; a broken file is refused with the line, not the values", async () => {
+    expect((await upload("a,b\n1,2\n", "второй.csv")).json()).toEqual({ rows: 1, columns: 2 });
+    const view = (await api("GET", "/api/v1/pipeline")).json();
+    expect(view.import).toMatchObject({ fileName: "второй.csv", profileColumn: null, rowCount: 1 });
+    expect(await db.selectFrom("pipeline_rows").select(({ fn }) => fn.countAll<string>().as("n")).executeTakeFirstOrThrow()).toEqual({ n: "1" });
+
+    const bad = await upload("a,b\n1,2\nсекретное-значение,2,3\n");
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toMatchObject({ code: "CSV_INVALID", message: "строка 3: 3 значения при 2 колонках" });
+    expect(bad.body).not.toContain("секретное-значение");
+    expect((await api("GET", "/api/v1/pipeline")).json().import.fileName).toBe("второй.csv");
+
+    expect((await api("DELETE", "/api/v1/pipeline")).statusCode).toBe(204);
+    expect((await api("GET", "/api/v1/pipeline")).json()).toEqual({ import: null, rows: [] });
+    expect((await api("GET", "/api/v1/pipeline/export")).statusCode).toBe(404);
+  });
+
+  test("[REQ-UI-012] only the operator reaches the table, and the journal never holds its values", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/v1/pipeline" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/api/v1/pipeline/import", payload: TABLE, headers: { "content-type": "text/csv" } })).statusCode).toBe(401);
+    await upload(TABLE);
+    const journal = JSON.stringify(await db.selectFrom("audit_events").selectAll().execute());
+    for (const value of ["Иван Тестов", "Пётр Пробный", "первая", "Сотрудник"]) expect(journal).not.toContain(value);
+  });
+});

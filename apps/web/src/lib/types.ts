@@ -170,6 +170,22 @@ export interface Issue {
   /** The operator's sessions in the profile's browser, newest first. */
   remoteSessions: { id: string; openedBy: string | null; openedAt: string; endedAt: string | null; endReason: string | null; urls: string[] }[];
 }
+/** The operator's own table in «Конвейер» (REQ-UI-012) with our state of each row's profile. */
+export interface Pipeline {
+  import: { fileName: string; columns: string[]; profileColumn: number | null; rowCount: number; createdAt: string; createdBy: string | null } | null;
+  rows: {
+    cells: string[];
+    ours: {
+      profileId: string;
+      profileName: string;
+      profileStatus: ProfileStatus;
+      profileLastError: string | null;
+      agentName: string;
+      agentModel: string | null;
+      lastRun: { id: string; scenarioId: string; status: RunStatus; errorCode: string | null; errorMessage: string | null; at: string } | null;
+    } | null;
+  }[];
+}
 export interface ReviewQueue {
   runs: Issue[];
   profiles: { id: string; name: string; agentName: string; lastError: string | null; updatedAt: string }[];

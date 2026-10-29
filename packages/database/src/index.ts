@@ -153,6 +153,23 @@ export interface RemoteSessionsTable {
   urls: Generated<unknown>;
 }
 
+export interface PipelineImportTable {
+  id: Generated<string>;
+  file_name: string;
+  delimiter: string;
+  columns: unknown;
+  profile_column: number | null;
+  row_count: number;
+  created_by: string | null;
+  created_at: Timestamp;
+}
+
+export interface PipelineRowsTable {
+  import_id: string;
+  n: number;
+  cells: unknown;
+}
+
 export interface RunTransitionsTable {
   id: Generated<string>;
   run_id: string;
@@ -321,6 +338,8 @@ export interface Database {
   llm_calls: LlmCallsTable;
   settings: SettingsTable;
   remote_sessions: RemoteSessionsTable;
+  pipeline_import: PipelineImportTable;
+  pipeline_rows: PipelineRowsTable;
 }
 
 export type Db = Kysely<Database>;

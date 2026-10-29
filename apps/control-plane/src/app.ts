@@ -16,6 +16,7 @@ import type { Model } from "./llm/model.ts";
 import { registerFarming } from "./farming.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerRecipes } from "./recipes.ts";
+import { registerPipeline } from "./pipeline.ts";
 import { DEFAULT_REMOTE, type RemoteConfig, registerRemote } from "./remote.ts";
 import { registerRuns } from "./runs.ts";
 import { purgeArtifacts } from "./retention.ts";
@@ -215,6 +216,7 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     hooks.remoteProfiles = remoteSessions.profiles;
     registerRuns(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, closeRemote: remoteSessions.closeForProfile });
     registerFarming(scoped as unknown as App, { db, coordinator, operatorAuth: auth });
+    registerPipeline(scoped as unknown as App, { db, operatorAuth: auth });
     const gated = model && gatedModel(db, model, { ...DEFAULT_LIMITS, ...llmLimits }, (entry) => app.log.info(entry, "llm call"));
     hooks.onSucceeded = registerRecipes(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, model: gated }).onSucceeded;
     internals.coordinator = coordinator;
