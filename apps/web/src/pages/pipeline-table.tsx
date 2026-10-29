@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Download, FileUp, Table2, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { Download, FileUp, Pencil, Table2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
@@ -23,7 +23,7 @@ const maskProxy = (p: string) => p.replace(/^([^@]+@[^:]+:).+$/, "$1•••");
  * A cell the operator edits in place: click, type, Enter or leaving saves, Esc cancels. `locked` explains
  * why it cannot change (e.g. the row is already on a Mac).
  */
-function EditableCell({ value, label, locked, shown, check, onSave, testId }: { value: string; label: string; locked?: string; shown?: string; check?: (v: string) => string | null; onSave: (v: string) => void; testId?: string }) {
+function EditableCell({ value, label, locked, shown, placeholder, check, onSave, testId }: { value: string; label: string; locked?: string; shown?: string; placeholder?: string; check?: (v: string) => string | null; onSave: (v: string) => void; testId?: string }) {
   const [draft, setDraft] = useState<string | null>(null);
   const problem = draft !== null && check ? check(draft) : null;
   const save = () => {
@@ -40,10 +40,13 @@ function EditableCell({ value, label, locked, shown, check, onSave, testId }: { 
         title={locked ?? "Изменить"}
         aria-label={`${label}: ${shown ?? value}`}
         onClick={() => setDraft(value)}
-        className="w-full rounded-sm text-left break-words hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
+        className="group/cell flex w-full items-start gap-1 rounded-sm text-left break-words hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
       >
-        {shown ?? value}
-        {!value && <span className="text-muted-foreground">—</span>}
+        <span className="min-w-0 flex-1">
+          {shown ?? value}
+          {!value && <span className="text-muted-foreground">{placeholder ?? "—"}</span>}
+        </span>
+        {!locked && <Pencil className="mt-0.5 size-3 shrink-0 text-muted-foreground opacity-0 group-hover/cell:opacity-100" aria-hidden />}
       </button>
     );
   return (
@@ -77,6 +80,21 @@ export function PipelineTable() {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const file = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const topBar = useRef<HTMLDivElement>(null);
+  const tableEl = useRef<HTMLTableElement>(null);
+  const [wide, setWide] = useState(0);
+  // The top scrollbar is as wide as the table and moves with it.
+  useEffect(() => {
+    const table = tableEl.current;
+    if (!table) return;
+    const measure = new ResizeObserver(() => setWide(table.scrollWidth));
+    measure.observe(table);
+    return () => measure.disconnect();
+  });
+  const sync = (from: React.RefObject<HTMLDivElement | null>, to: React.RefObject<HTMLDivElement | null>) => {
+    if (from.current && to.current && to.current.scrollLeft !== from.current.scrollLeft) to.current.scrollLeft = from.current.scrollLeft;
+  };
   const [search, setSearch] = useState("");
   const table = useQuery({ queryKey: ["pipeline"], queryFn: () => api<Pipeline>("/pipeline"), refetchInterval: 5000 });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["pipeline"] });
@@ -185,8 +203,13 @@ export function PipelineTable() {
           </Button>
         </div>
       </div>
-      <div className="max-h-[70vh] overflow-auto rounded-lg border bg-card">
-        <table data-testid="pipeline-table" className="w-full text-sm">
+      <p className="text-xs text-muted-foreground">Нажмите на значение, чтобы изменить его (Enter — сохранить, Esc — отменить). Прокси строки — справа: ip:port или ip:port@login:pass, он подключается к её профилю Linken Sphere.</p>
+      {/* A scrollbar above the table too: a wide table moves sideways without scrolling down to its end first. */}
+      <div ref={topBar} aria-hidden data-testid="pipeline-scroll-top" onScroll={() => sync(topBar, box)} className="overflow-x-auto overflow-y-hidden">
+        <div style={{ width: wide, height: 1 }} />
+      </div>
+      <div ref={box} data-testid="pipeline-scroll" onScroll={() => sync(box, topBar)} className="max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border bg-card">
+        <table ref={tableEl} data-testid="pipeline-table" className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-muted text-left text-xs text-muted-foreground">
             <tr>
               {imp.columns.map((c, i) => (
@@ -194,11 +217,15 @@ export function PipelineTable() {
                   {c || `колонка ${i + 1}`}
                 </th>
               ))}
-              {["Статус профиля", "Mac", "Последний проход", "Ошибка", "LS Clicker", "Прокси"].map((c) => (
+              {["Статус профиля", "Mac", "Последний проход", "Ошибка", "LS Clicker"].map((c) => (
                 <th key={c} scope="col" className="border-l px-3 py-2 font-medium">
                   {c}
                 </th>
               ))}
+              {/* Pinned to the right edge: wide tables keep the proxy in view. */}
+              <th scope="col" className="sticky right-0 z-10 border-l bg-muted px-3 py-2 font-medium shadow-[-4px_0_6px_-4px_rgb(0_0_0/0.15)]">
+                Прокси
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -239,12 +266,13 @@ export function PipelineTable() {
                 <td data-testid="pipeline-lsc" className="px-3 py-2 text-xs" title={r.lsc?.result ? r.lsc.result.header.map((h, i) => `${h}: ${r.lsc!.result!.cells[i] ?? ""}`).join("\n") : undefined}>
                   {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">—</span>}
                 </td>
-                <td className="min-w-48 border-l px-3 py-2 font-mono text-xs">
+                <td className="sticky right-0 min-w-48 border-l bg-card px-3 py-2 font-mono text-xs shadow-[-4px_0_6px_-4px_rgb(0_0_0/0.15)]">
                   <EditableCell
                     testId="pipeline-proxy"
                     value={r.proxy ?? ""}
                     shown={r.proxy ? maskProxy(r.proxy) : undefined}
                     label={`Прокси, строка ${r.n}`}
+                    placeholder="+ прокси"
                     locked={r.lsc?.result ? "Строка обработана: прокси больше не используется" : undefined}
                     check={(v) => (v.trim() === "" || PROXY_FORMAT.test(v.trim()) ? null : "ip:port или ip:port@login:pass")}
                     onSave={(v) => edit.mutate({ n: r.n, body: { proxy: v.trim() } })}

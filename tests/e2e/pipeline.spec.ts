@@ -45,11 +45,24 @@ test("[REQ-UI-012][REQ-UI-013] the operator imports a table, links it to profile
   await expect(mine.getByRole("button", { name: /^Должность, строка 1:/ })).toHaveText("старший оператор");
   await mine.getByTestId("pipeline-proxy").click();
   await page.getByLabel("Прокси, строка 1").fill("10.0.0.7");
-  await expect(page.getByText("ip:port или ip:port@login:pass")).toBeVisible();
+  await expect(page.getByText("ip:port или ip:port@login:pass", { exact: true })).toBeVisible();
   await page.getByLabel("Прокси, строка 1").fill("10.0.0.7:1080@user:secret-pass");
   await page.getByLabel("Прокси, строка 1").press("Enter");
   await expect(mine.getByTestId("pipeline-proxy")).toHaveText("10.0.0.7:1080@user:•••");
   await evidence(page, "S21", "1-table-proxy");
+
+  // A wide table moves sideways from the scrollbar above it, without scrolling down first.
+  await page.setViewportSize({ width: 900, height: 700 });
+  const moved = await page.evaluate(() => {
+    const top = document.querySelector<HTMLElement>("[data-testid=pipeline-scroll-top]")!;
+    const box = document.querySelector<HTMLElement>("[data-testid=pipeline-scroll]")!;
+    top.scrollLeft = 120;
+    top.dispatchEvent(new Event("scroll"));
+    return { overflow: box.scrollWidth > box.clientWidth, left: box.scrollLeft };
+  });
+  expect(moved.overflow).toBe(true);
+  expect(moved.left).toBeGreaterThan(0);
+  await page.setViewportSize({ width: 1280, height: 720 });
   expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze()).violations.filter((v) => ["serious", "critical"].includes(v.impact ?? ""))).toEqual([]);
 
   const download = page.waitForEvent("download");
