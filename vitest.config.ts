@@ -40,6 +40,8 @@ export default defineConfig({
           include: ["tests/integration/**/*.test.ts", "tests/recovery/**/*.test.ts"],
           // Each file runs Postgres, Chromium and agents; more at once starves the timing-based ones (leases, crashes).
           maxWorkers: 4,
+          // A worker limit of its own needs its own group: after the unit tests.
+          sequence: { groupOrder: 1 },
           testTimeout: 60_000,
           hookTimeout: 180_000,
         },
