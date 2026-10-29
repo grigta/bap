@@ -177,7 +177,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
   );
 
   // ---- runs, log and plan of one Mac ----
-  const onMac = (path: string, method: "lsclicker.run" | "lsclicker.stop" | "lsclicker.log" | "lsclicker.plan", http: "GET" | "POST", code: 200 | 202) =>
+  const onMac = (path: string, method: "lsclicker.stop" | "lsclicker.log" | "lsclicker.plan", http: "GET" | "POST", code: 200 | 202) =>
     app.route({
       method: http,
       url: `/api/v1/agents/:id/ls-clicker/${path}`,
@@ -191,33 +191,11 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
         return reply.code(code).send(answer.result as never);
       },
     });
-  onMac("runs", "lsclicker.run", "POST", 202);
   onMac("stop", "lsclicker.stop", "POST", 202);
   onMac("log", "lsclicker.log", "GET", 200);
   onMac("plan", "lsclicker.plan", "GET", 200);
 
-  // Every free Mac that still has unprocessed rows starts its next one.
-  app.post(
-    "/api/v1/ls-clicker/runs",
-    { preHandler: operatorAuth, schema: { response: { 202: z.object({ started: z.array(z.string()), skipped: z.array(z.object({ name: z.string(), reason: z.string() })) }), 401: errorSchema } } },
-    async (_request, reply) => {
-      const started: string[] = [];
-      const skipped: { name: string; reason: string }[] = [];
-      for (const m of await macs()) {
-        if (m.connection !== "ONLINE") skipped.push({ name: m.name, reason: "не на связи" });
-        else if (m.state.run.running) skipped.push({ name: m.name, reason: "уже выполняет строку" });
-        else if (m.state.inputRows <= m.state.outputRows) skipped.push({ name: m.name, reason: "нет необработанных строк" });
-        else {
-          const answer = await ask(m.agentId, { method: "lsclicker.run" });
-          if (answer.ok) started.push(m.name);
-          else skipped.push({ name: m.name, reason: `${answer.code}: ${answer.message}` });
-        }
-      }
-      return reply.code(202).send({ started, skipped });
-    },
-  );
-
-  // ---- rows of the operator's table → Macs ----
+  // ---- runs: each Mac takes the next row of the operator's table, one at a time ----
   async function unsentRows() {
     const imp = await db.selectFrom("pipeline_import").select(["id", "columns"]).orderBy("created_at", "desc").executeTakeFirst();
     if (!imp) return [];
@@ -231,41 +209,66 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       .execute();
   }
 
-  // Unsent rows go to the chosen Macs (all online ones by default) evenly, appended to their input.csv.
-  app.post(
-    "/api/v1/ls-clicker/distribute",
-    {
-      preHandler: operatorAuth,
-      schema: {
-        body: z.object({ agentIds: z.array(z.uuid()).min(1).optional(), limit: z.number().int().positive().optional() }),
-        response: { 200: z.object({ sent: z.array(z.object({ name: z.string(), rows: z.number() })), failed: z.array(z.object({ name: z.string(), code: z.string(), message: z.string() })) }), ...errors },
-      },
-    },
-    async (request, reply) => {
+  // Taking a row and starting it is one step at a time across the server, so no row goes to two Macs.
+  let taking = Promise.resolve();
+  const serially = <T,>(work: () => Promise<T>) => {
+    const next = taking.then(work);
+    taking = next.then(
+      () => {},
+      () => {},
+    );
+    return next;
+  };
+
+  /** The Mac runs its own unprocessed row if it has one, else the next unsent table row. */
+  const start = (agentId: string) =>
+    serially(async () => {
       const imp = await db.selectFrom("pipeline_import").select(["id", "columns"]).orderBy("created_at", "desc").executeTakeFirst();
-      if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
-      const targets = (await macs()).filter((m) => m.connection === "ONLINE" && (!request.body.agentIds || request.body.agentIds.includes(m.agentId)));
-      if (targets.length === 0) return sendError(reply, request, 409, "NO_MACS", "No online Mac with LS Clicker to send rows to");
-      const rows = (await unsentRows()).slice(0, request.body.limit);
-      const share = new Map(targets.map((t) => [t.agentId, [] as typeof rows]));
-      rows.forEach((r, i) => share.get(targets[i % targets.length]!.agentId)!.push(r));
-      const sent: { name: string; rows: number }[] = [];
-      const failed: { name: string; code: string; message: string }[] = [];
-      for (const t of targets) {
-        const mine = share.get(t.agentId)!;
-        if (mine.length === 0) continue;
-        const answer = await ask(t.agentId, { method: "lsclicker.append", header: imp.columns as string[], rows: mine.map((r) => r.cells as string[]), expectedInputRows: t.state.inputRows });
-        if (!answer.ok) {
-          failed.push({ name: t.name, code: answer.code, message: answer.message });
-          continue;
-        }
-        await db
-          .insertInto("lsclicker_queue")
-          .values(mine.map((r, i) => ({ agent_id: t.agentId, position: t.state.inputRows + i, import_id: r.import_id, row_n: r.n })))
-          .execute();
-        sent.push({ name: t.name, rows: mine.length });
+      const next = (await unsentRows())[0];
+      const row = imp && next ? { header: imp.columns as string[], cells: next.cells as string[] } : undefined;
+      const answer = await ask(agentId, { method: "lsclicker.run", ...(row && { row }) });
+      if (answer.ok && next) {
+        const { appended } = z.object({ appended: z.number().int().nullable() }).parse(answer.result);
+        if (appended !== null)
+          await db
+            .insertInto("lsclicker_queue")
+            .values({ agent_id: agentId, position: appended, import_id: next.import_id, row_n: next.n })
+            .onConflict((oc) => oc.columns(["agent_id", "position"]).doUpdateSet({ import_id: next.import_id, row_n: next.n, sent_at: new Date() }))
+            .execute();
       }
-      return { sent, failed };
+      if (!answer.ok && answer.code === "LS_CLICKER_NO_ROWS") return { ok: false as const, code: "NO_ROWS", message: "The table has no rows left to run" };
+      return answer;
+    });
+
+  app.post(
+    "/api/v1/agents/:id/ls-clicker/runs",
+    { preHandler: operatorAuth, schema: { params: idParams, response: { 202: z.object({ started: z.literal(true) }), ...errors } } },
+    async (request, reply) => {
+      if (!(await db.selectFrom("agents").select("id").where("id", "=", request.params.id).where("deleted_at", "is", null).executeTakeFirst())) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+      const answer = await start(request.params.id);
+      if (!answer.ok) return sendError(reply, request, answer.code === "NO_ROWS" ? 409 : statusOf(answer.code), answer.code, answer.message);
+      return reply.code(202).send({ started: true as const });
+    },
+  );
+
+  // Every free Mac takes its next row.
+  app.post(
+    "/api/v1/ls-clicker/runs",
+    { preHandler: operatorAuth, schema: { response: { 202: z.object({ started: z.array(z.string()), skipped: z.array(z.object({ name: z.string(), reason: z.string() })) }), 401: errorSchema } } },
+    async (_request, reply) => {
+      const started: string[] = [];
+      const skipped: { name: string; reason: string }[] = [];
+      for (const m of await macs()) {
+        if (m.connection !== "ONLINE") skipped.push({ name: m.name, reason: "не на связи" });
+        else if (m.state.run.running) skipped.push({ name: m.name, reason: "уже выполняет строку" });
+        else if (!m.state.sha256) skipped.push({ name: m.name, reason: "ls-clicker ещё не установлен" });
+        else {
+          const answer = await start(m.agentId);
+          if (answer.ok) started.push(m.name);
+          else skipped.push({ name: m.name, reason: answer.code === "NO_ROWS" ? "в таблице не осталось строк" : `${answer.code}: ${answer.message}` });
+        }
+      }
+      return reply.code(202).send({ started, skipped });
     },
   );
 }

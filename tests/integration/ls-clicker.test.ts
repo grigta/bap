@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -80,80 +80,84 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect(existsSync(join(dirs["mac-a"]!, "ls-clicker"))).toBe(true);
   });
 
-  test("[REQ-LSC-002] rows of the table go to the Macs evenly, appended to input.csv in the engine's format", async () => {
+  test("[REQ-LSC-002] each run takes the next table row, placed under input.csv's own column names; its result comes back to the row", async () => {
+    // mac-b already has an input.csv: another column order and an extra column.
+    writeFileSync(join(dirs["mac-b"]!, "input.csv"), "who,note,company\n");
     expect((await api("POST", "/api/v1/pipeline/import?name=people.csv", Buffer.from(TABLE), "text/csv")).statusCode).toBe(201);
     expect((await overview()).unsent).toBe(5);
-    const res = await api("POST", "/api/v1/ls-clicker/distribute", {});
-    expect(res.json()).toEqual({ sent: [{ name: "mac-a", rows: 3 }, { name: "mac-b", rows: 2 }], failed: [] });
-    expect(readFileSync(join(dirs["mac-a"]!, "input.csv"), "utf8")).toBe("who,company\nann,Acme\ncarl,Gamma\nfail,Epsilon\n");
-    expect(readFileSync(join(dirs["mac-b"]!, "input.csv"), "utf8")).toBe("who,company\nbob,Beta\ndora,Delta\n");
-    expect((await overview()).unsent).toBe(0);
-    expect((await api("POST", "/api/v1/ls-clicker/distribute", {})).json()).toEqual({ sent: [], failed: [] });
-    await until("Macs count their rows", overview, (o) => o.macs.every((m) => m.state.inputRows === m.sent));
-    expect((await table()).map((r) => r.lsc?.agentName)).toEqual(["mac-a", "mac-b", "mac-a", "mac-b", "mac-a"]);
+
+    expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`)).statusCode).toBe(202);
+    expect(readFileSync(join(dirs["mac-a"]!, "input.csv"), "utf8")).toBe("who,company\nann,Acme\n");
+    expect((await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/runs`)).statusCode).toBe(202);
+    expect(readFileSync(join(dirs["mac-b"]!, "input.csv"), "utf8")).toBe("who,note,company\nbob,,Beta\n");
+    expect((await overview()).unsent).toBe(3);
+
+    await until("both done", overview, (o) => o.macs.every((m) => !m.state.run.running && m.state.outputRows === 1));
+    const rows = await until("results came back", table, (t) => !!t[0]!.lsc?.result && !!t[1]!.lsc?.result);
+    expect(rows[0]!.lsc).toEqual({ agentName: "mac-a", result: { header: ["who", "result"], cells: ["ann", "registered"] } });
+    expect(rows[1]!.lsc!.agentName).toBe("mac-b");
+    expect(rows[2]!.lsc).toBeNull();
+    expect((await mac("mac-a")).processed).toBe(1);
   });
 
-  test("[REQ-LSC-003] a run takes the next row; its log, stage and result reach the panel; one run at a time per Mac", async () => {
+  test("[REQ-LSC-003] one run at a time per Mac, its log and stage; «run on all»; a Mac finishes its own unprocessed row before taking another", async () => {
     const a = ids["mac-a"]!;
+    process.env.FAKE_LS_MS = "1500";
     expect((await api("POST", `/api/v1/agents/${a}/ls-clicker/runs`)).statusCode).toBe(202);
     const again = await api("POST", `/api/v1/agents/${a}/ls-clicker/runs`);
     expect(again.statusCode).toBe(409);
     expect(again.json().error.code).toBe("LS_CLICKER_RUNNING");
-    await until("finished", () => mac("mac-a"), (m) => !m.state.run.running && m.state.run.ok === true);
-    expect((await api("GET", `/api/v1/agents/${a}/ls-clicker/log`)).json().lines).toEqual(["строка 1: начинаю", "строка 1: готово"]);
+    expect((await overview()).unsent).toBe(2); // the refused run took nothing
+    // The heartbeat may still show the previous run: the log tells this run's end.
+    await until("finished", async () => (await api("GET", `/api/v1/agents/${a}/ls-clicker/log`)).json().lines, (l) => l.includes("строка 2: готово"));
+    process.env.FAKE_LS_MS = "300";
+    expect((await api("GET", `/api/v1/agents/${a}/ls-clicker/log`)).json().lines).toEqual(["строка 2: начинаю", "строка 2: готово"]);
+    await until("idle", () => mac("mac-a"), (m) => !m.state.run.running);
     expect((await mac("mac-a")).state.stage).toMatchObject({ node: "businessDetails" });
-    const rows = await until("result came back", table, (t) => t[0]!.lsc?.result !== null);
-    expect(rows[0]!.lsc).toEqual({ agentName: "mac-a", result: { header: ["who", "result"], cells: ["ann", "registered"] } });
-    expect(rows[2]!.lsc!.result).toBeNull();
-    expect((await mac("mac-a")).processed).toBe(1);
-  });
 
-  test("[REQ-LSC-003] «run on all» starts every free Mac with unprocessed rows; a failing row ends not ok", async () => {
-    const res = (await api("POST", "/api/v1/ls-clicker/runs")).json();
-    expect(res.started.sort()).toEqual(["mac-a", "mac-b"]);
-    // mac-a: its second row; mac-b: its first.
-    await until("both done", overview, (o) => o.macs.every((m) => !m.state.run.running && m.state.outputRows === (m.name === "mac-a" ? 2 : 1)));
-    await until("results", table, (t) => t.filter((r) => r.lsc?.result).length === 3);
-    // mac-a has one row left: «fail».
-    await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`);
-    const failed = await until("failed row", () => mac("mac-a"), (m) => !m.state.run.running && m.state.run.ok === false);
-    expect(failed.state.outputRows).toBe(2);
-    // The failed row stays unprocessed on mac-a; mac-b still has its second row.
-    await until("mac-b free", () => mac("mac-b"), (m) => !m.state.run.running);
+    // dora → mac-a, fail → mac-b (which then fails).
     expect((await api("POST", "/api/v1/ls-clicker/runs")).json().started.sort()).toEqual(["mac-a", "mac-b"]);
-    await until("both done again", overview, (o) => o.macs.every((m) => !m.state.run.running && m.state.outputRows === 2));
+    await until("both done", overview, (o) => o.macs.every((m) => !m.state.run.running) && o.unsent === 0);
+    const b = await until("mac-b failed", () => mac("mac-b"), (m) => m.state.run.ok === false);
+    expect(b.state).toMatchObject({ inputRows: 2, outputRows: 1 });
+    // mac-b runs its own unprocessed row again; mac-a has nothing left to take.
+    const all = (await api("POST", "/api/v1/ls-clicker/runs")).json();
+    expect(all.started).toEqual(["mac-b"]);
+    expect(all.skipped).toEqual([{ name: "mac-a", reason: "в таблице не осталось строк" }]);
+    await until("mac-b done", () => mac("mac-b"), (m) => !m.state.run.running);
+    expect((await mac("mac-b")).state.inputRows).toBe(2);
+    expect((await api("POST", `/api/v1/agents/${a}/ls-clicker/runs`)).json().error.code).toBe("NO_ROWS");
   });
 
   test("[REQ-LSC-003] a run can be stopped; the plan of the next row is shown to the operator", async () => {
-    await until("idle", () => mac("mac-a"), (m) => !m.state.run.running);
     process.env.FAKE_LS_MS = "20000";
-    await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`);
-    await until("running", () => mac("mac-a"), (m) => m.state.run.running);
-    expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/stop`)).statusCode).toBe(202);
-    await until("stopped", () => mac("mac-a"), (m) => !m.state.run.running && m.state.run.ok === false);
+    await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/runs`);
+    await until("running", () => mac("mac-b"), (m) => m.state.run.running);
+    expect((await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/stop`)).statusCode).toBe(202);
+    await until("stopped", () => mac("mac-b"), (m) => !m.state.run.running && m.state.run.ok === false);
     process.env.FAKE_LS_MS = "300";
-    expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/stop`)).json().error.code).toBe("LS_CLICKER_IDLE");
+    expect((await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/stop`)).json().error.code).toBe("LS_CLICKER_IDLE");
     expect((await api("GET", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/plan`)).json()).toEqual({ plan: { businessDetails: { "Legal business name": "next row" } } });
   });
 
-  test("[REQ-LSC-002] the export carries LS Clicker's results; another table's columns are refused without naming any value", async () => {
+  test("[REQ-LSC-002] the export carries LS Clicker's results; a table sharing no column with input.csv is refused without naming any value", async () => {
     const csv = parseCsv((await api("GET", "/api/v1/pipeline/export")).body);
     expect(csv.columns.slice(-3)).toEqual(["LS Clicker: Mac", "who", "result"]);
     expect(csv.rows[0]!.slice(-3)).toEqual(["mac-a", "ann", "registered"]);
-    expect(csv.rows[4]!.slice(-3)).toEqual(["mac-a", "", ""]);
+    expect(csv.rows[4]!.slice(-3)).toEqual(["mac-b", "", ""]);
 
     await api("POST", "/api/v1/pipeline/import?name=other.csv", Buffer.from("name,city\nzed,Oslo\n"), "text/csv");
-    const res = (await api("POST", "/api/v1/ls-clicker/distribute", { agentIds: [ids["mac-b"]] })).json();
-    expect(res.sent).toEqual([]);
-    expect(res.failed).toEqual([{ name: "mac-b", code: "LS_CLICKER_HEADER_MISMATCH", message: "the table's columns differ from input.csv on this Mac" }]);
-    expect(readFileSync(join(dirs["mac-b"]!, "input.csv"), "utf8")).not.toContain("zed");
+    const refused = await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toMatchObject({ code: "LS_CLICKER_HEADER_MISMATCH", message: "no column of the table matches input.csv on this Mac" });
+    expect(readFileSync(join(dirs["mac-a"]!, "input.csv"), "utf8")).not.toContain("zed");
+    expect((await overview()).unsent).toBe(1);
   });
 
   test("[REQ-LSC-001] a new build waits for a running row to finish; only operators reach LS Clicker; nothing of the rows is journalled", async () => {
     await api("POST", "/api/v1/pipeline/import?name=again.csv", Buffer.from("who,company\nella,Zeta\n"), "text/csv");
-    await api("POST", "/api/v1/ls-clicker/distribute", { agentIds: [ids["mac-b"]] });
     process.env.FAKE_LS_MS = "2500";
-    await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/runs`);
+    expect((await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/runs`)).statusCode).toBe(202);
     await until("running", () => mac("mac-b"), (m) => m.state.run.running);
     const v2 = Buffer.concat([FAKE, Buffer.from("\n// v2\n")]);
     const sha2 = createHash("sha256").update(v2).digest("hex");

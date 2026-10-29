@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileUp, ListChecks, MousePointerClick, Play, Send, Square } from "lucide-react";
+import { FileUp, ListChecks, MousePointerClick, Play, Square } from "lucide-react";
 import { useRef, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
@@ -121,7 +121,7 @@ function MacCard({ mac, build, flow, selected, onSelect, onPlan }: { mac: Clicke
             Остановить
           </Button>
         ) : (
-          <Button size="sm" disabled={!online || pending <= 0 || !s.sha256 || run.isPending} onClick={() => run.mutate()}>
+          <Button size="sm" disabled={!online || !s.sha256 || run.isPending} onClick={() => run.mutate()}>
             <Play aria-hidden />
             Запустить строку
           </Button>
@@ -188,14 +188,6 @@ export function LsClickerPage() {
     },
     onError: notifyError("Запуск на всех"),
   });
-  const send = useMutation({
-    mutationFn: () => api<{ sent: { name: string; rows: number }[]; failed: { name: string; message: string }[] }>("/ls-clicker/distribute", { method: "POST", body: "{}", timeoutMs: 60_000 }),
-    onSuccess: (r) => {
-      void refresh();
-      notifyDone(r.sent.length ? `Отправлено: ${r.sent.map((s) => `${s.name} — ${s.rows}`).join(", ")}` : "Строки не отправлены", r.failed.map((f) => `${f.name}: ${f.message}`).join("; ") || undefined);
-    },
-    onError: notifyError("Отправка строк"),
-  });
   const upload = useMutation({
     mutationFn: async (f: File) => api<{ sha256: string }>("/ls-clicker/builds", { method: "POST", body: await f.arrayBuffer(), headers: { "content-type": "application/octet-stream" }, timeoutMs: 60_000 }),
     onSuccess: (b) => {
@@ -213,13 +205,12 @@ export function LsClickerPage() {
     <>
       <PageHeader
         title="LS Clicker"
-        description="Движок регистрации на всех Mac. Сборка раскатывается отсюда сама, строки берутся из «Конвейер» → «Таблица», запуск — на одном Mac или на всех."
+        description="Движок регистрации на всех Mac. Сборка раскатывается отсюда сама; при каждом запуске Mac берёт следующую строку из «Конвейер» → «Таблица». Запуск — на одном Mac или на всех."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" disabled={!data?.unsent || send.isPending} onClick={() => send.mutate()}>
-              <Send aria-hidden />
-              Отправить строки{data?.unsent ? ` (${data.unsent})` : ""}
-            </Button>
+            <span data-testid="clicker-unsent" className="self-center text-sm text-muted-foreground">
+              В таблице ждут: {data?.unsent ?? 0}
+            </span>
             <Button disabled={macs.length === 0 || runAll.isPending} onClick={() => runAll.mutate()}>
               <Play aria-hidden />
               Запустить на всех

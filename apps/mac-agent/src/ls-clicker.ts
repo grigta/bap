@@ -91,9 +91,13 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       return { ...(await binary()), inputRows: rowsOf(read(input)).rows.length, outputRows: rowsOf(out).rows.length, outputHash: out === null ? null : sha(out), run: { ...run }, stage: stage() };
     },
 
-    start() {
+    /** A Mac with an unprocessed row of its own runs that first; otherwise the operator's row is appended and run. */
+    start(row?: { header: string[]; cells: string[] }) {
       running();
       if (!existsSync(bin)) throw new LsClickerError("LS_CLICKER_MISSING", "ls-clicker is not installed on this Mac yet");
+      const pending = rowsOf(read(input)).rows.length > rowsOf(read(output)).rows.length;
+      if (!pending && !row) throw new LsClickerError("LS_CLICKER_NO_ROWS", "no unprocessed row on this Mac and none was given");
+      const appended = pending ? null : this.append(row!.header, row!.cells);
       tail = [];
       Object.assign(run, { running: true, startedAt: new Date().toISOString(), finishedAt: null, ok: null });
       const p = spawn(bin, ["--find-number", "--first-row"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
@@ -116,8 +120,8 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       };
       p.on("error", (e) => done(false, `не запустился: ${e.message}`));
       p.on("exit", (code, signal) => done(code === 0, signal ? `остановлен (${signal})` : undefined));
-      opts.log("ls-clicker started");
-      return { started: true as const };
+      opts.log(appended === null ? "ls-clicker started on the Mac's own next row" : `ls-clicker started on row ${appended + 1}`);
+      return { started: true as const, appended };
     },
 
     stop() {
@@ -144,21 +148,23 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       return { header: columns, rows };
     },
 
-    append(header: string[], rows: string[][], expectedInputRows: number) {
-      running();
+    /**
+     * The operator's row goes to the end of input.csv, its values placed under input.csv's own column
+     * names (order and extra columns do not matter). Returns the row's position, i.e. its line in output.csv.
+     */
+    append(header: string[], cells: string[]) {
       const existing = read(input);
       const parsed = rowsOf(existing);
-      if (existing?.trim()) {
-        // Values are never named in errors: they are the owner's employees' data.
-        if (parsed.columns.join("\u0000") !== header.join("\u0000")) throw new LsClickerError("LS_CLICKER_HEADER_MISMATCH", "the table's columns differ from input.csv on this Mac");
-        if (parsed.rows.length !== expectedInputRows) throw new LsClickerError("LS_CLICKER_INPUT_CHANGED", `input.csv on this Mac has ${parsed.rows.length} rows, the server expected ${expectedInputRows}`);
-        writeAtomically(input, (existing.endsWith("\n") ? existing : `${existing}\n`) + toEngineCsv(rows));
-      } else {
-        if (expectedInputRows !== 0) throw new LsClickerError("LS_CLICKER_INPUT_CHANGED", `input.csv on this Mac is empty, the server expected ${expectedInputRows} rows`);
-        writeAtomically(input, toEngineCsv([header, ...rows]));
+      if (!existing?.trim()) {
+        writeAtomically(input, toEngineCsv([header, cells]));
+        return 0;
       }
-      opts.log(`appended ${rows.length} row(s) to input.csv`);
-      return { inputRows: expectedInputRows + rows.length };
+      const norm = (c: string) => c.trim().toLowerCase();
+      const at = parsed.columns.map((c) => header.findIndex((h) => norm(h) === norm(c)));
+      // Values are never named in errors: they are the owner's employees' data.
+      if (at.every((i) => i < 0)) throw new LsClickerError("LS_CLICKER_HEADER_MISMATCH", "no column of the table matches input.csv on this Mac");
+      writeAtomically(input, (existing.endsWith("\n") ? existing : `${existing}\n`) + toEngineCsv([at.map((i) => (i < 0 ? "" : (cells[i] ?? "")))]));
+      return parsed.rows.length;
     },
 
     async install(sha256: string) {

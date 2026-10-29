@@ -133,7 +133,11 @@ export const agentRequestPayload = z.discriminatedUnion("method", [
   /** Starts the browser provider app (Linken Sphere) and answers once its API responds. */
   z.object({ method: z.literal("provider.start") }),
   // ---- LS Clicker on this Mac (ADR-0034): BAP runs it, the agent executes; the command and row choice are fixed ----
-  z.object({ method: z.literal("lsclicker.run") }),
+  /**
+   * Starts the next row. With `row` (the operator's next table row) the agent first appends it to
+   * input.csv, matched to its header by column names, unless the Mac still has an unprocessed row of its own.
+   */
+  z.object({ method: z.literal("lsclicker.run"), row: z.object({ header: z.array(z.string()), cells: z.array(z.string()) }).optional() }),
   z.object({ method: z.literal("lsclicker.stop") }),
   /** The latest lines of the engine's output. */
   z.object({ method: z.literal("lsclicker.log") }),
@@ -141,8 +145,6 @@ export const agentRequestPayload = z.discriminatedUnion("method", [
   z.object({ method: z.literal("lsclicker.plan") }),
   /** output.csv as it is: header and rows; row N is the result of input row N. */
   z.object({ method: z.literal("lsclicker.output") }),
-  /** Appends rows to input.csv; refused while a run goes on or when the file has changed since the server last saw it. */
-  z.object({ method: z.literal("lsclicker.append"), header: z.array(z.string()), rows: z.array(z.array(z.string())).min(1), expectedInputRows: z.number().int().nonnegative() }),
   /** Installs the server's ls-clicker build with this sha256 (not during a run). */
   z.object({ method: z.literal("lsclicker.install"), sha256: z.string().regex(/^[0-9a-f]{64}$/) }),
 ]);

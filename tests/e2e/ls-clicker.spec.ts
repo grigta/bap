@@ -14,7 +14,7 @@ const fake = resolve(import.meta.dirname, "../fixtures/ls-clicker/fake-ls-clicke
 const agents: ChildProcess[] = [];
 test.afterAll(() => agents.forEach(killAgent));
 
-test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, rows are sent, all Macs start, log, stage and plan are shown", async ({ page }) => {
+test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac takes the next table row, log, stage and plan are shown", async ({ page }) => {
   test.setTimeout(120_000);
   await logIn(page);
   // Two Macs with an LS Clicker directory; the engine is a stand-in that registers nothing.
@@ -36,12 +36,12 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, rows are se
   await page.getByLabel("Файл сборки ls-clicker").setInputFiles({ name: "ls-clicker", mimeType: "application/octet-stream", buffer: readFileSync(fake) });
   for (const name of names) await expect(page.getByTestId(`clicker-${name}`).getByTestId("clicker-version")).toHaveText("fake-ls-clicker 1.0", { timeout: 20_000 });
 
-  await page.getByRole("button", { name: /Отправить строки/ }).click();
-  await expect(page.getByTestId(`clicker-${names[0]}`).getByTestId("clicker-rows")).toHaveText("0 из 2 обработано, в очереди 2", { timeout: 10_000 });
-  await expect(page.getByTestId(`clicker-${names[1]}`).getByTestId("clicker-rows")).toHaveText("0 из 1 обработано, в очереди 1");
-
+  await expect(page.getByTestId("clicker-unsent")).toHaveText("В таблице ждут: 3");
+  // Each Mac takes the next row of the table.
   await page.getByRole("button", { name: "Запустить на всех" }).click();
   for (const name of names) await expect(page.getByTestId(`clicker-${name}`).getByTestId("clicker-run")).toHaveText("SUCCEEDED", { timeout: 15_000 });
+  for (const name of names) await expect(page.getByTestId(`clicker-${name}`).getByTestId("clicker-rows")).toHaveText("1 из 1 обработано");
+  await expect(page.getByTestId("clicker-unsent")).toHaveText("В таблице ждут: 1");
   const first = page.getByTestId(`clicker-${names[0]}`);
   await expect(first.getByTestId("clicker-stage")).toHaveText("Бизнес-форма");
   await expect(first.getByRole("listitem").filter({ hasText: "Бизнес-форма" })).toHaveAttribute("aria-current", "step");
@@ -57,6 +57,7 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, rows are se
   // The rows' results are in the table next to them.
   await goTo(page, "Конвейер");
   await page.getByRole("button", { name: "Таблица" }).click();
-  await expect(page.getByTestId("pipeline-lsc").first()).toHaveText(`${names[0]} · обработана`, { timeout: 10_000 });
+  await expect(page.getByTestId("pipeline-lsc").nth(0)).toHaveText(/clicker-[ab]-\w+ · обработана/, { timeout: 10_000 });
+  await expect(page.getByTestId("pipeline-lsc").nth(2)).toHaveText("—");
   await evidence(page, "S19", "2-table-results");
 });

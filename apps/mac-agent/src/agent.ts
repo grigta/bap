@@ -161,7 +161,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
       try {
         switch (req.method) {
           case "lsclicker.run":
-            return clicker.start();
+            return clicker.start(req.row);
           case "lsclicker.stop":
             return clicker.stop();
           case "lsclicker.log":
@@ -170,8 +170,6 @@ export function startAgent(opts: AgentOptions): RunningAgent {
             return await clicker.plan();
           case "lsclicker.output":
             return clicker.output();
-          case "lsclicker.append":
-            return clicker.append(req.header, req.rows, req.expectedInputRows);
           case "lsclicker.install":
             return await clicker.install(req.sha256);
         }
