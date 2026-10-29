@@ -142,3 +142,31 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
   await expect(page.getByText("Таблица не загружена")).toBeVisible();
   await evidence(page, "S18", "2-empty");
 });
+
+test("[REQ-LSC-007][REQ-LSC-008] rows with a good or bad status move to «result.csv» below; rows waiting for their number or proxy are on top", async ({ page }) => {
+  await logIn(page);
+  await page.request.delete("/api/v1/pipeline");
+  // Made-up rows.
+  await page.request.post("/api/v1/pipeline/import?name=status.csv", { data: "who,status,number\nann,good,1\nbob,,2\ncarl,BAD,3\ndora,,\n", headers: { "content-type": "text/csv" } });
+  await page.request.patch("/api/v1/pipeline/rows/2", { data: { proxy: "10.9.9.9:1080" } });
+  await goTo(page, "Конвейер");
+  const rows = page.getByTestId("pipeline-table").getByTestId("pipeline-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("dora");
+  await expect(rows.nth(0).getByTestId("pipeline-lsc")).toHaveText("wait info");
+  await expect(rows.nth(1).getByTestId("pipeline-lsc")).toHaveText("готова");
+  const result = page.getByTestId("pipeline-result-table").getByTestId("pipeline-row");
+  await expect(result).toHaveCount(2);
+  await expect(result.nth(0)).toContainText("ann");
+  await expect(result.nth(1)).toContainText("carl");
+
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать result.csv" }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe("result.csv");
+  expect(parseCsv(readFileSync((await file.path())!, "utf8")).rows).toEqual([
+    ["ann", "good", "1"],
+    ["carl", "BAD", "3"],
+  ]);
+  await page.request.delete("/api/v1/pipeline");
+});

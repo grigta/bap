@@ -158,6 +158,7 @@ export function PipelineTable() {
   const [chosen, setChosen] = useStored<string[] | null>("bap.pipeline.columns", null);
   const [pageSize, setPageSize] = useStored<number>("bap.pipeline.pageSize", 50);
   const [page, setPage] = useState(0);
+  const [donePage, setDonePage] = useState(0);
   const table = useQuery({ queryKey: ["pipeline"], queryFn: () => api<Pipeline>("/pipeline"), refetchInterval: 5000 });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["pipeline"] });
 
@@ -205,8 +206,6 @@ export function PipelineTable() {
   const rows = table.data?.rows ?? [];
   const matched = rows.filter((r) => r.ours).length;
   const shown = rows.find((r) => r.n === open);
-  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
-  const current = Math.min(page, pages - 1);
 
   const pick = (
     <>
@@ -250,9 +249,58 @@ export function PipelineTable() {
     if (missing.length) return { text: "wait info", title: `ждёт: ${missing.join(" и ")}` };
     return null;
   };
+  // Rows with a good or bad status are done: they move to «result.csv» below.
+  const done = (r: Pipeline["rows"][number]) => status >= 0 && DONE_STATUSES.includes((r.cells[status] ?? "").trim().toLowerCase());
+  const doneRows = rows.filter(done);
   // Rows waiting for their number or proxy come first: they are the ones to fill in.
   const waits = (r: Pipeline["rows"][number]) => !r.lsc && skipped(r)?.text === "wait info";
-  const ordered = [...rows].sort((a, b) => Number(waits(b)) - Number(waits(a)) || a.n - b.n);
+  const ordered = rows.filter((r) => !done(r)).sort((a, b) => Number(waits(b)) - Number(waits(a)) || a.n - b.n);
+  const pages = Math.max(1, Math.ceil(ordered.length / pageSize));
+  const current = Math.min(page, pages - 1);
+  const donePages = Math.max(1, Math.ceil(doneRows.length / pageSize));
+  const doneCurrent = Math.min(donePage, donePages - 1);
+  const head = (
+    <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
+      <tr>
+        <th scope="col" className="border-r px-2 py-1 text-left font-medium">
+          #
+        </th>
+        {[...visible.map(name), "Прокси", "LS Clicker", "Статус профиля"].map((c, i) => (
+          <th key={i} scope="col" title={c} className={cn("border-r px-0 py-0 text-left font-medium", i === visible.length && "border-l")}>
+            <div className="w-36 truncate px-2 py-1">{c}</div>
+          </th>
+        ))}
+      </tr>
+    </thead>
+  );
+  const line = (r: Pipeline["rows"][number]) => (
+    <tr key={r.n} data-testid="pipeline-row" onClick={() => setOpen(r.n)} className={cn("cursor-pointer border-t hover:bg-accent/60", open === r.n && "bg-accent")}>
+      <td className="border-r px-2 py-1 text-muted-foreground tabular-nums">
+        <button type="button" className="hover:underline" aria-label={`Открыть строку ${r.n}`} onClick={() => setOpen(r.n)}>
+          {r.n}
+        </button>
+      </td>
+      {visible.map((i) => (
+        <Cell key={i}>{r.cells[i]}</Cell>
+      ))}
+      <Cell className="border-l font-mono" data-testid="pipeline-proxy">
+        {r.proxy ? maskProxy(r.proxy) : <span className="text-muted-foreground">—</span>}
+      </Cell>
+      <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : (skipped(r)?.title ?? "готова к прогону")}>
+        {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">{skipped(r)?.text ?? "готова"}</span>}
+      </Cell>
+      <Cell>{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</Cell>
+    </tr>
+  );
+  /** «result.csv»: the done rows as a file of their own, in the table's columns. */
+  const downloadResult = () => {
+    const text = [imp.columns, ...doneRows.map((r) => r.cells)].map((cells) => cells.map(csvField).join(",")).join("\n") + "\n";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+    a.download = "result.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
   return (
     <section aria-label="Таблица" className="grid gap-3">
       <div className="flex flex-wrap items-end gap-3">
@@ -336,41 +384,12 @@ export function PipelineTable() {
       </div>
       <div ref={box} data-testid="pipeline-scroll" onScroll={() => sync(box, topBar)} className="max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border bg-card">
         <table ref={tableEl} data-testid="pipeline-table" className="w-max min-w-full border-collapse text-xs">
-          <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
-            <tr>
-              <th scope="col" className="border-r px-2 py-1 text-left font-medium">
-                #
-              </th>
-              {[...visible.map(name), "Прокси", "LS Clicker", "Статус профиля"].map((c, i) => (
-                <th key={i} scope="col" title={c} className={cn("border-r px-0 py-0 text-left font-medium", i === visible.length && "border-l")}>
-                  <div className="w-36 truncate px-2 py-1">{c}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
+          {head}
           <tbody>
-            {ordered.slice(current * pageSize, (current + 1) * pageSize).map((r) => (
-              <tr key={r.n} data-testid="pipeline-row" onClick={() => setOpen(r.n)} className={cn("cursor-pointer border-t hover:bg-accent/60", open === r.n && "bg-accent")}>
-                <td className="border-r px-2 py-1 text-muted-foreground tabular-nums">
-                  <button type="button" className="hover:underline" aria-label={`Открыть строку ${r.n}`} onClick={() => setOpen(r.n)}>
-                    {r.n}
-                  </button>
-                </td>
-                {visible.map((i) => (
-                  <Cell key={i}>{r.cells[i]}</Cell>
-                ))}
-                <Cell className="border-l font-mono" data-testid="pipeline-proxy">
-                  {r.proxy ? maskProxy(r.proxy) : <span className="text-muted-foreground">—</span>}
-                </Cell>
-                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : (skipped(r)?.title ?? "готова к прогону")}>
-                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">{skipped(r)?.text ?? "готова"}</span>}
-                </Cell>
-                <Cell>{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</Cell>
-              </tr>
-            ))}
+            {ordered.slice(current * pageSize, (current + 1) * pageSize).map(line)}
             <tr className="border-t bg-muted/40">
               <td colSpan={span} className="p-0">
-                <Pages page={current} pages={pages} total={rows.length} size={pageSize} onPage={setPage} onSize={(n) => {
+                <Pages id="pipeline-pages" page={current} pages={pages} total={ordered.length} size={pageSize} onPage={setPage} onSize={(n) => {
                     setPageSize(n);
                     setPage(0);
                   }} />
@@ -380,6 +399,33 @@ export function PipelineTable() {
           </tbody>
         </table>
       </div>
+      {doneRows.length > 0 && (
+        <section aria-label="result.csv" className="grid gap-2" data-testid="pipeline-result">
+          <div className="flex items-center gap-2">
+            <h2 className="font-mono text-sm font-medium">result.csv</h2>
+            <span className="text-xs text-muted-foreground">строки со статусом good или bad: {doneRows.length}</span>
+            <Button variant="outline" size="sm" className="ml-auto" onClick={downloadResult}>
+              <Download aria-hidden />
+              Скачать result.csv
+            </Button>
+          </div>
+          <div className="max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border bg-card">
+            <table data-testid="pipeline-result-table" className="w-max min-w-full border-collapse text-xs">
+              {head}
+              <tbody>
+                {doneRows.slice(doneCurrent * pageSize, (doneCurrent + 1) * pageSize).map(line)}
+                {donePages > 1 && (
+                  <tr className="border-t bg-muted/40">
+                    <td colSpan={span} className="p-0">
+                      <Pages id="pipeline-result-pages" page={doneCurrent} pages={donePages} total={doneRows.length} size={pageSize} onPage={setDonePage} onSize={setPageSize} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       {shown && (
         <RowSheet
           row={shown}
@@ -398,13 +444,13 @@ export function PipelineTable() {
 }
 
 /** How many rows a page shows and which page is open. */
-function Pages({ page, pages, total, size, onPage, onSize }: { page: number; pages: number; total: number; size: number; onPage: (p: number) => void; onSize: (n: number) => void }) {
+function Pages({ id, page, pages, total, size, onPage, onSize }: { id: string; page: number; pages: number; total: number; size: number; onPage: (p: number) => void; onSize: (n: number) => void }) {
   return (
-    <div className="sticky left-0 flex w-fit items-center gap-2 px-2 py-1.5" data-testid="pipeline-pages">
-      <Label htmlFor="pipeline-page-size" className="text-xs text-muted-foreground">
+    <div className="sticky left-0 flex w-fit items-center gap-2 px-2 py-1.5" data-testid={id}>
+      <Label htmlFor={`${id}-size`} className="text-xs text-muted-foreground">
         Строк на странице
       </Label>
-      <NativeSelect id="pipeline-page-size" size="sm" value={size} onChange={(e) => onSize(Number(e.target.value))} className="w-20">
+      <NativeSelect id={`${id}-size`} size="sm" value={size} onChange={(e) => onSize(Number(e.target.value))} className="w-20">
         {PAGE_SIZES.map((n) => (
           <NativeSelectOption key={n} value={n}>
             {n}
