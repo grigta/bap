@@ -38,6 +38,8 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["tests/integration/**/*.test.ts", "tests/recovery/**/*.test.ts"],
+          // Each file runs Postgres, Chromium and agents; more at once starves the timing-based ones (leases, crashes).
+          maxWorkers: 4,
           testTimeout: 60_000,
           hookTimeout: 180_000,
         },

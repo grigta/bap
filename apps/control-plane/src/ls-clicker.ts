@@ -271,13 +271,17 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       const started: string[] = [];
       const skipped: { name: string; reason: string }[] = [];
       for (const m of await macs()) {
+        // Busy or not is the agent's answer: the last heartbeat may still show a run that has just ended.
         if (m.connection !== "ONLINE") skipped.push({ name: m.name, reason: "не на связи" });
-        else if (m.state.run.running) skipped.push({ name: m.name, reason: "уже выполняет строку" });
         else if (!m.state.sha256) skipped.push({ name: m.name, reason: "ls-clicker ещё не установлен" });
         else {
           const answer = await start(m.agentId);
           if (answer.ok) started.push(m.name);
-          else skipped.push({ name: m.name, reason: answer.code === "NO_ROWS" ? "в таблице не осталось строк" : `${answer.code}: ${answer.message}` });
+          else
+            skipped.push({
+              name: m.name,
+              reason: answer.code === "NO_ROWS" ? "в таблице не осталось строк" : answer.code === "LS_CLICKER_RUNNING" ? "уже выполняет строку" : `${answer.code}: ${answer.message}`,
+            });
         }
       }
       return reply.code(202).send({ started, skipped });
