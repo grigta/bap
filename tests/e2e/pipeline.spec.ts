@@ -40,7 +40,9 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
   // «только новые строки»: the rows already there become history, LS Clicker starts with the next one added.
   await page.getByRole("button", { name: "только новые строки" }).click();
   await expect(page.getByTestId("pipeline-lsc-from")).toContainText("LS Clicker берёт строки с 3-й, выше — история");
-  await expect(mine.getByTestId("pipeline-lsc")).toHaveText("история");
+  // History moves to «result.csv» below the table.
+  await expect(mine).toHaveCount(0);
+  await expect(page.getByTestId("pipeline-result-table").getByTestId("pipeline-row").filter({ hasText: "Иванов" }).getByTestId("pipeline-lsc")).toHaveText("история");
   await page.getByRole("button", { name: "брать с первой" }).click();
   // No proxy yet: the row waits for it.
   await expect(mine.getByTestId("pipeline-lsc")).toHaveText("wait info");

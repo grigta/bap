@@ -249,8 +249,8 @@ export function PipelineTable() {
     if (missing.length) return { text: "wait info", title: `ждёт: ${missing.join(" и ")}` };
     return null;
   };
-  // Rows with a good or bad status are done: they move to «result.csv» below.
-  const done = (r: Pipeline["rows"][number]) => status >= 0 && DONE_STATUSES.includes((r.cells[status] ?? "").trim().toLowerCase());
+  // Rows with a good or bad status are done, rows above the starting row are history: both move to «result.csv» below.
+  const done = (r: Pipeline["rows"][number]) => (status >= 0 && DONE_STATUSES.includes((r.cells[status] ?? "").trim().toLowerCase())) || (!r.lsc && !!imp.lscFrom && r.n < imp.lscFrom);
   const doneRows = rows.filter(done);
   // Rows waiting for their number or proxy come first: they are the ones to fill in.
   const waits = (r: Pipeline["rows"][number]) => !r.lsc && skipped(r)?.text === "wait info";
@@ -403,7 +403,7 @@ export function PipelineTable() {
         <section aria-label="result.csv" className="grid gap-2" data-testid="pipeline-result">
           <div className="flex items-center gap-2">
             <h2 className="font-mono text-sm font-medium">result.csv</h2>
-            <span className="text-xs text-muted-foreground">строки со статусом good или bad: {doneRows.length}</span>
+            <span className="text-xs text-muted-foreground">good, bad и история: {doneRows.length}</span>
             <Button variant="outline" size="sm" className="ml-auto" onClick={downloadResult}>
               <Download aria-hidden />
               Скачать result.csv
