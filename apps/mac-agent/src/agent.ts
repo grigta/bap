@@ -344,7 +344,17 @@ export function startAgent(opts: AgentOptions): RunningAgent {
         agentId = msg.payload.agentId;
         log(`connected: epoch ${msg.payload.epoch}, heartbeat every ${msg.payload.heartbeatIntervalMs} ms`);
         send({ type: "agent.capabilities", payload: { providers: opts.provider ? [opts.providerName] : [], maxSessions: opts.maxSessions } });
-        const beat = async () => send({ type: "agent.heartbeat", payload: await heartbeat() });
+        // One heartbeat at a time: a slow one overtaken by the next would land later with an older picture.
+        let beating = false;
+        const beat = async () => {
+          if (beating) return;
+          beating = true;
+          try {
+            send({ type: "agent.heartbeat", payload: await heartbeat() });
+          } finally {
+            beating = false;
+          }
+        };
         await beat();
         heartbeatTimer = setInterval(() => void beat().catch((e) => log(`heartbeat failed: ${e}`)), msg.payload.heartbeatIntervalMs);
         // Everything not acknowledged before is sent again on this connection.
