@@ -53,7 +53,8 @@ export default defineConfig({
       // entry points (main.ts, *cli.ts) run as subprocesses, which v8 coverage does not see.
       include: ["{apps,packages,tools}/*/src/**/*.ts"],
       exclude: ["**/*.test.ts", "apps/web/**", "**/main.ts", "**/*cli.ts"],
-      thresholds: coverageThresholds,
+      // A CI shard covers only part of the code: the thresholds are checked once its reports are merged.
+      thresholds: process.env.BAP_COVERAGE_SHARD ? undefined : coverageThresholds,
     },
   },
 });

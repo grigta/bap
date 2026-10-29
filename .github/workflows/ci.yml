@@ -21,6 +21,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm exec vitest run --project unit --coverage --reporter=default --reporter=blob --outputFile.blob=.vitest-reports/blob-unit.json --reporter=junit --outputFile.junit=reports/junit/vitest-unit.xml
+        env:
+          BAP_COVERAGE_SHARD: 1
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -48,6 +50,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec vitest run --project integration --shard=${{ matrix.shard }}/3 --coverage --reporter=default --reporter=blob --outputFile.blob=.vitest-reports/blob-integration-${{ matrix.shard }}.json --reporter=junit --outputFile.junit=reports/junit/vitest-integration-${{ matrix.shard }}.xml
+        env:
+          BAP_COVERAGE_SHARD: 1
       - if: always()
         uses: actions/upload-artifact@v4
         with:

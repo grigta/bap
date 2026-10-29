@@ -229,7 +229,7 @@ export function PipelineTable() {
         <div style={{ width: wide, height: 1 }} />
       </div>
       <div ref={box} data-testid="pipeline-scroll" onScroll={() => sync(box, topBar)} className="max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border bg-card">
-        <table ref={tableEl} data-testid="pipeline-table" className="text-xs">
+        <table ref={tableEl} data-testid="pipeline-table" className="w-full text-xs">
           <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
             <tr>
               <th scope="col" className="px-2 py-1 text-left font-medium">
@@ -383,7 +383,7 @@ function AddRows({ columns, onClose, onAdded }: { columns: string[]; onClose: ()
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-2xl">
         <form
-          className="grid gap-3"
+          className="grid min-w-0 gap-3"
           onSubmit={(e) => {
             e.preventDefault();
             add.mutate();
@@ -393,11 +393,11 @@ function AddRows({ columns, onClose, onAdded }: { columns: string[]; onClose: ()
             <DialogTitle>Добавить строки</DialogTitle>
             <DialogDescription>Одна строка — одна запись. Значения через запятую в порядке колонок; значение с запятой — в кавычках. Недостающие останутся пустыми.</DialogDescription>
           </DialogHeader>
-          <p className="rounded-md bg-muted/50 p-2 font-mono text-[11px] break-words text-muted-foreground">{columns.map((c, i) => c || `колонка ${i + 1}`).join(",")}</p>
+          <p className="max-h-24 overflow-y-auto rounded-md bg-muted/50 p-2 font-mono text-[11px] break-all text-muted-foreground">{columns.map((c, i) => c || `колонка ${i + 1}`).join(",")}</p>
           <Label htmlFor="add-rows" className="sr-only">
             Строки
           </Label>
-          <Textarea id="add-rows" value={text} onChange={(e) => setText(e.target.value)} rows={6} className="font-mono text-xs" placeholder="значение1,значение2,…" required />
+          <Textarea id="add-rows" value={text} onChange={(e) => setText(e.target.value)} rows={6} className="max-h-72 min-w-0 font-mono text-xs [field-sizing:fixed]" placeholder="значение1,значение2,…" required />
           <DialogFooter>
             <Button type="submit" disabled={!text.trim() || add.isPending}>
               <Plus aria-hidden />
