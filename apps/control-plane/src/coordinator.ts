@@ -244,13 +244,16 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
       }
       // The run behind an expired lease may still be working: "busy" then means wait, not review.
       if (state === "busy" && !["SUCCEEDED", "FAILED", "CANCELLED", "NEEDS_REVIEW"].includes(lease.run_status)) return;
-      if (state === "idle") await moveProfile(db, profileId, ["VERIFYING"], "AVAILABLE", { active_run_id: null, last_error: null });
-      else
-        await moveProfile(db, profileId, ["VERIFYING"], "NEEDS_REVIEW", {
-          active_run_id: null,
-          last_error: state === "missing" ? "Profile not found at the provider after the run" : state === "busy" ? "The browser still holds the profile after the run" : state,
-        });
-      await db.deleteFrom("profile_leases").where("profile_id", "=", profileId).execute();
+      // One step: nobody sees the profile free while its lease still holds it.
+      await db.transaction().execute(async (tx) => {
+        if (state === "idle") await moveProfile(tx, profileId, ["VERIFYING"], "AVAILABLE", { active_run_id: null, last_error: null });
+        else
+          await moveProfile(tx, profileId, ["VERIFYING"], "NEEDS_REVIEW", {
+            active_run_id: null,
+            last_error: state === "missing" ? "Profile not found at the provider after the run" : state === "busy" ? "The browser still holds the profile after the run" : state,
+          });
+        await tx.deleteFrom("profile_leases").where("profile_id", "=", profileId).execute();
+      });
     } finally {
       checking.delete(profileId);
     }
