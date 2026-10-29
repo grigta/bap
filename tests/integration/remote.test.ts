@@ -156,7 +156,8 @@ describe("remote browser of a failed run's profile", () => {
   test("[REQ-UI-011] while the operator is in the profile, runs on it wait; a session nobody watches closes by itself", async () => {
     const { runId, profileId, external } = await failedRun("AVAILABLE");
     const { sessionId } = (await api("POST", `/api/v1/runs/${runId}/remote`)).json();
-    await until("browser started", () => lsStatus(external), (s) => s !== "stopped");
+    const view = await watch(sessionId);
+    await until("opened", () => view.got, (g) => g.some((m) => m.type === "opened"));
     const waiting = await db
       .insertInto("runs")
       .values({ scenario_id: "farm", kind: "farm", profile_id: profileId, agent_id: agentId, input: { query: "кофе", sites: 1, dwellSeconds: 1, searchUrl: `${siteUrl}/` }, timeout_ms: 60_000, status: "QUEUED" })
@@ -166,7 +167,8 @@ describe("remote browser of a failed run's profile", () => {
     expect((await api("GET", `/api/v1/runs/${waiting.id}`)).json()).toMatchObject({ status: "QUEUED", queueReason: "PROFILE_BUSY" });
     await api("POST", `/api/v1/runs/${waiting.id}/cancel`);
 
-    // Nobody connected: closed after the idle timeout, and the browser stops.
+    // The operator left without closing: after the idle timeout the session ends and the browser stops.
+    view.ws.close();
     await until("closed when idle", async () => (await db.selectFrom("remote_sessions").select(["ended_at", "end_reason"]).where("id", "=", sessionId).executeTakeFirstOrThrow()).end_reason, (r) => r === "никто не смотрел сессию", IDLE_MS + 10_000);
     await until("LS session stopped", () => lsStatus(external), (s) => s === "stopped");
   });

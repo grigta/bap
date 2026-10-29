@@ -191,7 +191,8 @@ describe("admission to recipes", () => {
     const reviewed = await until("profile to review", () => profileView(profileId), (p) => p.status === "NEEDS_REVIEW");
     expect(reviewed).toMatchObject({ warmups: 0, warmupFailures: 3, lastError: expect.stringMatching(/^warm-up failed 3 times in a row; last: FARM_CAPTCHA/) });
     expect((await farms(profileId)).map((f) => f.error_code)).toEqual(["FARM_CAPTCHA", "FARM_CAPTCHA", "FARM_CAPTCHA"]);
-    expect(await runView(runId)).toMatchObject({ status: "QUEUED", queueReason: "PROFILE_NEEDS_REVIEW" });
+    // The next scheduler pass gives the recipe its new reason.
+    await until("recipe waits for review", () => runView(runId), (r) => r.status === "QUEUED" && r.queueReason === "PROFILE_NEEDS_REVIEW");
     // The search engine lets us in again; the operator releases the profile and the recipe goes on.
     await api("PUT", "/api/v1/farming/settings", settings());
     expect((await api("POST", `/api/v1/profiles/${profileId}/release-review`)).json()).toMatchObject({ warmupFailures: 0 });
