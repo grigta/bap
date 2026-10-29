@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Download, FileUp, Maximize2, Minimize2, Pencil, Plus, Settings2, Table2, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, FileUp, Maximize2, Minimize2, Pencil, Play, Plus, Settings2, Table2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
@@ -190,6 +190,12 @@ export function PipelineTable() {
     onError: notifyError("Добавить строку"),
   });
 
+  const setFrom = useMutation({
+    mutationFn: (n: number | null) => api(`/pipeline/lsc-from`, { method: "PUT", body: JSON.stringify({ n }) }),
+    onSuccess: () => void refresh(),
+    onError: notifyError("Строка, с которой берёт LS Clicker"),
+  });
+
   const imp = table.data?.import ?? null;
   const rows = table.data?.rows ?? [];
   const matched = rows.filter((r) => r.ours).length;
@@ -238,6 +244,24 @@ export function PipelineTable() {
           <span className="text-xs text-muted-foreground">
             строк {imp.rowCount}, с профилем {matched} · загружено {dateTime(imp.createdAt)}
             {imp.createdBy && `, ${imp.createdBy}`}
+          </span>
+          {/* Rows above the starting row are history: LS Clicker never runs them. */}
+          <span className="flex items-center gap-1 text-xs" data-testid="pipeline-lsc-from">
+            {imp.lscFrom ? (
+              <>
+                LS Clicker берёт строки с {imp.lscFrom}-й, выше — история
+                <Button variant="link" size="xs" className="h-auto px-1" onClick={() => setFrom.mutate(null)}>
+                  брать с первой
+                </Button>
+              </>
+            ) : (
+              <>
+                LS Clicker берёт строки с первой
+                <Button variant="link" size="xs" className="h-auto px-1" onClick={() => setFrom.mutate(Math.max(0, ...rows.map((r) => r.n)) + 1)}>
+                  только новые строки
+                </Button>
+              </>
+            )}
           </span>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
@@ -319,8 +343,8 @@ export function PipelineTable() {
                 <Cell className="border-l font-mono" data-testid="pipeline-proxy">
                   {r.proxy ? maskProxy(r.proxy) : <span className="text-muted-foreground">—</span>}
                 </Cell>
-                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : "не отправлена"}>
-                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">—</span>}
+                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : imp.lscFrom && r.n < imp.lscFrom ? "история: не запускается" : "не отправлена"}>
+                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">{imp.lscFrom && r.n < imp.lscFrom ? "история" : "—"}</span>}
                 </Cell>
                 <Cell>{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</Cell>
               </tr>
@@ -343,6 +367,7 @@ export function PipelineTable() {
           columns={imp.columns}
           onClose={() => setOpen(null)}
           onSave={(body) => edit.mutate({ n: shown.n, body })}
+          onStartHere={() => setFrom.mutate(shown.n)}
           onDelete={async () => {
             if (await confirm({ title: `Удалить строку ${shown.n}?`, description: "Строка удалится из таблицы. Номера остальных строк не изменятся.", action: "Удалить", destructive: true })) remove.mutate(shown.n);
           }}
@@ -415,7 +440,21 @@ function NewRow({ columns, visible, onAdd }: { columns: string[]; visible: numbe
 }
 
 /** One row in full: every field editable, the proxy, and what BAP and LS Clicker know about it. */
-function RowSheet({ row: r, columns, onClose, onSave, onDelete }: { row: Pipeline["rows"][number]; columns: string[]; onClose: () => void; onSave: (body: { cells?: string[]; proxy?: string }) => void; onDelete: () => void }) {
+function RowSheet({
+  row: r,
+  columns,
+  onClose,
+  onSave,
+  onDelete,
+  onStartHere,
+}: {
+  row: Pipeline["rows"][number];
+  columns: string[];
+  onClose: () => void;
+  onSave: (body: { cells?: string[]; proxy?: string }) => void;
+  onDelete: () => void;
+  onStartHere: () => void;
+}) {
   const locked = r.lsc ? "Строка уже на Mac: в input.csv она не меняется" : undefined;
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
@@ -483,10 +522,16 @@ function RowSheet({ row: r, columns, onClose, onSave, onDelete }: { row: Pipelin
           </section>
           {/* A row on a Mac keeps its place in input.csv there, so only an unsent row can go. */}
           {!r.lsc && (
-            <Button variant="outline" className="justify-self-start text-fail" onClick={onDelete}>
-              <Trash2 aria-hidden />
-              Удалить строку
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={onStartHere}>
+                <Play aria-hidden />
+                LS Clicker — с этой строки
+              </Button>
+              <Button variant="outline" className="text-fail" onClick={onDelete}>
+                <Trash2 aria-hidden />
+                Удалить строку
+              </Button>
+            </div>
           )}
         </div>
       </SheetContent>

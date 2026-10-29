@@ -10,7 +10,7 @@ import { confirmDialog, goTo, killAgent, localMac, logIn } from "./helpers.ts";
 const agents: ChildProcess[] = [];
 test.afterAll(() => agents.forEach(killAgent));
 
-test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table and sees it like a spreadsheet, picks the collapsed columns, opens a row to edit its cells and proxy, adds rows in the empty last row or as a list, deletes rows, pages through, and exports it with our columns", async ({ page }) => {
+test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a table and sees it like a spreadsheet, picks the collapsed columns, opens a row to edit its cells and proxy, adds rows in the empty last row or as a list, deletes rows, pages through, and exports it with our columns", async ({ page }) => {
   test.setTimeout(90_000);
   await logIn(page);
   const profile = await localMac(page, agents, `table-${randomUUID().slice(0, 4)}`);
@@ -35,6 +35,13 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table and sees
   // Like a spreadsheet: every value on one line.
   await expect(mine).toContainText("Иванов Тест Тестович");
   await expect(mine.getByTestId("pipeline-proxy")).toHaveText("—");
+
+  // «только новые строки»: the rows already there become history, LS Clicker starts with the next one added.
+  await page.getByRole("button", { name: "только новые строки" }).click();
+  await expect(page.getByTestId("pipeline-lsc-from")).toContainText("LS Clicker берёт строки с 3-й, выше — история");
+  await expect(mine.getByTestId("pipeline-lsc")).toHaveText("история");
+  await page.getByRole("button", { name: "брать с первой" }).click();
+  await expect(mine.getByTestId("pipeline-lsc")).toHaveText("—");
 
   // «Настройка» picks the columns of the collapsed view; «Развернуть» shows them all.
   await page.getByRole("button", { name: "Настройка" }).click();

@@ -25,7 +25,7 @@ const ours = z
 const lsc = z.object({ agentName: z.string(), result: z.object({ header: z.array(z.string()), cells: z.array(z.string()) }).nullable() }).nullable();
 type Lsc = z.infer<typeof lsc>;
 const pipelineSchema = z.object({
-  import: z.object({ fileName: z.string(), columns: z.array(z.string()), profileColumn: z.number().nullable(), rowCount: z.number(), createdAt: z.string(), createdBy: z.string().nullable() }).nullable(),
+  import: z.object({ fileName: z.string(), columns: z.array(z.string()), profileColumn: z.number().nullable(), lscFrom: z.number().nullable(), rowCount: z.number(), createdAt: z.string(), createdBy: z.string().nullable() }).nullable(),
   rows: z.array(z.object({ n: z.number(), cells: z.array(z.string()), proxy: z.string().nullable(), ours, lsc })),
 });
 type Ours = z.infer<typeof ours>;
@@ -148,7 +148,7 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
   app.get("/api/v1/pipeline", { preHandler: operatorAuth, schema: { response: { 200: pipelineSchema, ...errors } } }, async () => {
     const { imp, rows } = await load();
     return {
-      import: imp && { fileName: imp.file_name, columns: imp.columns as string[], profileColumn: imp.profile_column, rowCount: imp.row_count, createdAt: imp.created_at.toISOString(), createdBy: imp.created_by },
+      import: imp && { fileName: imp.file_name, columns: imp.columns as string[], profileColumn: imp.profile_column, lscFrom: imp.lsc_from, rowCount: imp.row_count, createdAt: imp.created_at.toISOString(), createdBy: imp.created_by },
       rows,
     };
   });
@@ -162,6 +162,18 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       const { column } = request.body;
       if (column !== null && column >= (imp.columns as string[]).length) return sendError(reply, request, 400, "COLUMN_INVALID", `The table has ${(imp.columns as string[]).length} columns`);
       await db.updateTable("pipeline_import").set({ profile_column: column }).where("id", "=", imp.id).execute();
+      return reply.code(204).send(null);
+    },
+  );
+
+  // The row LS Clicker starts from: rows above it are history and never run (null: from the first row).
+  app.put(
+    "/api/v1/pipeline/lsc-from",
+    { preHandler: operatorAuth, schema: { body: z.object({ n: z.number().int().positive().nullable() }), response: { 204: z.null(), ...errors } } },
+    async (request, reply) => {
+      const imp = await current();
+      if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
+      await db.updateTable("pipeline_import").set({ lsc_from: request.body.n }).where("id", "=", imp.id).execute();
       return reply.code(204).send(null);
     },
   );

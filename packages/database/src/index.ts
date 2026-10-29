@@ -159,6 +159,8 @@ export interface PipelineImportTable {
   delimiter: string;
   columns: unknown;
   profile_column: number | null;
+  /** LS Clicker takes rows from this number on; rows above it are history. */
+  lsc_from: number | null;
   row_count: number;
   created_by: string | null;
   created_at: Timestamp;

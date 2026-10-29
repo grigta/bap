@@ -172,7 +172,7 @@ export interface Issue {
 }
 /** The operator's own table in «Конвейер» (REQ-UI-012) with our state of each row's profile. */
 export interface Pipeline {
-  import: { fileName: string; columns: string[]; profileColumn: number | null; rowCount: number; createdAt: string; createdBy: string | null } | null;
+  import: { fileName: string; columns: string[]; profileColumn: number | null; lscFrom: number | null; rowCount: number; createdAt: string; createdBy: string | null } | null;
   rows: {
     /** The row's number in the table (for edits). */
     n: number;

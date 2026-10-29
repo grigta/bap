@@ -198,7 +198,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
 
   // ---- runs: each Mac takes the next row of the operator's table, one at a time ----
   async function unsentRows() {
-    const imp = await db.selectFrom("pipeline_import").select(["id", "columns"]).orderBy("created_at", "desc").executeTakeFirst();
+    const imp = await db.selectFrom("pipeline_import").select(["id", "columns", "lsc_from"]).orderBy("created_at", "desc").executeTakeFirst();
     if (!imp) return [];
     return db
       .selectFrom("pipeline_rows")
@@ -206,6 +206,8 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       .select(["pipeline_rows.import_id", "pipeline_rows.n", "pipeline_rows.cells", "pipeline_rows.proxy"])
       .where("pipeline_rows.import_id", "=", imp.id)
       .where("lsclicker_queue.position", "is", null)
+      // Rows above the operator's starting row are history: they are never run.
+      .where("pipeline_rows.n", ">=", imp.lsc_from ?? 1)
       .orderBy("pipeline_rows.n")
       .execute();
   }
