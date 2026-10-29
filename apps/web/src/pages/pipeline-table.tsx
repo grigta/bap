@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -271,10 +271,10 @@ export function PipelineTable() {
             Строки списком
           </Button>
           {pick}
-          <Button variant="outline" nativeButton={false} render={<a href="/api/v1/pipeline/export" download />}>
+          <a href="/api/v1/pipeline/export" download className={buttonVariants({ variant: "outline" })}>
             <Download aria-hidden />
             Выгрузить CSV
-          </Button>
+          </a>
           <Button
             variant="ghost"
             aria-label="Очистить таблицу"

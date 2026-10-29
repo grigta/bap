@@ -6,7 +6,7 @@ import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
 import { RemoteBrowser } from "@/components/remote-browser";
 import { StatusBadge } from "@/components/status-badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -98,10 +98,10 @@ function FailureDetails({ issue }: { issue: Issue }) {
               </dl>
               <div className="flex items-center justify-between">
                 <h4 className="text-xs text-muted-foreground">Элементы страницы: {elements.length}</h4>
-                <Button size="xs" variant="outline" nativeButton={false} render={<a href={content(issue.id, step!.failureArtifactId!)} download={`failure-${shortId(issue.id)}.json`} />}>
+                <a href={content(issue.id, step!.failureArtifactId!)} download={`failure-${shortId(issue.id)}.json`} className={buttonVariants({ size: "xs", variant: "outline" })}>
                   <Download aria-hidden />
                   Скачать слепок
-                </Button>
+                </a>
               </div>
               {elements.length > 0 && (
                 <div className="max-h-80 overflow-auto rounded-md border">

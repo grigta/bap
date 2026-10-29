@@ -4,7 +4,7 @@ import { ScrollText } from "lucide-react";
 import { type Column, DataTable, columns } from "@/components/data-table";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/layout/app-shell";
@@ -46,9 +46,9 @@ export function LogsTabs({ current }: { current: "audit" | "runs" }) {
   return (
     <div className="flex rounded-md border p-0.5" role="group" aria-label="Что показать">
       {(["audit", "runs"] as const).map((t) => (
-        <Button key={t} size="sm" variant={current === t ? "secondary" : "ghost"} aria-current={current === t ? "page" : undefined} nativeButton={false} render={<Link to={t === "runs" ? "/runs" : "/audit"} />}>
+        <Link key={t} to={t === "runs" ? "/runs" : "/audit"} aria-current={current === t ? "page" : undefined} className={buttonVariants({ size: "sm", variant: current === t ? "secondary" : "ghost" })}>
           {t === "runs" ? "Проходы" : "Журнал"}
-        </Button>
+        </Link>
       ))}
     </div>
   );
