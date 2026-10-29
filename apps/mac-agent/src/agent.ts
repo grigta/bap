@@ -8,6 +8,7 @@ import { AgentStore, type OutboxEvent } from "./agent-store.ts";
 import { checkServerUrl } from "./config.ts";
 import { readModel } from "./model.ts";
 import { readPower } from "./power.ts";
+import { remoteBrowser } from "./remote.ts";
 import { devBuild, installBuild } from "./self-update.ts";
 import { purgeLocalRuns } from "./retention.ts";
 import { type EmitRunEvent, executeRun } from "./runner.ts";
@@ -116,7 +117,18 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     finish(reason);
   };
 
-  const activeRuns = new Map<string, { cancelled: boolean }>();
+  const activeRuns = new Map<string, { cancelled: boolean; profileExternalId: string }>();
+  // The operator's remote browser goes over the live connection; frames are dropped while there is none.
+  let liveSocket: WebSocket | null = null;
+  const remote = remoteBrowser({
+    provider: opts.provider,
+    send: (msg, sent) => {
+      if (liveSocket?.readyState !== WebSocket.OPEN) return;
+      liveSocket.send(JSON.stringify(message(msg)), () => sent?.());
+    },
+    busyProfiles: () => new Set([...activeRuns.values()].map((r) => r.profileExternalId)),
+    log,
+  });
   let agentId = "";
 
   const heartbeat = async (): Promise<HeartbeatPayload> => ({
@@ -216,7 +228,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   }
 
   const startRun = (assign: RunAssignPayload, provider: BrowserProvider) => {
-    const control = { cancelled: false };
+    const control = { cancelled: false, profileExternalId: assign.profileExternalId };
     activeRuns.set(assign.runId, control);
     runningInThisProcess.add(assign.runId);
     store.setRun(assign.runId, "running", assign);
@@ -299,10 +311,14 @@ export function startAgent(opts: AgentOptions): RunningAgent {
         // Everything not acknowledged before is sent again on this connection.
         sentOnThisConnection = new Set();
         liveSend = (event) => ws.send(JSON.stringify({ ...event, seq: ++seq }));
+        liveSocket = ws;
         void flush();
       } else if (msg.type === "server.ack") store.acknowledge(msg.payload.id);
       else if (msg.type === "run.assign") onAssign(msg.payload);
       else if (msg.type === "run.cancel") onCancel(msg.payload.runId);
+      else if (msg.type === "remote.open") void remote.open(msg.payload.sessionId, msg.payload.profileExternalId, msg.payload.startUrl);
+      else if (msg.type === "remote.input") remote.input(msg.payload.sessionId, msg.payload.input);
+      else if (msg.type === "remote.close") void remote.close(msg.payload.sessionId, "закрыта оператором");
       else if (msg.type === "agent.update") {
         const update = opts.selfUpdate;
         // The server offers it only when idle; a run that arrived since then is finished first (offered again later).
@@ -339,6 +355,9 @@ export function startAgent(opts: AgentOptions): RunningAgent {
     ws.on("error", (e) => log(`connection error: ${e.message}`));
     ws.on("close", (code, reason) => {
       liveSend = null;
+      liveSocket = null;
+      // Nobody can watch or close the browser any more: it must not stay open holding the profile.
+      void remote.closeAll("агент потерял связь с сервером");
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
       if (finished) return;

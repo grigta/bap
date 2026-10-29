@@ -127,6 +127,32 @@ export const agentResponse = z.object({
   }),
 });
 
+// ---- Remote browser (REQ-AGENT-005): the operator works in a profile's browser from the panel ----
+// Not run events: no sequence, no outbox, not stored; a lost frame is replaced by the next one.
+const sessionId = { sessionId: z.uuid() };
+export const remoteOpened = z.object({ ...envelope, type: z.literal("remote.opened"), payload: z.object(sessionId) });
+export const remoteFailed = z.object({ ...envelope, type: z.literal("remote.failed"), payload: z.object({ ...sessionId, code: z.string(), message: z.string() }) });
+/** One screencast frame of the page (JPEG, base64), in CSS pixels of the viewport. */
+export const remoteFrame = z.object({ ...envelope, type: z.literal("remote.frame"), payload: z.object({ ...sessionId, data: z.string(), width: z.number(), height: z.number() }) });
+export const remotePage = z.object({ ...envelope, type: z.literal("remote.page"), payload: z.object({ ...sessionId, url: z.string(), title: z.string() }) });
+export const remoteClosed = z.object({ ...envelope, type: z.literal("remote.closed"), payload: z.object({ ...sessionId, reason: z.string() }) });
+export type RemoteAgentMessage = z.infer<typeof remoteOpened> | z.infer<typeof remoteFailed> | z.infer<typeof remoteFrame> | z.infer<typeof remotePage> | z.infer<typeof remoteClosed>;
+
+/** What the operator does in the remote browser; coordinates are CSS pixels of the page. */
+export const remoteInput = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("click"), x: z.number(), y: z.number(), button: z.enum(["left", "right", "middle"]).default("left"), clickCount: z.number().int().min(1).max(3).default(1) }),
+  z.object({ kind: z.literal("move"), x: z.number(), y: z.number() }),
+  z.object({ kind: z.literal("wheel"), x: z.number(), y: z.number(), deltaX: z.number(), deltaY: z.number() }),
+  /** A key by its KeyboardEvent.key name (Enter, Backspace, ArrowDown, a, …), with modifiers held. */
+  z.object({ kind: z.literal("key"), key: z.string().min(1).max(32), modifiers: z.array(z.enum(["Alt", "Control", "Meta", "Shift"])).default([]) }),
+  z.object({ kind: z.literal("text"), text: z.string().min(1).max(10_000) }),
+  z.object({ kind: z.literal("goto"), url: z.url() }),
+  z.object({ kind: z.literal("back") }),
+  z.object({ kind: z.literal("forward") }),
+  z.object({ kind: z.literal("reload") }),
+]);
+export type RemoteInput = z.infer<typeof remoteInput>;
+
 export const agentMessage = z.discriminatedUnion("type", [
   agentHello,
   agentCapabilities,
@@ -139,11 +165,17 @@ export const agentMessage = z.discriminatedUnion("type", [
   runFailed,
   runCheckpoint,
   runCancelled,
+  remoteOpened,
+  remoteFailed,
+  remoteFrame,
+  remotePage,
+  remoteClosed,
 ]);
 export type AgentMessage = z.infer<typeof agentMessage>;
 /** Messages that are logged and deduplicated by (epoch, sequence). */
-export type AgentEvent = Exclude<AgentMessage, z.infer<typeof agentHello> | z.infer<typeof agentResponse>>;
+export type AgentEvent = Exclude<AgentMessage, z.infer<typeof agentHello> | z.infer<typeof agentResponse> | RemoteAgentMessage>;
 export type RunEvent = Extract<AgentEvent, { type: `run.${string}` }>;
+export const isRemoteMessage = (m: AgentMessage): m is RemoteAgentMessage => m.type.startsWith("remote.");
 
 export const serverWelcome = z.object({
   ...envelope,
@@ -185,7 +217,16 @@ export const agentRotateKey = z.object({ ...envelope, type: z.literal("agent.rot
 /** The server has a newer agent build: fetch it with the agent key, verify this sha256, restart on it. */
 export const agentUpdate = z.object({ ...envelope, type: z.literal("agent.update"), payload: z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }) });
 
-export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain, runCancel, agentRotateKey, agentUpdate]);
+/** Open the profile's browser for the operator; startUrl is where the failed run stopped. */
+export const remoteOpen = z.object({
+  ...envelope,
+  type: z.literal("remote.open"),
+  payload: z.object({ sessionId: z.uuid(), profileExternalId: z.string(), startUrl: z.string().nullable() }),
+});
+export const remoteInputMessage = z.object({ ...envelope, type: z.literal("remote.input"), payload: z.object({ sessionId: z.uuid(), input: remoteInput }) });
+export const remoteClose = z.object({ ...envelope, type: z.literal("remote.close"), payload: z.object({ sessionId: z.uuid() }) });
+
+export const serverMessage = z.discriminatedUnion("type", [serverWelcome, serverAck, serverError, serverRequest, runAssign, agentDrain, runCancel, agentRotateKey, agentUpdate, remoteOpen, remoteInputMessage, remoteClose]);
 export type ServerMessage = z.infer<typeof serverMessage>;
 
 /** Builds a message with a fresh envelope. */

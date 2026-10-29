@@ -16,6 +16,7 @@ import type { Model } from "./llm/model.ts";
 import { registerFarming } from "./farming.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerRecipes } from "./recipes.ts";
+import { DEFAULT_REMOTE, type RemoteConfig, registerRemote } from "./remote.ts";
 import { registerRuns } from "./runs.ts";
 import { purgeArtifacts } from "./retention.ts";
 import { webHandler } from "./web.ts";
@@ -40,6 +41,8 @@ export interface AppOptions {
   /** Model for recording and healing recipes; without it both are refused. Lives on the server only (REQ-DOM-009). */
   model?: Model | null;
   llmLimits?: Partial<LlmLimits>;
+  /** Timeouts of the operator's remote browser sessions. */
+  remote?: Partial<RemoteConfig>;
 }
 
 export interface RegisteredRoute {
@@ -50,7 +53,7 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir, model = null, llmLimits }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir, model = null, llmLimits, remote }: AppOptions) {
   // Request bodies are never logged; credentials in headers are redacted should headers ever be logged (REQ-SEC-008).
   const redact = ["req.headers.authorization", "req.headers.cookie", "req.headers[\"idempotency-key\"]", "res.headers[\"set-cookie\"]"];
   const app = Fastify({
@@ -208,7 +211,9 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     registerProfiles(scoped as unknown as App, db, agents, fleetConfig, auth);
     const hooks: CoordinatorHooks = {};
     const coordinator = createCoordinator(db, agents, fleetConfig, { ...DEFAULT_SCHEDULER, ...scheduler }, hooks);
-    registerRuns(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth });
+    const remoteSessions = registerRemote(scoped as unknown as App, { db, fleet: agents, fleetConfig, coordinator, store, operatorAuth: auth, config: { ...DEFAULT_REMOTE, ...remote } });
+    hooks.remoteProfiles = remoteSessions.profiles;
+    registerRuns(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, closeRemote: remoteSessions.closeForProfile });
     registerFarming(scoped as unknown as App, { db, coordinator, operatorAuth: auth });
     const gated = model && gatedModel(db, model, { ...DEFAULT_LIMITS, ...llmLimits }, (entry) => app.log.info(entry, "llm call"));
     hooks.onSucceeded = registerRecipes(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, model: gated }).onSucceeded;

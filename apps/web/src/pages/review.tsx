@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Check, ClipboardCheck, Download } from "lucide-react";
+import { Check, ClipboardCheck, Download, MonitorPlay } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
+import { RemoteBrowser } from "@/components/remote-browser";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -137,6 +138,20 @@ function FailureDetails({ issue }: { issue: Issue }) {
           )}
         </div>
       </div>
+      {issue.remoteSessions.length > 0 && (
+        <section aria-label="Удалённые сессии" className="grid gap-1.5">
+          <h4 className="text-xs text-muted-foreground">Удалённые сессии</h4>
+          <ul data-testid="remote-sessions" className="grid gap-1 text-xs">
+            {issue.remoteSessions.map((r) => (
+              <li key={r.id}>
+                <span className="tabular-nums">{dateTime(r.openedAt)}</span>, {r.openedBy ?? "—"}
+                {r.endedAt ? <span className="text-muted-foreground"> — {r.endReason}</span> : <span className="text-ok"> — открыта</span>}
+                {r.urls.length > 0 && <span className="block font-mono break-all text-muted-foreground">{r.urls.join(" → ")}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {run.data && (
         <details>
           <summary className="cursor-pointer text-xs text-muted-foreground">Журнал переходов ({run.data.transitions.length})</summary>
@@ -200,7 +215,14 @@ function ResolveDialog({ issue, onClose }: { issue: Issue; onClose: () => void }
 
 function IssueRow({ issue, onResolve }: { issue: Issue; onResolve: (i: Issue) => void }) {
   const actions = useRunActions();
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [remote, setRemote] = useState<string | null>(null);
+  const connect = useMutation({
+    mutationFn: () => api<{ sessionId: string }>(`/runs/${issue.id}/remote`, { method: "POST" }),
+    onSuccess: ({ sessionId }) => setRemote(sessionId),
+    onError: notifyError("Подключение к профилю"),
+  });
   return (
     <li data-testid={`review-run-${issue.id}`} className="rounded-lg border bg-card">
       <div className="flex flex-wrap items-center gap-3 p-3">
@@ -224,6 +246,12 @@ function IssueRow({ issue, onResolve }: { issue: Issue; onResolve: (i: Issue) =>
           )}
         </div>
         <div className="flex gap-2">
+          {!issue.resolvedAt && issue.status !== "RECOVERY_PENDING" && (
+            <Button size="sm" variant="outline" disabled={connect.isPending} onClick={() => connect.mutate()}>
+              <MonitorPlay aria-hidden />
+              Подключиться
+            </Button>
+          )}
           <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? "Свернуть" : "Слепок ошибки"}
           </Button>
@@ -247,6 +275,18 @@ function IssueRow({ issue, onResolve }: { issue: Issue; onResolve: (i: Issue) =>
         </div>
       </div>
       {open && <FailureDetails issue={issue} />}
+      {remote && (
+        <RemoteBrowser
+          sessionId={remote}
+          title={`Браузер профиля ${issue.profileName} на ${issue.agentName}`}
+          description="Это настоящий браузер профиля на Mac: всё, что вы делаете, происходит на сайте. Закончив, закройте сессию и отметьте «Доработано»."
+          onClose={(closedByOperator) => {
+            setRemote(null);
+            void queryClient.invalidateQueries({ queryKey: ["review"] });
+            if (closedByOperator) onResolve(issue);
+          }}
+        />
+      )}
     </li>
   );
 }

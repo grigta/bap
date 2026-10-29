@@ -199,6 +199,8 @@ describe("recipes", { timeout: 240_000 }, () => {
     expect(await llmCalls(runId)).toBe(healed.length);
     expect(await orders()).toHaveLength(1);
 
+    // Published right after SUCCEEDED, by the run's success hook.
+    await expect.poll(async () => (await api("GET", "/api/v1/recipes/shop-manual")).json().versions.at(-1).version, { timeout: 10_000 }).toBe("2.0.0");
     const versions = (await api("GET", "/api/v1/recipes/shop-manual")).json().versions;
     expect(versions.at(-1)).toMatchObject({ version: "2.0.0", origin: "healed", parentVersion: "1.0.0", sourceRunId: runId, publishedAt: expect.any(String) });
 

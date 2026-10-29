@@ -33,6 +33,8 @@ const ACTIVE_RUN: RunStatus[] = ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQU
 export interface CoordinatorHooks {
   /** A run reached SUCCEEDED (recipes turn healed steps into a new version here). */
   onSucceeded?: (runId: string) => Promise<void>;
+  /** Profiles the operator is working in (remote browser): runs on them wait. */
+  remoteProfiles?: () => Set<string>;
 }
 
 export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig, config: SchedulerConfig, hooks: CoordinatorHooks = {}) {
@@ -179,6 +181,8 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
     const busy = new Map(active.map((a) => [a.agent_id, Number(a.n)]));
     const { requiredWarmups } = await farmingSettings(db);
     const warming = new Set<string>();
+    // The operator is working in these profiles' browsers (remote sessions): no run may start there.
+    const remote = hooks.remoteProfiles?.() ?? new Set<string>();
 
     for (const r of queued) {
       const reason: QueueReason | null =
@@ -196,7 +200,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
                     ? "PROFILE_DISABLED"
                     : needsWarmProfile(r.kind, r.scenario_kind) && r.warmups < requiredWarmups
                       ? "PROFILE_WARMING"
-                      : r.profile_status !== "AVAILABLE"
+                      : r.profile_status !== "AVAILABLE" || remote.has(r.profile_id)
                       ? "PROFILE_BUSY"
                       : (busy.get(r.agent_id) ?? 0) >= effectiveLimit(r)
                         ? "AGENT_AT_CAPACITY"

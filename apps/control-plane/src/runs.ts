@@ -73,6 +73,8 @@ const issueSchema = z.object({
   resolvedAt: z.string().nullable(),
   resolvedNote: z.string().nullable(),
   resolvedBy: z.string().nullable(),
+  /** The operator's sessions in the profile's browser for this run, newest first (REQ-UI-011). */
+  remoteSessions: z.array(z.object({ id: z.string(), openedBy: z.string().nullable(), openedAt: z.string(), endedAt: z.string().nullable(), endReason: z.string().nullable(), urls: z.array(z.string()) })),
 });
 /** Statuses of a run that stopped on an error; RECOVERY_PENDING waits for resume or cancel. */
 const ISSUE_STATUSES: RunStatus[] = ["FAILED", "NEEDS_REVIEW", "RECOVERY_PENDING"];
@@ -101,9 +103,11 @@ export interface RunsOptions {
   coordinator: Coordinator;
   store: ObjectStore;
   operatorAuth: preHandlerAsyncHookHandler;
+  /** Closes the operator's remote browser on a profile (before its run is marked fixed). */
+  closeRemote?: (profileId: string, reason: string) => Promise<void>;
 }
 
-export function registerRuns(app: App, { db, fleet, coordinator, store, operatorAuth }: RunsOptions) {
+export function registerRuns(app: App, { db, fleet, coordinator, store, operatorAuth, closeRemote }: RunsOptions) {
   const errors = { 401: errorSchema, 404: errorSchema, 409: errorSchema };
 
   // ---- scenarios ----
@@ -381,6 +385,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
             .orderBy("sequence")
             .execute()
         : [];
+      const remote = runs.length ? await db.selectFrom("remote_sessions").selectAll().where("run_id", "in", runs.map((r) => r.id)).orderBy("opened_at", "desc").execute() : [];
       const profiles = await db
         .selectFrom("profiles")
         .innerJoin("agents", "agents.id", "profiles.agent_id")
@@ -413,6 +418,9 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
             resolvedAt: r.resolved_at?.toISOString() ?? null,
             resolvedNote: r.resolved_note,
             resolvedBy: r.resolved_by,
+            remoteSessions: remote
+              .filter((x) => x.run_id === r.id)
+              .map((x) => ({ id: x.id, openedBy: x.opened_by, openedAt: x.opened_at.toISOString(), endedAt: x.ended_at?.toISOString() ?? null, endReason: x.end_reason, urls: x.urls as string[] })),
           };
         }),
         profiles: profiles.map((p) => ({ id: p.id, name: p.name, agentName: p.agent_name, lastError: p.last_error, updatedAt: p.updated_at.toISOString() })),
@@ -439,6 +447,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
         .executeTakeFirst();
       if (!updated)
         return sendError(reply, request, 409, "RUN_STATE_CONFLICT", run.resolved_at ? "The run is already closed" : run.status === "RECOVERY_PENDING" ? "Resume or cancel the run first" : `A ${run.status} run did not stop on an error`);
+      await closeRemote?.(run.profile_id, "проход отмечен как доработанный");
       await moveProfile(db, run.profile_id, ["NEEDS_REVIEW"], "AVAILABLE", { last_error: null, warmup_failures: 0 });
       await coordinator.tick();
       return { resolved: true as const };

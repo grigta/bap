@@ -141,6 +141,18 @@ export interface RunsTable {
   resolved_by: string | null;
 }
 
+export interface RemoteSessionsTable {
+  id: Generated<string>;
+  profile_id: string;
+  agent_id: string;
+  run_id: string | null;
+  opened_by: string | null;
+  opened_at: Timestamp;
+  ended_at: Timestamp | null;
+  end_reason: string | null;
+  urls: Generated<unknown>;
+}
+
 export interface RunTransitionsTable {
   id: Generated<string>;
   run_id: string;
@@ -308,6 +320,7 @@ export interface Database {
   heals: HealsTable;
   llm_calls: LlmCallsTable;
   settings: SettingsTable;
+  remote_sessions: RemoteSessionsTable;
 }
 
 export type Db = Kysely<Database>;

@@ -1,6 +1,6 @@
 import { type Db, isDatabaseUnavailable } from "@bap/database";
 import { sql } from "kysely";
-import { AGENT_SOCKET_PATH, type AgentMessage, type AgentRequestPayload, type RunEvent, type ServerMessage, agentMessage, heartbeatPayload, message } from "@bap/protocol";
+import { AGENT_SOCKET_PATH, type AgentMessage, type AgentRequestPayload, type RemoteAgentMessage, type RunEvent, type ServerMessage, agentMessage, isRemoteMessage, heartbeatPayload, message } from "@bap/protocol";
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { WebSocket } from "ws";
 import { z } from "zod";
@@ -87,6 +87,10 @@ export interface Fleet {
     onRunEvent?: (agentId: string, event: RunEvent) => Promise<void>;
     onConnected?: (agentId: string, report: { activeRuns: string[]; interruptedRuns: string[] }) => Promise<void>;
     onHeartbeat?: (agentId: string) => Promise<void>;
+    /** Remote browser messages (frames, page changes): relayed to the operator, never stored. */
+    onRemote?: (agentId: string, msg: RemoteAgentMessage) => void;
+    /** The agent's last connection closed. */
+    onDisconnected?: (agentId: string) => void;
   };
 }
 
@@ -492,6 +496,10 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
         else waiting.reject(new AgentRequestError(msg.payload.error?.code ?? "AGENT_ERROR", msg.payload.error?.message ?? "agent request failed"));
         return;
       }
+      if (isRemoteMessage(msg)) {
+        handlers.onRemote?.(agentId, msg);
+        return;
+      }
 
       const inserted = await db
         .insertInto("agent_events")
@@ -531,7 +539,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       lastMessageAt.set(socket, Date.now());
       // Answers to server requests skip the queue: a handler in the queue may be waiting for exactly this answer.
       const text = String(raw);
-      if (text.includes('"type":"agent.response"')) {
+      if (text.includes('"type":"agent.response"') || text.includes('"type":"remote.')) {
         void handle(text).catch((e) => request.log.error(e));
         return;
       }
@@ -545,6 +553,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     });
     socket.on("close", () => {
       sockets.get(agentId)?.delete(socket);
+      if (!liveSocket(agentId)) handlers.onDisconnected?.(agentId);
       for (const [id, waiting] of pending)
         if (waiting.socket === socket) {
           pending.delete(id);

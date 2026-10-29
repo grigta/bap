@@ -167,6 +167,8 @@ export interface Issue {
   resolvedAt: string | null;
   resolvedNote: string | null;
   resolvedBy: string | null;
+  /** The operator's sessions in the profile's browser, newest first. */
+  remoteSessions: { id: string; openedBy: string | null; openedAt: string; endedAt: string | null; endReason: string | null; urls: string[] }[];
 }
 export interface ReviewQueue {
   runs: Issue[];
