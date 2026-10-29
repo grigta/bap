@@ -4,10 +4,40 @@ on:
   push:
   pull_request:
 
+# docs/ lives in a private repository, so CI checks code only.
+# The suite is split across parallel machines (each has its own stack, so tests never share state) to finish within ~5 minutes.
 jobs:
-  verify:
+  checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm exec vitest run --project unit --coverage --reporter=default --reporter=blob --outputFile.blob=.vitest-reports/blob-unit.json --reporter=junit --outputFile.junit=reports/junit/vitest-unit.xml
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-unit
+          path: |
+            .vitest-reports/
+            reports/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -17,15 +47,61 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
-      # docs/ lives in a private repository, so CI checks code only
-      - run: pnpm verify:code
+      - run: pnpm exec vitest run --project integration --shard=${{ matrix.shard }}/3 --coverage --reporter=default --reporter=blob --outputFile.blob=.vitest-reports/blob-integration-${{ matrix.shard }}.json --reporter=junit --outputFile.junit=reports/junit/vitest-integration-${{ matrix.shard }}.xml
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports
+          name: reports-integration-${{ matrix.shard }}
+          path: |
+            .vitest-reports/
+            reports/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright test --shard=${{ matrix.shard }}/4
+        env:
+          BAP_JUNIT: reports/junit/e2e-${{ matrix.shard }}.xml
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-e2e-${{ matrix.shard }}
           path: |
             reports/
-            coverage/
             playwright-report/
             test-results/
           if-no-files-found: ignore
+
+  # Coverage thresholds hold for unit and integration together, so the shards' reports are merged before the check.
+  coverage:
+    needs: [checks, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reports-*
+          merge-multiple: true
+      - run: pnpm exec vitest run --merge-reports --coverage --reporter=dot
