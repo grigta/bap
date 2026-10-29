@@ -180,6 +180,8 @@ describe("reservation", () => {
 
 describe("capacity and placement", () => {
   test("[REQ-ARCH-003][REQ-SCHED-001] each agent runs at most its limit; the operator can change the limit", async () => {
+    // Profiles of earlier tests may still be verified (slow under load): a busy profile would hide the capacity wait.
+    for (const p of a.profiles) await idle(p);
     a.inst.stats.maxAgent = 0;
     const first = await Promise.all(a.profiles.map((p) => slow(p, 1500).then((r) => r.json().runId as string)));
     const waiting = await until("third run waits for a slot", () => Promise.all(first.map(runView)), (rs) => rs.some((r) => r.queueReason === "AGENT_AT_CAPACITY"));
