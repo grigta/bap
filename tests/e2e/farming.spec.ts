@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, localMac, logIn, openNewRun } from "./helpers.ts";
+import { goTo, killAgent, localMac, logIn, openNewRun, openRuns } from "./helpers.ts";
 
 const SEARCH = "http://127.0.0.1:4330";
 const agents: ChildProcess[] = [];
@@ -30,7 +30,7 @@ test("[REQ-FARM-003][REQ-FARM-005] demo: a recipe on a new profile waits while t
   await evidence(page, "S14", "1-settings");
 
   // 2. A recipe on the cold profile: it waits, the warm-ups go first by themselves.
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });

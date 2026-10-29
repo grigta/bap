@@ -13,7 +13,7 @@ import { type APIRequestContext, type Page, expect, test } from "@playwright/tes
 import { startFakeLinkenSphere } from "../support/fake-linken-sphere.ts";
 import { outageProxy } from "../support/outage-proxy.ts";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { goTo, killAgent, logIn, openRuns, spawnAgent } from "./helpers.ts";
 import { STACK_FLEET, STACK_PORTS, STACK_SCHEDULER } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -94,7 +94,7 @@ async function shot(page: Page, name: string) {
   await test.info().attach(name, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
 }
 async function openRun(page: Page, runId: string) {
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await page.getByTestId(`run-${runId}`).getByRole("link").first().click();
   return page.getByTestId("run-detail");
 }
@@ -171,7 +171,7 @@ test("2. Перезапуск Control Plane", async ({ page }) => {
   test.setTimeout(120_000);
   fault("Останавливаем Control Plane и запускаем снова на той же базе.", "Панель показывает offline, затем online; история заданий и статусы те же; агенты переподключаются сами; новые задания выполняются.");
   const before = (await (await api.get("/api/v1/runs")).json()) as { id: string; status: string }[];
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await shot(page, "до: история заданий");
 
   await control("/control-plane/stop");
@@ -233,7 +233,7 @@ test("4. Аварийное завершение браузера", async ({ pag
   await expect(detail.getByTestId("run-status")).toHaveText(done.status, { timeout: 5000 });
   await shot(page, "после: задание с диагностикой");
   await expect.poll(async () => (await profileView(profileId)).status, { timeout: 20_000 }).toBe("AVAILABLE");
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await shot(page, "профиль снова AVAILABLE");
   observed(`Убито процессов Chromium: ${killed.length}. Задание: ${done.status}, ${done.errorCode}: ${done.errorMessage}. Профиль: ${(await profileView(profileId)).status}; браузеров профиля: ${browsersFor(dir)}.`);
   expect(done).toMatchObject({ status: "FAILED", errorCode: "BROWSER_DISCONNECTED" });
@@ -251,7 +251,7 @@ test("5. Недоступность Local API", async ({ page }) => {
   const runId = await startRun({ scenarioId: "staging-smoke-test", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site } });
   await sleep(2500);
   const waiting = await runView(runId);
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await shot(page, "API недоступен: LS ✗, задание в очереди");
   await goTo(page, "Агенты");
   await evidence(page, "S15", "3-ls-start-button");
@@ -311,9 +311,9 @@ test("7. Истечение lease при работающем браузере",
     const second = await startRun({ scenarioId: "staging-smoke-test", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site } });
     await sleep(3000);
     const [firstDuring, secondDuring, profileDuring] = [await runView(first), await runView(second), await profileView(profileId)];
-    await goTo(page, "Конвейер");
+    await openRuns(page);
     await shot(page, "агент заморожен, lease истёк: профиль");
-    await goTo(page, "Конвейер");
+    await openRuns(page);
     await shot(page, "второе задание ждёт");
     process.kill(mac.process.pid!, "SIGCONT");
 

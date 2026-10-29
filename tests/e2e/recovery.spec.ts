@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { confirmDialog, goTo, killAgent, logIn, spawnAgent, openNewRun } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, logIn, openNewRun, openRuns, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -27,7 +27,7 @@ const crashAndRestart = async () => {
 };
 
 async function launch(page: Page, item: string) {
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption("wizard-order@1.1.0");
   await expect(page.getByLabel("Профиль").getByRole("option", { name: "rec-p", exact: true })).toBeEnabled({ timeout: 20_000 });

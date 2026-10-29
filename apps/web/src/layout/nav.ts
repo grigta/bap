@@ -4,11 +4,12 @@ import { BookMarked, ClipboardCheck, Flame, Gauge, Monitor, ScrollText, Workflow
 export const NAV = [
   { to: "/", label: "Обзор", icon: Gauge },
   { to: "/agents", label: "Агенты", icon: Monitor },
-  { to: "/runs", label: "Конвейер", icon: Workflow },
+  { to: "/pipeline", label: "Конвейер", icon: Workflow },
   { to: "/review", label: "Недоработки", icon: ClipboardCheck },
   { to: "/audit", label: "Все логи", icon: ScrollText },
   { to: "/recipes", label: "Рецепты", icon: BookMarked, frozen: true },
   { to: "/farming", label: "Прогрев", icon: Flame, frozen: true },
 ] as const;
 
-export const sectionOf = (pathname: string) => NAV.find((n) => (n.to === "/" ? pathname === "/" : pathname.startsWith(n.to))) ?? NAV[0];
+// Runs are the second tab of «Все логи».
+export const sectionOf = (pathname: string) => NAV.find((n) => (n.to === "/" ? pathname === "/" : pathname.startsWith(n.to) || (n.to === "/audit" && pathname.startsWith("/runs")))) ?? NAV[0];

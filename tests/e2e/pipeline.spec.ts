@@ -10,7 +10,7 @@ import { confirmDialog, goTo, killAgent, localMac, logIn } from "./helpers.ts";
 const agents: ChildProcess[] = [];
 test.afterAll(() => agents.forEach(killAgent));
 
-test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees which fields are filled, links it to profiles by a column, opens a row to edit its cells and proxy, adds and deletes rows, and exports it with our columns", async ({ page }) => {
+test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table and sees it like a spreadsheet, picks the collapsed columns, opens a row to edit its cells and proxy, adds rows in the empty last row or as a list, deletes rows, pages through, and exports it with our columns", async ({ page }) => {
   test.setTimeout(90_000);
   await logIn(page);
   const profile = await localMac(page, agents, `table-${randomUUID().slice(0, 4)}`);
@@ -20,7 +20,6 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees wh
   // Another spec may have left its table: this one starts from none.
   await page.request.delete("/api/v1/pipeline");
   await goTo(page, "Конвейер");
-  await page.getByRole("button", { name: "Таблица" }).click();
   await expect(page.getByText("Таблица не загружена")).toBeVisible();
   await page.getByLabel("Файл CSV").setInputFiles({ name: "сотрудники.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
   await expect(page.getByTestId("pipeline-file")).toHaveText("сотрудники.csv");
@@ -28,17 +27,27 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees wh
   await expect(table.getByRole("columnheader")).toHaveText(["#", "ФИО", "Должность", "Профиль", "Прокси", "LS Clicker", "Статус профиля"]);
   await expect(table.getByTestId("pipeline-profile-status")).toHaveCount(0);
 
-  await page.getByLabel("Колонка с профилем").selectOption({ label: "Профиль" });
+  expect((await page.request.put("/api/v1/pipeline/profile-column", { data: { column: 2 } })).status()).toBe(204);
+  await page.reload();
   const [mine, stranger] = [table.getByTestId("pipeline-row").nth(0), table.getByTestId("pipeline-row").nth(1)];
   await expect(mine.getByTestId("pipeline-profile-status")).toHaveText("AVAILABLE");
   await expect(stranger.getByTestId("pipeline-profile-status")).toHaveCount(0);
-  // The overview shows only whether a field is filled, not its value.
-  await expect(mine).not.toContainText("Иванов");
-  await expect(mine.getByLabel("ФИО: есть")).toBeVisible();
-  await expect(mine.getByLabel("Прокси: пусто")).toBeVisible();
-  await page.getByLabel("Поиск по таблице").fill("Петров");
-  await expect(table.getByTestId("pipeline-row")).toHaveCount(1);
-  await page.getByLabel("Поиск по таблице").fill("");
+  // Like a spreadsheet: every value on one line.
+  await expect(mine).toContainText("Иванов Тест Тестович");
+  await expect(mine.getByTestId("pipeline-proxy")).toHaveText("—");
+
+  // «Настройка» picks the columns of the collapsed view; «Развернуть» shows them all.
+  await page.getByRole("button", { name: "Настройка" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Должность" }).click();
+  await page.keyboard.press("Escape");
+  await expect(table.getByRole("columnheader")).toHaveText(["#", "ФИО", "Профиль", "Прокси", "LS Clicker", "Статус профиля"]);
+  await page.getByRole("button", { name: "Развернуть таблицу" }).click();
+  await expect(table.getByRole("columnheader")).toHaveText(["#", "ФИО", "Должность", "Профиль", "Прокси", "LS Clicker", "Статус профиля"]);
+  await page.getByRole("button", { name: "Свернуть таблицу" }).click();
+  await expect(table.getByRole("columnheader")).toHaveCount(6);
+  await page.reload();
+  await expect(table.getByRole("columnheader")).toHaveCount(6);
+  await page.getByRole("button", { name: "Развернуть таблицу" }).click();
   await evidence(page, "S18", "1-table");
 
   // A click on the row opens it in full: cells and the proxy are edited there; the password of a proxy is not on screen.
@@ -59,16 +68,24 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees wh
   await evidence(page, "S21", "1-table-proxy");
   await page.keyboard.press("Escape");
   await expect(sheet).toHaveCount(0);
-  await expect(mine.getByLabel("Прокси: есть")).toBeVisible();
-  await evidence(page, "S22", "0-compact");
+  await expect(mine.getByTestId("pipeline-proxy")).toHaveText("10.0.0.7:1080@user:•••");
+  await evidence(page, "S22", "0-table");
   expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze()).violations.filter((v) => ["serious", "critical"].includes(v.impact ?? ""))).toEqual([]);
 
-  // «+ строка»: comma-separated values in the column order, one row per line.
-  await page.getByRole("button", { name: "Строка", exact: true }).click();
-  await page.getByRole("textbox", { name: "Строки" }).fill("Сидоров Опыт Опытович,практикант\n\"Кузнецова, Проба\",,нет");
+  // The empty last row: what is typed there becomes a row once the focus leaves it, and a new empty row appears.
+  await page.getByLabel("Новая строка: ФИО").fill("Сидоров Опыт Опытович");
+  await page.getByLabel("Новая строка: Должность").fill("практикант");
+  await page.getByRole("heading", { level: 1 }).click();
+  await expect(table.getByTestId("pipeline-row")).toHaveCount(3);
+  await expect(table.getByTestId("pipeline-row").nth(2)).toContainText("Сидоров Опыт Опытович");
+  await expect(page.getByLabel("Новая строка: ФИО")).toHaveValue("");
+
+  // «Строки списком»: comma-separated values in the column order, one row per line.
+  await page.getByRole("button", { name: "Строки списком" }).click();
+  await page.getByRole("textbox", { name: "Строки" }).fill("\"Кузнецова, Проба\",,нет");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(table.getByTestId("pipeline-row")).toHaveCount(4);
-  await expect(table.getByTestId("pipeline-row").nth(3).getByLabel("Должность: пусто")).toBeVisible();
+  await expect(table.getByTestId("pipeline-row").nth(3)).toContainText("Кузнецова, Проба");
   await evidence(page, "S22", "1-add-rows");
 
   // A row that has not gone to a Mac can be deleted from its card.
@@ -88,10 +105,17 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees wh
   expect(exported.rows[1]!.slice(3)).toEqual(["", "", "", "", "", "", "", ""]);
   expect(exported.rows.slice(2).map((r) => r.slice(0, 3))).toEqual([["Сидоров Опыт Опытович", "практикант", ""]]);
 
-  // A wide table moves sideways from the scrollbar above it, without scrolling down first.
+  // A long table is paged; a wide one moves sideways from the scrollbar above it, without scrolling down first.
   const fields = Array.from({ length: 80 }, (_, i) => `Поле ${i + 1}`);
-  await page.getByLabel("Файл CSV").setInputFiles({ name: "широкая.csv", mimeType: "text/csv", buffer: Buffer.from(`${fields.join(";")}\n${fields.map(() => "x").join(";")}\n`) });
+  const line = fields.map(() => "x").join(";");
+  await page.getByLabel("Файл CSV").setInputFiles({ name: "широкая.csv", mimeType: "text/csv", buffer: Buffer.from(`${fields.join(";")}\n${`${line}\n`.repeat(30)}`) });
   await expect(page.getByTestId("pipeline-file")).toHaveText("широкая.csv");
+  await page.getByLabel("Строк на странице").selectOption("25");
+  await expect(table.getByTestId("pipeline-row")).toHaveCount(25);
+  await expect(page.getByTestId("pipeline-pages")).toContainText("1 из 2 · всего 30");
+  await page.getByRole("button", { name: "Следующая страница" }).click();
+  await expect(table.getByTestId("pipeline-row")).toHaveCount(5);
+  await expect(table.getByTestId("pipeline-row").first().getByRole("button")).toHaveText("26");
   await page.setViewportSize({ width: 900, height: 700 });
   const moved = await page.evaluate(() => {
     const top = document.querySelector<HTMLElement>("[data-testid=pipeline-scroll-top]")!;

@@ -44,7 +44,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           ))}
         </CommandGroup>
         {!!runs.data?.length && (
-          <CommandGroup heading="Конвейер">
+          <CommandGroup heading="Проходы">
             {runs.data.slice(0, 50).map((r) => (
               <CommandItem key={r.id} value={`задание ${r.id} ${r.scenarioId} ${r.status}`} onSelect={() => go("/runs/$runId", { runId: r.id })}>
                 <span className="font-mono text-xs">{shortId(r.id)}</span>

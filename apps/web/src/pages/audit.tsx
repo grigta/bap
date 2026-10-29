@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ScrollText } from "lucide-react";
 import { type Column, DataTable, columns } from "@/components/data-table";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/layout/app-shell";
@@ -39,6 +40,19 @@ const ACTIONS: Record<string, string> = {
   "POST /api/v1/runs/:id/cancel": "Отмена задания",
   "POST /api/v1/runs/:id/resume": "Resume задания",
 };
+
+/** «Все логи» has two tabs: the action journal and the runs. */
+export function LogsTabs({ current }: { current: "audit" | "runs" }) {
+  return (
+    <div className="flex rounded-md border p-0.5" role="group" aria-label="Что показать">
+      {(["audit", "runs"] as const).map((t) => (
+        <Button key={t} size="sm" variant={current === t ? "secondary" : "ghost"} aria-current={current === t ? "page" : undefined} render={<Link to={t === "runs" ? "/runs" : "/audit"} />}>
+          {t === "runs" ? "Проходы" : "Журнал"}
+        </Button>
+      ))}
+    </div>
+  );
+}
 
 /** The operator's action journal (REQ-UI-006), newest first; "denied only" lives in the URL. */
 export function AuditPage({ denied }: { denied: boolean }) {
@@ -77,7 +91,7 @@ export function AuditPage({ denied }: { denied: boolean }) {
   ];
   return (
     <>
-      <PageHeader title="Все логи" description="Все изменяющие действия оператора и агентов, включая отказы. Тела запросов и секреты не сохраняются." />
+      <PageHeader title="Все логи" description="Все изменяющие действия оператора и агентов, включая отказы. Тела запросов и секреты не сохраняются." actions={<LogsTabs current="audit" />} />
       <div className="mb-3 flex items-center gap-2">
         <Checkbox id="denied-only" checked={denied} onCheckedChange={(v) => navigate({ to: "/audit", search: { denied: v ? true : undefined } })} />
         <Label htmlFor="denied-only">Только отказы</Label>

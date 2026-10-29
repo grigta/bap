@@ -3,7 +3,7 @@ import { type Page, expect, test } from "@playwright/test";
 import type { Page as CorePage } from "playwright-core";
 import { SHOP_INPUT, shapeshiftRecipe } from "../support/shapeshift-recipe.ts";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, localMac, logIn, openNewRun } from "./helpers.ts";
+import { goTo, killAgent, localMac, logIn, openNewRun, openRuns } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const SHOP = "http://127.0.0.1:4320";
@@ -15,7 +15,7 @@ const layout = (l: { seed: number; wording: number; failOrder?: boolean }) => fe
 const modelCalls = async (runId: string) => (await (await fetch(`http://127.0.0.1:${STACK_PORTS.control}/llm-calls?run=${runId}`)).json()).calls as number;
 
 async function launch(page: Page, profile: string, expected: string) {
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });

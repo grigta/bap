@@ -18,8 +18,7 @@ import { seconds, shortId, time } from "@/lib/format";
 import { notifyError } from "@/lib/notify";
 import { CANCELLABLE_RUN, FINAL_RUN, type ListedRun, type PendingConfirmation, type Profile, RUN_STATUSES, type Run, type RunDetail, type RunStatus, type Step, type StepResolution } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { LsClickerPanel } from "./ls-clicker";
-import { PipelineTable } from "./pipeline-table";
+import { LogsTabs } from "./audit";
 
 const MARK = { passed: "✓", failed: "✗", unverified: "?" } as const;
 const MARK_TONE = { passed: "bg-ok-soft text-ok", failed: "bg-fail-soft text-fail", unverified: "bg-wait-soft text-wait" } as const;
@@ -327,8 +326,7 @@ function waiting(r: Run) {
   return r.startedAt ? seconds(r.createdAt, r.startedAt) : "—";
 }
 
-export function RunsPage({ runId, status, tab = "runs" }: { runId?: string; status?: RunStatus; tab?: "runs" | "table" }) {
-  const navigate = useNavigate();
+export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus }) {
   const runs = useQuery({ queryKey: ["runs", status ?? ""], queryFn: () => api<ListedRun[]>(`/runs${status ? `?status=${status}` : ""}`), refetchInterval: 2000 });
 
   const c = columns<ListedRun>();
@@ -393,21 +391,8 @@ export function RunsPage({ runId, status, tab = "runs" }: { runId?: string; stat
 
   return (
     <>
-      <PageHeader
-        title="Конвейер"
-        description="LS Clicker на всех Mac, ваша таблица строк и все проходы — на одной странице."
-        actions={
-          <div className="flex rounded-md border p-0.5" role="group" aria-label="Что показать">
-            {(["runs", "table"] as const).map((t) => (
-              <Button key={t} size="sm" variant={tab === t ? "secondary" : "ghost"} aria-pressed={tab === t} onClick={() => navigate({ to: "/runs", search: t === "table" ? { tab: t } : {} })}>
-                {t === "table" ? "Таблица" : "Проходы"}
-              </Button>
-            ))}
-          </div>
-        }
-      />
-      <LsClickerPanel />
-      {tab === "table" ? <PipelineTable /> : <RunsList runId={runId} status={status} runs={runs.data} cols={cols} />}
+      <PageHeader title="Все логи" description="Проходы: строки LS Clicker и код-сценарии, их статус, профиль и Mac." actions={<LogsTabs current="runs" />} />
+      <RunsList runId={runId} status={status} runs={runs.data} cols={cols} />
     </>
   );
 }
@@ -443,7 +428,7 @@ function RunsList({ runId, status, runs, cols }: { runId?: string; status?: RunS
           </Button>
         )}
       </div>
-      {runs?.length === 0 && <EmptyState icon={status ? Flag : PlayCircle} title={status ? `Заданий в статусе ${status} нет` : "Заданий пока нет"} description={status ? "Сбросьте фильтр, чтобы увидеть все." : "Строки LS Clicker запускаются выше, код-сценарии — кнопкой «Новый запуск»."} />}
+      {runs?.length === 0 && <EmptyState icon={status ? Flag : PlayCircle} title={status ? `Заданий в статусе ${status} нет` : "Заданий пока нет"} description={status ? "Сбросьте фильтр, чтобы увидеть все." : "Строки LS Clicker запускаются в «Конвейере», код-сценарии — кнопкой «Новый запуск»."} />}
       {!!runs?.length && <DataTable id="runs" data={runs} columns={cols} rowTestId={(r) => `run-${r.id}`} rowClassName={(r) => (r.id === runId ? "bg-accent/60" : undefined)} />}
     </>
   );

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Page, expect, test } from "@playwright/test";
-import { goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { killAgent, logIn, openRuns, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -66,7 +66,7 @@ test("[REQ-UI-004] a run has its own address: it opens after a reload and after 
 
 test("the run status filter lives in the URL, so back and forward restore it", async ({ page }) => {
   await logIn(page);
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   const filter = page.getByLabel("Фильтр статуса");
   await filter.selectOption("SUCCEEDED");
   await expect(page).toHaveURL(/status=SUCCEEDED/);
@@ -129,7 +129,7 @@ for (const scheme of ["light", "dark"] as const) {
     await page.getByRole("heading", { name: "Вход" }).waitFor();
     const found: Record<string, string[]> = { login: await axe(page) };
     await logIn(page);
-    for (const path of ["/", "/agents", "/runs", `/runs/${runId}`, "/recipes", "/farming", "/review", "/audit"]) {
+    for (const path of ["/", "/agents", "/pipeline", "/runs", `/runs/${runId}`, "/recipes", "/farming", "/review", "/audit"]) {
       await page.goto(path);
       await page.getByRole("heading", { level: 1 }).waitFor();
       await page.waitForTimeout(800); // data arrives with the first poll

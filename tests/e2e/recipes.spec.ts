@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { confirmDialog, goTo, killAgent, localMac, logIn, openNewRun } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, localMac, logIn, openNewRun, openRuns } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const SHOP = "http://127.0.0.1:4320";
@@ -15,7 +15,7 @@ const modelCalls = async (runId: string) => (await (await fetch(`http://127.0.0.
 const runIdFromUrl = (page: Page) => page.url().split("/runs/")[1]!.split("?")[0]!;
 
 async function launch(page: Page, profile: string) {
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });

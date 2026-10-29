@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { goTo, killAgent, logIn, openRuns, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -34,7 +34,7 @@ test("operator sees one run per profile, waiting runs with their reason, slots a
   const runs = [];
   for (let i = 0; i < 4; i++) runs.push((await (await start("shared", 2500)).json()).runId as string);
 
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await expect(page.locator("td", { hasText: "PROFILE_BUSY" })).toHaveCount(3, { timeout: 10_000 });
   await evidence(page, "S6", "runs-one-per-profile");
   // «Конвейер» shows the profile's state next to each run.
@@ -47,7 +47,7 @@ test("operator sees one run per profile, waiting runs with their reason, slots a
   await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Пауза" }).click();
   await expect(page.getByTestId("agent-sched-mac").getByTestId("agent-status")).toHaveText("DRAINING");
   const drained = (await (await start("other", 100)).json()).runId as string;
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await expect(page.getByTestId(`run-${drained}`)).toContainText("AGENT_DRAINING", { timeout: 10_000 });
   await evidence(page, "S6", "runs-drained");
 

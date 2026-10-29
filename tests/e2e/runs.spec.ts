@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, logIn, spawnAgent, openNewRun } from "./helpers.ts";
+import { killAgent, logIn, openNewRun, openRuns, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -48,7 +48,7 @@ test("[REQ-RUN-009] operator launches a run and watches statuses, step screensho
   test.setTimeout(90_000);
   await logIn(page);
   const profileId = await agentWithProfile(page, "runner-mac");
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   await launch(page, "staging-smoke-test@1.0.0", "runner-mac-profile", { baseUrl: "http://127.0.0.1:4310" });
 
   const detail = page.getByTestId("run-detail");

@@ -25,6 +25,13 @@ export async function goTo(page: Page, section: Section) {
   await page.getByRole("heading", { level: 1, name: section }).waitFor();
 }
 
+/** «Проходы»: the second tab of «Все логи». */
+export async function openRuns(page: Page) {
+  await goTo(page, "Все логи");
+  await page.getByRole("link", { name: "Проходы", exact: true }).click();
+  await page.getByLabel("Фильтр статуса").waitFor();
+}
+
 /** Picks an item from the "⋯" menu of an agent row on «Агенты». */
 export async function agentMenu(page: Page, agent: string, item: "Отключить" | "Сменить ключ" | "Отозвать доступ") {
   await page.getByRole("button", { name: `Ещё действия с ${agent}` }).click();

@@ -1,22 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Check, Clock, Download, FileUp, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, FileUp, Maximize2, Minimize2, Pencil, Plus, Settings2, Table2, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { PageHeader } from "@/layout/app-shell";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { dateTime } from "@/lib/format";
 import { notifyDone, notifyError } from "@/lib/notify";
 import type { Pipeline } from "@/lib/types";
+import { LsClickerPanel } from "./ls-clicker";
 
 /** A proxy as LS Clicker takes it: socks5 ip:port, optionally @login:pass. */
 const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
@@ -73,11 +76,56 @@ function EditableCell({ value, label, locked, shown, placeholder, check, onSave,
   );
 }
 
-/** Rows drawn at once: a big table stays responsive; the search narrows it down. */
-const SHOWN = 500;
+const PAGE_SIZES = [25, 50, 100, 250] as const;
+/** Columns shown when the table is collapsed, until the operator picks their own. */
+const DEFAULT_COLLAPSED = 5;
+
+/** View settings live in this browser only: they are a convenience, not shared state. */
+function useStored<T>(key: string, initial: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? initial : (JSON.parse(raw) as T);
+    } catch {
+      return initial;
+    }
+  });
+  const set = (v: T) => {
+    setValue(v);
+    try {
+      localStorage.setItem(key, JSON.stringify(v));
+    } catch {
+      // private window or blocked storage: the setting lasts until reload
+    }
+  };
+  return [value, set];
+}
+
+/** A value with quotes, as one CSV field: commas and quotes inside it survive. */
+const csvField = (v: string) => `"${v.replace(/"/g, '""')}"`;
+
+/** One cell as in a spreadsheet: one line, a fixed width; what does not fit goes under the next cell. */
+function Cell({ children, className, ...props }: React.ComponentProps<"td">) {
+  return (
+    <td className={cn("border-r px-0 py-0", className)} {...props}>
+      <div className="w-36 overflow-hidden px-2 py-1 whitespace-nowrap">{children}</div>
+    </td>
+  );
+}
+
+/** «Конвейер»: LS Clicker on every Mac and the operator's table it takes its rows from. */
+export function PipelinePage() {
+  return (
+    <>
+      <PageHeader title="Конвейер" description="LS Clicker на всех Mac и ваша таблица строк, которые он берёт по одной." />
+      <LsClickerPanel />
+      <PipelineTable />
+    </>
+  );
+}
 
 /**
- * The operator's own table (REQ-UI-012): any CSV, shown as it came, with the state of the matching
+ * The operator's own table (REQ-UI-012): any CSV, shown like a spreadsheet, with the state of the matching
  * profile next to each row. Its contents stay between the operator and the server.
  */
 export function PipelineTable() {
@@ -99,9 +147,12 @@ export function PipelineTable() {
   const sync = (from: React.RefObject<HTMLDivElement | null>, to: React.RefObject<HTMLDivElement | null>) => {
     if (from.current && to.current && to.current.scrollLeft !== from.current.scrollLeft) to.current.scrollLeft = from.current.scrollLeft;
   };
-  const [search, setSearch] = useState("");
   const [open, setOpen] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
+  const [expanded, setExpanded] = useStored("bap.pipeline.expanded", false);
+  const [chosen, setChosen] = useStored<string[] | null>("bap.pipeline.columns", null);
+  const [pageSize, setPageSize] = useStored<number>("bap.pipeline.pageSize", 50);
+  const [page, setPage] = useState(0);
   const table = useQuery({ queryKey: ["pipeline"], queryFn: () => api<Pipeline>("/pipeline"), refetchInterval: 5000 });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["pipeline"] });
 
@@ -110,14 +161,9 @@ export function PipelineTable() {
       api<{ rows: number; columns: number }>(`/pipeline/import?name=${encodeURIComponent(f.name)}`, { method: "POST", body: await f.text(), headers: { "content-type": "text/csv" } }),
     onSuccess: (r) => {
       void refresh();
-      notifyDone(`Загружено строк: ${r.rows}`, `Колонок: ${r.columns}. Выберите колонку с профилем.`);
+      notifyDone(`Загружено строк: ${r.rows}`, `Колонок: ${r.columns}.`);
     },
     onError: notifyError("Импорт CSV"),
-  });
-  const setColumn = useMutation({
-    mutationFn: (column: number | null) => api(`/pipeline/profile-column`, { method: "PUT", body: JSON.stringify({ column }) }),
-    onSuccess: () => void refresh(),
-    onError: notifyError("Колонка с профилем"),
   });
   const edit = useMutation({
     mutationFn: ({ n, body }: { n: number; body: { cells?: string[]; proxy?: string } }) => api(`/pipeline/rows/${n}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -134,15 +180,22 @@ export function PipelineTable() {
     },
     onError: notifyError("Удалить строку"),
   });
+  const append = useMutation({
+    mutationFn: (cells: string[]) => api<{ added: number }>("/pipeline/rows", { method: "POST", body: JSON.stringify({ text: cells.map(csvField).join(",") }) }),
+    onSuccess: () => {
+      // The new row is the last one: show the page it is on (the page number is clamped to the last page).
+      setPage(Number.MAX_SAFE_INTEGER);
+      void refresh();
+    },
+    onError: notifyError("Добавить строку"),
+  });
 
   const imp = table.data?.import ?? null;
-  const rows = useMemo(() => {
-    const all = table.data?.rows ?? [];
-    const q = search.trim().toLowerCase();
-    return q ? all.filter((r) => r.cells.some((c) => c.toLowerCase().includes(q))) : all;
-  }, [table.data, search]);
-  const matched = table.data?.rows.filter((r) => r.ours).length ?? 0;
-  const shown = table.data?.rows.find((r) => r.n === open);
+  const rows = table.data?.rows ?? [];
+  const matched = rows.filter((r) => r.ours).length;
+  const shown = rows.find((r) => r.n === open);
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const current = Math.min(page, pages - 1);
 
   const pick = (
     <>
@@ -170,6 +223,11 @@ export function PipelineTable() {
       <EmptyState icon={Table2} title="Таблица не загружена" description="Загрузите свою таблицу в CSV: строки покажутся здесь вместе с состоянием профилей, выгрузка добавит наши колонки." action={pick} />
     );
   if (!imp) return null;
+  const name = (i: number) => imp.columns[i] || `колонка ${i + 1}`;
+  const all = imp.columns.map((_, i) => i);
+  const collapsedColumns = chosen ? all.filter((i) => chosen.includes(name(i))) : all.slice(0, DEFAULT_COLLAPSED);
+  const visible = expanded ? all : collapsedColumns;
+  const span = visible.length + 4;
   return (
     <section aria-label="Таблица" className="grid gap-3">
       <div className="flex flex-wrap items-end gap-3">
@@ -182,30 +240,35 @@ export function PipelineTable() {
             {imp.createdBy && `, ${imp.createdBy}`}
           </span>
         </div>
-        <div className="grid gap-1">
-          <Label htmlFor="pipeline-profile-column" className="text-xs text-muted-foreground">
-            Колонка с профилем
-          </Label>
-          <NativeSelect
-            id="pipeline-profile-column"
-            size="sm"
-            className="w-56"
-            value={imp.profileColumn ?? ""}
-            onChange={(e) => setColumn.mutate(e.target.value === "" ? null : Number(e.target.value))}
-          >
-            <NativeSelectOption value="">не выбрана</NativeSelectOption>
-            {imp.columns.map((c, i) => (
-              <NativeSelectOption key={i} value={i}>
-                {c || `колонка ${i + 1}`}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-        <Input aria-label="Поиск по таблице" placeholder="Поиск по таблице" value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 w-56" />
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button variant="outline" aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>
+            {expanded ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
+            {expanded ? "Свернуть таблицу" : "Развернуть таблицу"}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="outline" />}>
+              <Settings2 aria-hidden />
+              Настройка
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-96 w-64 overflow-y-auto">
+              <p className="px-1.5 py-1 text-xs text-muted-foreground">Колонки в свёрнутом виде</p>
+              {all.map((i) => (
+                <DropdownMenuCheckboxItem
+                  key={i}
+                  checked={collapsedColumns.includes(i)}
+                  onCheckedChange={(on) => {
+                    const names = collapsedColumns.map(name);
+                    setChosen(on ? [...names, name(i)] : names.filter((n) => n !== name(i)));
+                  }}
+                >
+                  <span className="truncate">{name(i)}</span>
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" onClick={() => setAdding(true)}>
             <Plus aria-hidden />
-            Строка
+            Строки списком
           </Button>
           {pick}
           <Button variant="outline" render={<a href="/api/v1/pipeline/export" download />}>
@@ -223,55 +286,63 @@ export function PipelineTable() {
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">✓ — значение есть, ✗ — пусто. Нажмите на строку, чтобы открыть её данные: там их можно изменить и задать прокси.</p>
+      <p className="text-xs text-muted-foreground">Нажмите на строку, чтобы увидеть её полностью, изменить и задать прокси. В последней строке можно сразу ввести новую.</p>
       {/* A scrollbar above the table too: a wide table moves sideways without scrolling down to its end first. */}
       <div ref={topBar} aria-hidden data-testid="pipeline-scroll-top" onScroll={() => sync(topBar, box)} className="overflow-x-auto overflow-y-hidden">
         <div style={{ width: wide, height: 1 }} />
       </div>
       <div ref={box} data-testid="pipeline-scroll" onScroll={() => sync(box, topBar)} className="max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border bg-card">
-        <table ref={tableEl} data-testid="pipeline-table" className="w-full text-xs">
+        <table ref={tableEl} data-testid="pipeline-table" className="w-max min-w-full border-collapse text-xs">
           <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
             <tr>
-              <th scope="col" className="px-2 py-1 text-left font-medium">
+              <th scope="col" className="border-r px-2 py-1 text-left font-medium">
                 #
               </th>
-              {[...imp.columns.map((c, i) => c || `колонка ${i + 1}`), "Прокси", "LS Clicker", "Статус профиля"].map((c, i) => (
-                <th key={i} scope="col" title={c} className={cn("h-28 px-1 py-1 align-bottom font-medium", i === imp.columns.length && "border-l")}>
-                  {/* Turned on its side: a dozen columns fit where a few names would. */}
-                  <span className="mx-auto block max-h-24 truncate [writing-mode:vertical-rl] rotate-180">{c}</span>
+              {[...visible.map(name), "Прокси", "LS Clicker", "Статус профиля"].map((c, i) => (
+                <th key={i} scope="col" title={c} className={cn("border-r px-0 py-0 text-left font-medium", i === visible.length && "border-l")}>
+                  <div className="w-36 truncate px-2 py-1">{c}</div>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, SHOWN).map((r) => (
+            {rows.slice(current * pageSize, (current + 1) * pageSize).map((r) => (
               <tr key={r.n} data-testid="pipeline-row" onClick={() => setOpen(r.n)} className={cn("cursor-pointer border-t hover:bg-accent/60", open === r.n && "bg-accent")}>
-                <td className="px-2 py-1 text-muted-foreground tabular-nums">
+                <td className="border-r px-2 py-1 text-muted-foreground tabular-nums">
                   <button type="button" className="hover:underline" aria-label={`Открыть строку ${r.n}`} onClick={() => setOpen(r.n)}>
                     {r.n}
                   </button>
                 </td>
-                {r.cells.map((c, i) => (
-                  <td key={i} className="px-1 py-1 text-center">
-                    <Filled filled={c.trim() !== ""} label={imp.columns[i] || `колонка ${i + 1}`} />
-                  </td>
+                {visible.map((i) => (
+                  <Cell key={i}>{r.cells[i]}</Cell>
                 ))}
-                <td className="border-l px-1 py-1 text-center" data-testid="pipeline-proxy">
-                  <Filled filled={!!r.proxy} label="Прокси" />
-                </td>
-                <td className="px-1 py-1 text-center" data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : "не отправлена"}>
-                  {r.lsc ? r.lsc.result ? <Check className="mx-auto size-3.5 text-ok" aria-label="обработана" /> : <Clock className="mx-auto size-3.5 text-wait" aria-label="в очереди" /> : <span className="text-muted-foreground">·</span>}
-                </td>
-                <td className="px-1 py-1 text-center">{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">·</span>}</td>
+                <Cell className="border-l font-mono" data-testid="pipeline-proxy">
+                  {r.proxy ? maskProxy(r.proxy) : <span className="text-muted-foreground">—</span>}
+                </Cell>
+                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : "не отправлена"}>
+                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">—</span>}
+                </Cell>
+                <Cell>{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</Cell>
               </tr>
             ))}
+            <tr className="border-t bg-muted/40">
+              <td colSpan={span} className="p-0">
+                <Pages page={current} pages={pages} total={rows.length} size={pageSize} onPage={setPage} onSize={(n) => {
+                    setPageSize(n);
+                    setPage(0);
+                  }} />
+              </td>
+            </tr>
+            <NewRow columns={imp.columns} visible={visible} onAdd={(cells) => append.mutate(cells)} />
           </tbody>
         </table>
-        {rows.length > SHOWN && <p className="p-3 text-xs text-muted-foreground">Показаны первые {SHOWN} из {rows.length}: уточните поиск. В выгрузке — все строки.</p>}
-        {rows.length === 0 && <p className="p-3 text-sm text-muted-foreground">Ничего не найдено.</p>}
       </div>
       {shown && (
-        <RowSheet row={shown} columns={imp.columns} onClose={() => setOpen(null)} onSave={(body) => edit.mutate({ n: shown.n, body })}
+        <RowSheet
+          row={shown}
+          columns={imp.columns}
+          onClose={() => setOpen(null)}
+          onSave={(body) => edit.mutate({ n: shown.n, body })}
           onDelete={async () => {
             if (await confirm({ title: `Удалить строку ${shown.n}?`, description: "Строка удалится из таблицы. Номера остальных строк не изменятся.", action: "Удалить", destructive: true })) remove.mutate(shown.n);
           }}
@@ -282,9 +353,65 @@ export function PipelineTable() {
   );
 }
 
-/** ✓ when the field has a value, ✗ when it is empty: the overview shows completeness, not the data. */
-function Filled({ filled, label }: { filled: boolean; label: string }) {
-  return filled ? <Check className="mx-auto size-3.5 text-ok" aria-label={`${label}: есть`} /> : <X className="mx-auto size-3.5 text-fail/70" aria-label={`${label}: пусто`} />;
+/** How many rows a page shows and which page is open. */
+function Pages({ page, pages, total, size, onPage, onSize }: { page: number; pages: number; total: number; size: number; onPage: (p: number) => void; onSize: (n: number) => void }) {
+  return (
+    <div className="sticky left-0 flex w-fit items-center gap-2 px-2 py-1.5" data-testid="pipeline-pages">
+      <Label htmlFor="pipeline-page-size" className="text-xs text-muted-foreground">
+        Строк на странице
+      </Label>
+      <NativeSelect id="pipeline-page-size" size="sm" value={size} onChange={(e) => onSize(Number(e.target.value))} className="w-20">
+        {PAGE_SIZES.map((n) => (
+          <NativeSelectOption key={n} value={n}>
+            {n}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+      <Button variant="ghost" size="icon-sm" aria-label="Предыдущая страница" disabled={page === 0} onClick={() => onPage(page - 1)}>
+        <ChevronLeft aria-hidden />
+      </Button>
+      <span className="text-xs tabular-nums">
+        {page + 1} из {pages} · всего {total}
+      </span>
+      <Button variant="ghost" size="icon-sm" aria-label="Следующая страница" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>
+        <ChevronRight aria-hidden />
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The always-empty last row: what is typed into it becomes a new row once focus leaves the row
+ * (filled or not), and a fresh empty row takes its place.
+ */
+function NewRow({ columns, visible, onAdd }: { columns: string[]; visible: number[]; onAdd: (cells: string[]) => void }) {
+  const [draft, setDraft] = useState<string[]>(() => columns.map(() => ""));
+  return (
+    <tr
+      data-testid="pipeline-new-row"
+      className="border-t"
+      onBlur={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null) || draft.every((v) => !v.trim())) return;
+        onAdd(draft);
+        setDraft(columns.map(() => ""));
+      }}
+    >
+      <td className="border-r px-2 py-1 text-muted-foreground">
+        <Plus className="size-3.5" aria-hidden />
+      </td>
+      {visible.map((i) => (
+        <td key={i} className="border-r p-0">
+          <input
+            aria-label={`Новая строка: ${columns[i] || `колонка ${i + 1}`}`}
+            value={draft[i]}
+            onChange={(e) => setDraft(draft.map((v, j) => (j === i ? e.target.value : v)))}
+            className="w-36 bg-transparent px-2 py-1 outline-none focus:bg-accent/60"
+          />
+        </td>
+      ))}
+      <td colSpan={3} className="border-l" />
+    </tr>
+  );
 }
 
 /** One row in full: every field editable, the proxy, and what BAP and LS Clicker know about it. */

@@ -108,4 +108,4 @@ jobs:
         with:
           pattern: reports-*
           merge-multiple: true
-      - run: pnpm exec vitest run --merge-reports --coverage --reporter=dot
+      - run: pnpm exec vitest run --merge-reports=.vitest-reports --coverage --reporter=dot

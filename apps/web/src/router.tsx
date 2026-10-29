@@ -13,6 +13,7 @@ const page = <M extends Record<K, React.ComponentType<any>>, K extends keyof M &
 const OverviewPage = page(() => import("@/pages/overview"), "OverviewPage");
 const AgentsPage = page(() => import("@/pages/agents"), "AgentsPage");
 const RunsPage = page(() => import("@/pages/runs"), "RunsPage");
+const PipelinePage = page(() => import("@/pages/pipeline-table"), "PipelinePage");
 const ReviewPage = page(() => import("@/pages/review"), "ReviewPage");
 const RecipesPage = page(() => import("@/pages/recipes"), "RecipesPage");
 const AuditPage = page(() => import("@/pages/audit"), "AuditPage");
@@ -38,7 +39,17 @@ const runsSearch = z.object({ status: z.enum(RUN_STATUSES).optional().catch(unde
 const overviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: OverviewPage });
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/agents", component: () => <AgentsPage /> });
 const agentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/agents/$agentId", component: () => <AgentsPage agentId={agentRoute.useParams().agentId} /> });
-const runsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/runs", validateSearch: runsSearch, component: () => <RunsPage status={runsRoute.useSearch().status} tab={runsRoute.useSearch().tab} /> });
+// The table was a tab of runs; it is «Конвейер» now and runs are a tab of «Все логи».
+const runsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/runs",
+  validateSearch: runsSearch,
+  beforeLoad: ({ search }) => {
+    if (search.tab === "table") throw redirect({ to: "/pipeline" });
+  },
+  component: () => <RunsPage status={runsRoute.useSearch().status} />,
+});
+const pipelineRoute = createRoute({ getParentRoute: () => rootRoute, path: "/pipeline", component: () => <PipelinePage /> });
 const runRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/runs/$runId",
@@ -54,7 +65,7 @@ const recipeRoute = createRoute({
 });
 const farmingRoute = createRoute({ getParentRoute: () => rootRoute, path: "/farming", component: FarmingPage });
 // LS Clicker is part of «Конвейер» now: the old address leads there.
-const lsClickerRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ls-clicker", beforeLoad: () => { throw redirect({ to: "/runs" }); } });
+const lsClickerRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ls-clicker", beforeLoad: () => { throw redirect({ to: "/pipeline" }); } });
 const reviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/review", component: ReviewPage });
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -63,7 +74,7 @@ const auditRoute = createRoute({
   component: () => <AuditPage denied={!!auditRoute.useSearch().denied} />,
 });
 
-const routeTree = rootRoute.addChildren([overviewRoute, agentsRoute, agentRoute, runsRoute, runRoute, recipesRoute, recipeRoute, farmingRoute, lsClickerRoute, reviewRoute, auditRoute]);
+const routeTree = rootRoute.addChildren([overviewRoute, agentsRoute, agentRoute, pipelineRoute, runsRoute, runRoute, recipesRoute, recipeRoute, farmingRoute, lsClickerRoute, reviewRoute, auditRoute]);
 
 /** A page that throws shows what failed in place of the page, not a blank panel. */
 function PageError({ error, reset }: ErrorComponentProps) {

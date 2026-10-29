@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, localMac, logIn } from "./helpers.ts";
+import { goTo, killAgent, localMac, logIn, openRuns } from "./helpers.ts";
 
 const agents: ChildProcess[] = [];
 test.afterAll(() => agents.forEach(killAgent));
@@ -28,7 +28,7 @@ test("[REQ-UI-008][REQ-UI-009] a failed run shows up on «Недоработки
   await expect.poll(async () => (await (await page.request.get(`/api/v1/runs/${runId}`)).json()).status, { timeout: 30_000 }).toBe("FAILED");
 
   // «Конвейер»: the run with its profile's state and the Mac.
-  await goTo(page, "Конвейер");
+  await openRuns(page);
   const row = page.getByTestId(`run-${runId}`);
   await expect(row).toContainText(profile);
   await expect(row.getByTestId("run-profile-status")).toHaveText(/AVAILABLE|VERIFYING/);

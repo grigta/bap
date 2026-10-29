@@ -57,8 +57,7 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac t
   await page.keyboard.press("Escape");
 
   // The rows' results are in the table below, on the same page.
-  await page.getByRole("button", { name: "Таблица" }).click();
-  await expect(page.getByTestId("pipeline-lsc").nth(0)).toHaveAttribute("title", /clicker-[ab]-\w+: обработана/, { timeout: 10_000 });
-  await expect(page.getByTestId("pipeline-lsc").nth(2)).toHaveAttribute("title", "не отправлена");
+  await expect(page.getByTestId("pipeline-lsc").nth(0)).toHaveText(/clicker-[ab]-\w+ · обработана/, { timeout: 10_000 });
+  await expect(page.getByTestId("pipeline-lsc").nth(2)).toHaveText("—");
   await evidence(page, "S19", "2-table-results");
 });

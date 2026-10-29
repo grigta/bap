@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { agentMenu, confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { agentMenu, confirmDialog, goTo, killAgent, logIn, openRuns, spawnAgent } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -65,7 +65,7 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
       const { runId } = await (
         await page.request.post("/api/v1/runs", { data: { scenarioId: "slow-page", scenarioVersion: "1.0.0", profileId: profile.id, input: { baseUrl: "http://127.0.0.1:4310", ms: 10 } }, headers: { "idempotency-key": randomUUID() } })
       ).json();
-      await goTo(page, "Конвейер");
+      await openRuns(page);
       await page.getByTestId(`run-${runId}`).getByRole("link").first().click();
       await expect(page.getByTestId("run-detail").getByTestId("run-status")).toHaveText("FAILED", { timeout: 30_000 });
       await expect(page.getByTestId("run-error")).toContainText("BUNDLE_CHECKSUM_MISMATCH");
