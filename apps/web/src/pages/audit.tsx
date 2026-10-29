@@ -46,7 +46,7 @@ export function LogsTabs({ current }: { current: "audit" | "runs" }) {
   return (
     <div className="flex rounded-md border p-0.5" role="group" aria-label="Что показать">
       {(["audit", "runs"] as const).map((t) => (
-        <Button key={t} size="sm" variant={current === t ? "secondary" : "ghost"} aria-current={current === t ? "page" : undefined} render={<Link to={t === "runs" ? "/runs" : "/audit"} />}>
+        <Button key={t} size="sm" variant={current === t ? "secondary" : "ghost"} aria-current={current === t ? "page" : undefined} nativeButton={false} render={<Link to={t === "runs" ? "/runs" : "/audit"} />}>
           {t === "runs" ? "Проходы" : "Журнал"}
         </Button>
       ))}

@@ -98,7 +98,7 @@ function FailureDetails({ issue }: { issue: Issue }) {
               </dl>
               <div className="flex items-center justify-between">
                 <h4 className="text-xs text-muted-foreground">Элементы страницы: {elements.length}</h4>
-                <Button size="xs" variant="outline" render={<a href={content(issue.id, step!.failureArtifactId!)} download={`failure-${shortId(issue.id)}.json`} />}>
+                <Button size="xs" variant="outline" nativeButton={false} render={<a href={content(issue.id, step!.failureArtifactId!)} download={`failure-${shortId(issue.id)}.json`} />}>
                   <Download aria-hidden />
                   Скачать слепок
                 </Button>

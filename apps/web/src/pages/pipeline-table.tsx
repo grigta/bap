@@ -271,7 +271,7 @@ export function PipelineTable() {
             Строки списком
           </Button>
           {pick}
-          <Button variant="outline" render={<a href="/api/v1/pipeline/export" download />}>
+          <Button variant="outline" nativeButton={false} render={<a href="/api/v1/pipeline/export" download />}>
             <Download aria-hidden />
             Выгрузить CSV
           </Button>
