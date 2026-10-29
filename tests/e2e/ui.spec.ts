@@ -129,7 +129,7 @@ for (const scheme of ["light", "dark"] as const) {
     await page.getByRole("heading", { name: "Вход" }).waitFor();
     const found: Record<string, string[]> = { login: await axe(page) };
     await logIn(page);
-    for (const path of ["/", "/agents", "/runs", `/runs/${runId}`, "/recipes", "/farming", "/ls-clicker", "/review", "/audit"]) {
+    for (const path of ["/", "/agents", "/runs", `/runs/${runId}`, "/recipes", "/farming", "/review", "/audit"]) {
       await page.goto(path);
       await page.getByRole("heading", { level: 1 }).waitFor();
       await page.waitForTimeout(800); // data arrives with the first poll

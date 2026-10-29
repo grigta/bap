@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ErrorComponentProps, Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { type ErrorComponentProps, Outlet, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { Suspense, lazy } from "react";
 import { z } from "zod";
 import { AppShell } from "@/layout/app-shell";
@@ -17,7 +17,6 @@ const ReviewPage = page(() => import("@/pages/review"), "ReviewPage");
 const RecipesPage = page(() => import("@/pages/recipes"), "RecipesPage");
 const AuditPage = page(() => import("@/pages/audit"), "AuditPage");
 const FarmingPage = page(() => import("@/pages/farming"), "FarmingPage");
-const LsClickerPage = page(() => import("@/pages/ls-clicker"), "LsClickerPage");
 
 /** Signed in: the panel; 401: the login form in place, so the URL (a deep link) survives signing in. */
 function Root() {
@@ -54,7 +53,8 @@ const recipeRoute = createRoute({
   component: () => <RecipesPage recipeId={recipeRoute.useParams().recipeId} version={recipeRoute.useSearch().version} />,
 });
 const farmingRoute = createRoute({ getParentRoute: () => rootRoute, path: "/farming", component: FarmingPage });
-const lsClickerRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ls-clicker", component: LsClickerPage });
+// LS Clicker is part of «Конвейер» now: the old address leads there.
+const lsClickerRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ls-clicker", beforeLoad: () => { throw redirect({ to: "/runs" }); } });
 const reviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/review", component: ReviewPage });
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,

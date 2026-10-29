@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { confirmDialog, goTo, killAgent, localMac, logIn } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, localMac, logIn, openNewRun } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const SHOP = "http://127.0.0.1:4320";
@@ -16,12 +16,13 @@ const runIdFromUrl = (page: Page) => page.url().split("/runs/")[1]!.split("?")[0
 
 async function launch(page: Page, profile: string) {
   await goTo(page, "Конвейер");
+  await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });
   await page.getByLabel("Профиль").selectOption({ label: profile });
   await page.getByLabel("Input (JSON)").fill(JSON.stringify({ baseUrl: SHOP, query: "Ноутбук", item: "Ноутбук Pro 15", name: "Анна Петрова", phone: "+7 900 123-45-67", address: "Москва, Тверская 1", delivery: "Курьер" }));
   await page.getByLabel("timeoutMs").fill("240000");
-  await page.getByRole("button", { name: "Запустить" }).click();
+  await page.getByRole("button", { name: "Запустить", exact: true }).click();
   await expect(page.getByTestId("run-detail").getByRole("heading", { level: 2 })).toContainText(recipe);
   const detail = page.getByTestId("run-detail");
   await expect(detail.getByTestId("run-status")).toHaveText(/SUCCEEDED|FAILED|NEEDS_REVIEW/, { timeout: 120_000 });

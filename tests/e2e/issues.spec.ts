@@ -10,7 +10,7 @@ test.afterAll(() => agents.forEach(killAgent));
 test("[REQ-UI-010] the sidebar: work sections on top, frozen ones at the bottom, no profiles page", async ({ page }) => {
   await logIn(page);
   const sidebar = page.locator("[data-sidebar=sidebar]");
-  await expect(sidebar.getByRole("link")).toHaveText(["Обзор", "Агенты", "Конвейер", "LS Clicker", "Недоработки", "Все логи", "Рецепты", "Прогрев"]);
+  await expect(sidebar.getByRole("link")).toHaveText(["Обзор", "Агенты", "Конвейер", "Недоработки", "Все логи", "Рецепты", "Прогрев"]);
   await expect(sidebar.getByText("Заморожено")).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "Профили" })).toHaveCount(0);
   await evidence(page, "S16", "1-menu");

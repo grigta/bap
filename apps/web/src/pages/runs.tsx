@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Check, Flag, PlayCircle, Play, RotateCcw, Square, X } from "lucide-react";
+import { Check, Flag, PlayCircle, Play, Plus, RotateCcw, Square, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { type Column, DataTable, columns } from "@/components/data-table";
@@ -18,6 +18,7 @@ import { seconds, shortId, time } from "@/lib/format";
 import { notifyError } from "@/lib/notify";
 import { CANCELLABLE_RUN, FINAL_RUN, type ListedRun, type PendingConfirmation, type Profile, RUN_STATUSES, type Run, type RunDetail, type RunStatus, type Step, type StepResolution } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { LsClickerPanel } from "./ls-clicker";
 import { PipelineTable } from "./pipeline-table";
 
 const MARK = { passed: "✓", failed: "✗", unverified: "?" } as const;
@@ -31,7 +32,8 @@ const RESOLUTION: Record<StepResolution, [string, string]> = {
 };
 const runTitle = (r: Run) => (r.kind === "farm" ? `Прогрев: ${(r.input as { query?: string }).query ?? ""}` : `${r.scenarioId}@${r.scenarioVersion ?? "запись"}`);
 
-function NewRun({ onCreated }: { onCreated: (id: string) => void }) {
+/** Starting a code scenario by hand: folded into one button (next to the filter) until the operator needs it. */
+function NewRunForm({ onCreated, onClose }: { onCreated: (id: string) => void; onClose: () => void }) {
   const queryClient = useQueryClient();
   const scenarios = useQuery({ queryKey: ["scenarios"], queryFn: () => api<{ id: string; versions: { version: string }[] }[]>("/scenarios") });
   const profiles = useQuery({ queryKey: ["profiles"], queryFn: () => api<Profile[]>("/profiles"), refetchInterval: 2000 });
@@ -65,9 +67,14 @@ function NewRun({ onCreated }: { onCreated: (id: string) => void }) {
   };
   return (
     <form onSubmit={submit} className="mb-6 rounded-lg border bg-card p-4" aria-labelledby="new-run-title">
-      <h2 id="new-run-title" className="mb-3 text-sm font-medium">
-        Новый запуск
-      </h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 id="new-run-title" className="text-sm font-medium">
+          Новый запуск
+        </h2>
+        <Button type="button" size="xs" variant="ghost" onClick={onClose}>
+          Свернуть
+        </Button>
+      </div>
       <div className="grid gap-3 md:grid-cols-[1fr_1fr_2fr_9rem]">
         <div className="grid content-start gap-1.5">
           <Label htmlFor="run-scenario">Сценарий</Label>
@@ -388,7 +395,7 @@ export function RunsPage({ runId, status, tab = "runs" }: { runId?: string; stat
     <>
       <PageHeader
         title="Конвейер"
-        description="Все проходы: сценарий, профиль и его состояние, Mac, ход выполнения со скриншотами и журналом переходов. Во вкладке «Таблица» — ваша таблица рядом с состоянием профилей."
+        description="LS Clicker на всех Mac, ваша таблица строк и все проходы — на одной странице."
         actions={
           <div className="flex rounded-md border p-0.5" role="group" aria-label="Что показать">
             {(["runs", "table"] as const).map((t) => (
@@ -399,6 +406,7 @@ export function RunsPage({ runId, status, tab = "runs" }: { runId?: string; stat
           </div>
         }
       />
+      <LsClickerPanel />
       {tab === "table" ? <PipelineTable /> : <RunsList runId={runId} status={status} runs={runs.data} cols={cols} />}
     </>
   );
@@ -406,9 +414,10 @@ export function RunsPage({ runId, status, tab = "runs" }: { runId?: string; stat
 
 function RunsList({ runId, status, runs, cols }: { runId?: string; status?: RunStatus; runs: ListedRun[] | undefined; cols: Column<ListedRun>[] }) {
   const navigate = useNavigate();
+  const [newRun, setNewRun] = useState(false);
   return (
     <>
-      <NewRun onCreated={(id) => navigate({ to: "/runs/$runId", params: { runId: id }, search: (s) => s })} />
+      {newRun && <NewRunForm onCreated={(id) => navigate({ to: "/runs/$runId", params: { runId: id }, search: (s) => s })} onClose={() => setNewRun(false)} />}
       {runId && <RunPanel key={runId} id={runId} />}
       <div className="mb-3 flex items-center gap-2">
         <Label htmlFor="run-status-filter" className="text-sm text-muted-foreground">
@@ -427,8 +436,14 @@ function RunsList({ runId, status, runs, cols }: { runId?: string; status?: RunS
             <NativeSelectOption key={s}>{s}</NativeSelectOption>
           ))}
         </NativeSelect>
+        {!newRun && (
+          <Button variant="outline" size="sm" className="ml-auto" onClick={() => setNewRun(true)}>
+            <Plus aria-hidden />
+            Новый запуск
+          </Button>
+        )}
       </div>
-      {runs?.length === 0 && <EmptyState icon={status ? Flag : PlayCircle} title={status ? `Заданий в статусе ${status} нет` : "Заданий пока нет"} description={status ? "Сбросьте фильтр, чтобы увидеть все." : "Запустите сценарий формой выше."} />}
+      {runs?.length === 0 && <EmptyState icon={status ? Flag : PlayCircle} title={status ? `Заданий в статусе ${status} нет` : "Заданий пока нет"} description={status ? "Сбросьте фильтр, чтобы увидеть все." : "Строки LS Clicker запускаются выше, код-сценарии — кнопкой «Новый запуск»."} />}
       {!!runs?.length && <DataTable id="runs" data={runs} columns={cols} rowTestId={(r) => `run-${r.id}`} rowClassName={(r) => (r.id === runId ? "bg-accent/60" : undefined)} />}
     </>
   );

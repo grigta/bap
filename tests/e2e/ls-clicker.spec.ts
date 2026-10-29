@@ -31,7 +31,8 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac t
   // Made-up rows.
   await page.request.post("/api/v1/pipeline/import?name=lsc.csv", { data: "who,company\nann,Acme\nbob,Beta\ncarl,Gamma\n", headers: { "content-type": "text/csv" } });
 
-  await goTo(page, "LS Clicker");
+  // LS Clicker is on «Конвейер», above the table and the runs.
+  await goTo(page, "Конвейер");
   for (const name of names) await expect(page.getByTestId(`clicker-${name}`)).toBeVisible({ timeout: 20_000 });
   await page.getByLabel("Файл сборки ls-clicker").setInputFiles({ name: "ls-clicker", mimeType: "application/octet-stream", buffer: readFileSync(fake) });
   for (const name of names) await expect(page.getByTestId(`clicker-${name}`).getByTestId("clicker-version")).toHaveText("fake-ls-clicker 1.0", { timeout: 20_000 });
@@ -44,9 +45,10 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac t
   await expect(page.getByTestId("clicker-unsent")).toHaveText("В таблице ждут: 1");
   const first = page.getByTestId(`clicker-${names[0]}`);
   await expect(first.getByTestId("clicker-stage")).toHaveText("Бизнес-форма");
-  await expect(first.getByRole("listitem").filter({ hasText: "Бизнес-форма" })).toHaveAttribute("aria-current", "step");
   await first.getByRole("button", { name: "Журнал" }).click();
-  await expect(page.getByTestId("clicker-log")).toContainText("строка 1: готово");
+  const details = page.getByTestId("clicker-details");
+  await expect(details.getByRole("listitem").filter({ hasText: "Бизнес-форма" })).toHaveAttribute("aria-current", "step");
+  await expect(details.getByTestId("clicker-log")).toContainText("строка 1: готово");
   await evidence(page, "S19", "1-ls-clicker");
   expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze()).violations.filter((v) => ["serious", "critical"].includes(v.impact ?? ""))).toEqual([]);
 
@@ -54,8 +56,7 @@ test("[REQ-LSC-004] LS Clicker is run from BAP: the build rolls out, every Mac t
   await expect(page.getByTestId("clicker-plan")).toContainText("Legal business name");
   await page.keyboard.press("Escape");
 
-  // The rows' results are in the table next to them.
-  await goTo(page, "Конвейер");
+  // The rows' results are in the table below, on the same page.
   await page.getByRole("button", { name: "Таблица" }).click();
   await expect(page.getByTestId("pipeline-lsc").nth(0)).toHaveText(/clicker-[ab]-\w+ · обработана/, { timeout: 10_000 });
   await expect(page.getByTestId("pipeline-lsc").nth(2)).toHaveText("—");

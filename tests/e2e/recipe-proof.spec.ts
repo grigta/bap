@@ -3,7 +3,7 @@ import { type Page, expect, test } from "@playwright/test";
 import type { Page as CorePage } from "playwright-core";
 import { SHOP_INPUT, shapeshiftRecipe } from "../support/shapeshift-recipe.ts";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, localMac, logIn } from "./helpers.ts";
+import { goTo, killAgent, localMac, logIn, openNewRun } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const SHOP = "http://127.0.0.1:4320";
@@ -16,11 +16,12 @@ const modelCalls = async (runId: string) => (await (await fetch(`http://127.0.0.
 
 async function launch(page: Page, profile: string, expected: string) {
   await goTo(page, "Конвейер");
+  await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });
   await page.getByLabel("Профиль").selectOption({ label: profile });
   await page.getByLabel("Input (JSON)").fill(JSON.stringify({ baseUrl: SHOP, ...SHOP_INPUT }));
-  await page.getByRole("button", { name: "Запустить" }).click();
+  await page.getByRole("button", { name: "Запустить", exact: true }).click();
   const detail = page.getByTestId("run-detail");
   await expect(detail.getByRole("heading", { level: 2 })).toContainText(recipe);
   await expect(detail.getByTestId("run-status")).toHaveText(expected, { timeout: 120_000 });

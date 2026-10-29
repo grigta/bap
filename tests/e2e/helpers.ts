@@ -17,7 +17,7 @@ export async function logIn(page: Page, password: string = E2E_OPERATOR.password
   await page.getByRole("button", { name: "Выйти" }).or(page.getByRole("alert")).waitFor();
 }
 
-export type Section = "Обзор" | "Агенты" | "Конвейер" | "LS Clicker" | "Недоработки" | "Все логи" | "Рецепты" | "Прогрев";
+export type Section = "Обзор" | "Агенты" | "Конвейер" | "Недоработки" | "Все логи" | "Рецепты" | "Прогрев";
 
 /** Opens a section from the sidebar. */
 export async function goTo(page: Page, section: Section) {
@@ -29,6 +29,12 @@ export async function goTo(page: Page, section: Section) {
 export async function agentMenu(page: Page, agent: string, item: "Отключить" | "Сменить ключ" | "Отозвать доступ") {
   await page.getByRole("button", { name: `Ещё действия с ${agent}` }).click();
   await page.getByRole("menuitem", { name: item }).click();
+}
+
+/** Opens the folded «Новый запуск» form on «Конвейер» (it stays open between runs). */
+export async function openNewRun(page: Page) {
+  const open = page.getByRole("button", { name: "Новый запуск" });
+  if (await open.isVisible()) await open.click();
 }
 
 /** Accepts the in-app confirmation dialog that the last click opened. */

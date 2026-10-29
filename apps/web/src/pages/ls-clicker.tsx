@@ -1,11 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileUp, ListChecks, MousePointerClick, Play, Square } from "lucide-react";
+import { FileUp, ListChecks, Play, ScrollText, Square } from "lucide-react";
 import { useRef, useState } from "react";
-import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { PageHeader } from "@/layout/app-shell";
 import { api } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 import { notifyDone, notifyError } from "@/lib/notify";
@@ -63,7 +61,8 @@ function FlowMap({ flow, at }: { flow: Flow; at: number }) {
   );
 }
 
-function MacCard({ mac, build, flow, selected, onSelect, onPlan }: { mac: ClickerMac; build: Overview["build"]; flow: Flow; selected: boolean; onSelect: () => void; onPlan: () => void }) {
+/** One Mac on one line: what it runs, where it is, and its buttons. */
+function MacRow({ mac, build, flow, selected, onSelect, onPlan }: { mac: ClickerMac; build: Overview["build"]; flow: Flow; selected: boolean; onSelect: () => void; onPlan: () => void }) {
   const queryClient = useQueryClient();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["ls-clicker"] });
   const run = useMutation({ mutationFn: () => api(`/agents/${mac.agentId}/ls-clicker/runs`, { method: "POST" }), onSuccess: refresh, onError: notifyError(`Запуск на ${mac.name}`) });
@@ -76,74 +75,69 @@ function MacCard({ mac, build, flow, selected, onSelect, onPlan }: { mac: Clicke
   const live = s.stage?.ageSeconds !== null && s.stage?.ageSeconds !== undefined && s.stage.ageSeconds < LIVE_SECONDS;
   const outdated = !!build && s.sha256 !== build.sha256;
   return (
-    <section data-testid={`clicker-${mac.name}`} aria-label={mac.name} className={cn("grid content-start gap-3 rounded-lg border bg-card p-4", selected && "ring-2 ring-ring")}>
-      <div className="flex items-start gap-2">
-        <button type="button" onClick={onSelect} className="grid min-w-0 flex-1 text-left">
-          <span className="truncate font-medium hover:underline">{mac.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{mac.model ?? "—"}</span>
-        </button>
-        <StatusBadge status={mac.connection} />
-      </div>
-      <dl className="grid grid-cols-2 gap-2 text-xs">
-        <div>
-          <dt className="text-muted-foreground">Версия</dt>
-          <dd data-testid="clicker-version" className="truncate font-mono">
-            {s.version ?? (s.sha256 ? s.sha256.slice(0, 12) : "не установлен")}
-            {outdated && <span className="ml-1 rounded-sm bg-wait-soft px-1 font-sans text-[10px] text-wait">обновляется</span>}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Строки</dt>
-          <dd data-testid="clicker-rows" className="tabular-nums">
-            {s.outputRows} из {s.inputRows} обработано{pending > 0 && `, в очереди ${pending}`}
-          </dd>
-        </div>
-      </dl>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
+    <li data-testid={`clicker-${mac.name}`} aria-label={mac.name} className={cn("grid items-center gap-x-4 gap-y-1 px-3 py-2 text-xs sm:grid-cols-[minmax(9rem,1.2fr)_minmax(7rem,1fr)_minmax(8rem,1fr)_minmax(9rem,1.3fr)_minmax(10rem,1.5fr)_auto]", selected && "bg-accent/60")}>
+      <button type="button" onClick={onSelect} aria-expanded={selected} className="grid min-w-0 text-left">
+        <span className="flex items-center gap-1.5 truncate text-sm font-medium hover:underline">
+          <span className={cn("size-1.5 shrink-0 rounded-full", online ? "bg-ok" : "bg-muted-foreground/40")} aria-label={online ? "на связи" : "не на связи"} role="img" />
+          {mac.name}
+        </span>
+        <span className="truncate text-muted-foreground">{mac.model ?? "—"}</span>
+      </button>
+      <span data-testid="clicker-version" className="truncate font-mono">
+        {s.version ?? (s.sha256 ? s.sha256.slice(0, 12) : "не установлен")}
+        {outdated && <span className="ml-1 rounded-sm bg-wait-soft px-1 font-sans text-[10px] text-wait">обновляется</span>}
+      </span>
+      <span data-testid="clicker-rows" className="tabular-nums">
+        {s.outputRows} из {s.inputRows} обработано{pending > 0 && `, в очереди ${pending}`}
+      </span>
+      <span className="flex items-center gap-1.5">
         {result ? <StatusBadge status={result} data-testid="clicker-run" /> : <span data-testid="clicker-run" className="text-muted-foreground">запусков не было</span>}
-        <span className="text-muted-foreground tabular-nums">{s.run.running ? `с ${dateTime(s.run.startedAt!)}` : s.run.finishedAt ? `закончил ${dateTime(s.run.finishedAt)}` : ""}</span>
-      </div>
-      {s.stage && (
-        <div className="grid gap-1.5">
-          <div className="flex items-center gap-2 text-xs">
-            <span className={cn("size-2 rounded-full", live ? "bg-ok" : "bg-muted-foreground/40")} aria-hidden />
-            <span data-testid="clicker-stage">{at >= 0 ? flow[at]!.label : s.stage.node || "—"}</span>
-            {s.stage.ageSeconds !== null && <span className="text-muted-foreground">{s.stage.ageSeconds} с назад</span>}
-          </div>
-          <FlowMap flow={flow} at={at} />
-          {s.stage.errors.length > 0 && <p className="text-xs text-fail">{s.stage.errors.join("; ")}</p>}
-        </div>
-      )}
-      <div className="flex flex-wrap gap-2">
+        <span className="truncate text-muted-foreground tabular-nums">{s.run.finishedAt && !s.run.running ? dateTime(s.run.finishedAt) : ""}</span>
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        {s.stage ? (
+          <>
+            <span className={cn("size-1.5 shrink-0 rounded-full", live ? "bg-ok" : "bg-muted-foreground/40")} aria-hidden />
+            <span data-testid="clicker-stage" className="truncate">
+              {at >= 0 ? flow[at]!.label : s.stage.node || "—"}
+            </span>
+            {at >= 0 && <span className="text-muted-foreground tabular-nums">{at + 1}/{flow.length}</span>}
+            {s.stage.errors.length > 0 && <span className="text-fail" title={s.stage.errors.join("; ")}>· ошибки: {s.stage.errors.length}</span>}
+          </>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
+      <span className="flex justify-end gap-1">
         {s.run.running ? (
-          <Button size="sm" variant="outline" disabled={!online || stop.isPending} onClick={() => stop.mutate()}>
+          <Button size="icon-xs" variant="outline" aria-label="Остановить" title="Остановить" disabled={!online || stop.isPending} onClick={() => stop.mutate()}>
             <Square aria-hidden />
-            Остановить
           </Button>
         ) : (
-          <Button size="sm" disabled={!online || !s.sha256 || run.isPending} onClick={() => run.mutate()}>
+          <Button size="icon-xs" aria-label="Запустить строку" title="Запустить строку" disabled={!online || !s.sha256 || run.isPending} onClick={() => run.mutate()}>
             <Play aria-hidden />
-            Запустить строку
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={onSelect}>
-          Журнал
+        <Button size="icon-xs" variant="ghost" aria-label="Журнал" title="Журнал" aria-pressed={selected} onClick={onSelect}>
+          <ScrollText aria-hidden />
         </Button>
-        <Button size="sm" variant="ghost" disabled={!online || !s.sha256} onClick={onPlan}>
+        <Button size="icon-xs" variant="ghost" aria-label="План ввода" title="План ввода" disabled={!online || !s.sha256} onClick={onPlan}>
           <ListChecks aria-hidden />
-          План ввода
         </Button>
-      </div>
-    </section>
+      </span>
+    </li>
   );
 }
 
-function Log({ mac }: { mac: ClickerMac }) {
+/** The chosen Mac: where it is on the flow, its errors and the engine's log. */
+function MacDetails({ mac, flow }: { mac: ClickerMac; flow: Flow }) {
   const log = useQuery({ queryKey: ["ls-clicker", "log", mac.agentId], queryFn: () => api<{ lines: string[] }>(`/agents/${mac.agentId}/ls-clicker/log`), refetchInterval: POLL_MS, retry: false });
+  const s = mac.state;
   return (
-    <section aria-label={`Журнал ${mac.name}`} className="rounded-lg border bg-card">
-      <h2 className="border-b px-4 py-2 text-sm font-medium">Журнал: {mac.name}</h2>
-      <pre data-testid="clicker-log" className="max-h-96 overflow-auto p-4 font-mono text-xs whitespace-pre-wrap">
+    <section data-testid="clicker-details" aria-label={`Журнал ${mac.name}`} className="grid gap-2 border-t p-3">
+      {s.stage && <FlowMap flow={flow} at={stepOf(flow, s.stage.node)} />}
+      {s.stage && s.stage.errors.length > 0 && <p className="text-xs text-fail">{s.stage.errors.join("; ")}</p>}
+      <pre data-testid="clicker-log" className="max-h-56 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap">
         {log.error ? (log.error as Error).message : log.data?.lines.join("\n") || "Журнал пока пуст."}
       </pre>
     </section>
@@ -169,10 +163,10 @@ function PlanDialog({ mac, onClose }: { mac: ClickerMac; onClose: () => void }) 
 }
 
 /**
- * LS Clicker without a panel of its own (REQ-LSC-004): its build rolls out to every Mac from here,
- * rows come from «Конвейер» → «Таблица», runs start on one Mac or on all of them.
+ * LS Clicker on «Конвейер» (REQ-LSC-004): the build and its rollout, one line per Mac with its run and
+ * stage, run on one or all; the chosen Mac's flow and log open below. Rows come from «Таблица» below.
  */
-export function LsClickerPage() {
+export function LsClickerPanel() {
   const queryClient = useQueryClient();
   const file = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -198,42 +192,24 @@ export function LsClickerPage() {
   });
   const data = overview.data;
   const macs = data?.macs ?? [];
-  const chosen = macs.find((m) => m.agentId === selected) ?? macs[0];
+  const chosen = macs.find((m) => m.agentId === selected);
   const updated = data?.build ? macs.filter((m) => m.state.sha256 === data.build!.sha256).length : 0;
 
   return (
-    <>
-      <PageHeader
-        title="LS Clicker"
-        description="Движок регистрации на всех Mac. Сборка раскатывается отсюда сама; при каждом запуске Mac берёт следующую строку из «Конвейер» → «Таблица». Запуск — на одном Mac или на всех."
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <span data-testid="clicker-unsent" className="self-center text-sm text-muted-foreground">
-              В таблице ждут: {data?.unsent ?? 0}
-            </span>
-            <Button disabled={macs.length === 0 || runAll.isPending} onClick={() => runAll.mutate()}>
-              <Play aria-hidden />
-              Запустить на всех
-            </Button>
-          </div>
-        }
-      />
-      <section aria-label="Сборка" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3 text-sm">
-        <span>
-          Сборка:{" "}
+    <section aria-label="LS Clicker" className="mb-4 rounded-lg border bg-card">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-3 py-2 text-xs">
+        <span className="text-sm font-medium">LS Clicker</span>
+        <span className="text-muted-foreground">
+          сборка{" "}
           {data?.build ? (
             <>
-              <span data-testid="clicker-build" className="font-mono text-xs">
+              <span data-testid="clicker-build" className="font-mono text-foreground">
                 {data.build.sha256.slice(0, 12)}
-              </span>
-              <span className="text-muted-foreground">
-                {" "}
-                · {dateTime(data.build.uploadedAt)}
-                {data.build.uploadedBy && `, ${data.build.uploadedBy}`} · обновлено Mac: {updated} из {macs.length}
-              </span>
+              </span>{" "}
+              · обновлено Mac: {updated} из {macs.length}
             </>
           ) : (
-            <span className="text-muted-foreground">не загружена</span>
+            "не загружена"
           )}
         </span>
         <input
@@ -247,23 +223,28 @@ export function LsClickerPage() {
             e.target.value = "";
           }}
         />
-        <Button size="sm" variant="outline" className="ml-auto" disabled={upload.isPending} onClick={() => file.current?.click()}>
+        <Button size="xs" variant="ghost" disabled={upload.isPending} onClick={() => file.current?.click()}>
           <FileUp aria-hidden />
           Загрузить сборку
         </Button>
-      </section>
-      {data && macs.length === 0 && <EmptyState icon={MousePointerClick} title="Нет Mac с LS Clicker" description="Агенты сообщают о LS Clicker, когда на Mac включён его каталог (по умолчанию ~/Developer/ls-clicker)." />}
+        <span data-testid="clicker-unsent" className="ml-auto text-muted-foreground">
+          В таблице ждут: {data?.unsent ?? 0}
+        </span>
+        <Button size="sm" disabled={macs.length === 0 || runAll.isPending} onClick={() => runAll.mutate()}>
+          <Play aria-hidden />
+          Запустить на всех
+        </Button>
+      </div>
+      {data && macs.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">Нет Mac с LS Clicker: агент сообщает о нём, когда на Mac есть каталог ~/Developer/ls-clicker.</p>}
       {macs.length > 0 && (
-        <div className="grid gap-4">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {macs.map((m) => (
-              <MacCard key={m.agentId} mac={m} build={data!.build} flow={flow.data ?? []} selected={m.agentId === chosen?.agentId} onSelect={() => setSelected(m.agentId)} onPlan={() => setPlan(m)} />
-            ))}
-          </div>
-          {chosen && <Log key={chosen.agentId} mac={chosen} />}
-        </div>
+        <ul className="divide-y">
+          {macs.map((m) => (
+            <MacRow key={m.agentId} mac={m} build={data!.build} flow={flow.data ?? []} selected={m.agentId === chosen?.agentId} onSelect={() => setSelected(m.agentId === selected ? null : m.agentId)} onPlan={() => setPlan(m)} />
+          ))}
+        </ul>
       )}
+      {chosen && <MacDetails key={chosen.agentId} mac={chosen} flow={flow.data ?? []} />}
       {plan && <PlanDialog mac={plan} onClose={() => setPlan(null)} />}
-    </>
+    </section>
   );
 }

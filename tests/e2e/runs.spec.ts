@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { goTo, killAgent, logIn, spawnAgent, openNewRun } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -32,13 +32,14 @@ async function agentWithProfile(page: Page, name: string): Promise<string> {
 }
 
 async function launch(page: Page, scenario: string, profile: string, input: object, timeoutMs = 120_000) {
+  await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption(scenario);
   // The form refreshes profiles every 2 s: wait until the previous run has released this one.
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });
   await page.getByLabel("Профиль").selectOption({ label: profile });
   await page.getByLabel("Input (JSON)").fill(JSON.stringify(input));
   await page.getByLabel("timeoutMs").fill(String(timeoutMs));
-  await page.getByRole("button", { name: "Запустить" }).click();
+  await page.getByRole("button", { name: "Запустить", exact: true }).click();
   // The detail card switches to the new run; until then it still shows the previous one.
   await expect(page.getByTestId("run-detail").getByRole("heading", { level: 2 })).toContainText(scenario);
 }

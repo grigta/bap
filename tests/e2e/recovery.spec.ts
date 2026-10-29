@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { confirmDialog, goTo, killAgent, logIn, spawnAgent, openNewRun } from "./helpers.ts";
 import { STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
@@ -28,11 +28,12 @@ const crashAndRestart = async () => {
 
 async function launch(page: Page, item: string) {
   await goTo(page, "Конвейер");
+  await openNewRun(page);
   await page.getByLabel("Сценарий").selectOption("wizard-order@1.1.0");
   await expect(page.getByLabel("Профиль").getByRole("option", { name: "rec-p", exact: true })).toBeEnabled({ timeout: 20_000 });
   await page.getByLabel("Профиль").selectOption({ label: "rec-p" });
   await page.getByLabel("Input (JSON)").fill(JSON.stringify({ baseUrl: site, item }));
-  await page.getByRole("button", { name: "Запустить" }).click();
+  await page.getByRole("button", { name: "Запустить", exact: true }).click();
   await expect(page.getByTestId("run-detail").getByRole("heading", { level: 2 })).toContainText("wizard-order");
   return page.getByTestId("run-detail");
 }
