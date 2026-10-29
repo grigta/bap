@@ -13,6 +13,7 @@ pre-commit:
 
 pre-push:
   jobs:
-    # full `pnpm verify` also needs Linken Sphere running; run it at the end of a stage
+    # full `pnpm verify` also needs Linken Sphere running; run it at the end of a stage.
+    # Once per change: skipped when this exact code already passed `pnpm verify:code` (tools/verify-once).
     - name: verify
-      run: pnpm verify:code
+      run: node tools/verify-once/src/cli.ts check || pnpm verify:code
