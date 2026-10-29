@@ -104,7 +104,10 @@ chown -R bap:bap "$BAP/data/api-anything"; chmod 700 "$BAP/data/api-anything"
 upsert BAP_API_ANYTHING_BIN "$BAP/node/bin/api-anything"
 upsert BAP_SPOKEO_HOME "$BAP/data/api-anything"
 # Provider keys (GotSMS, RuCaptcha) are passed once as environment variables of this script, never in the repo.
-for k in BAP_GOTSMS_KEY BAP_RUCAPTCHA_KEY; do if [ -n "${!k:-}" ]; then upsert "$k" "${!k}"; echo "$k stored in $ENV"; fi; done
+# Quoted: keys may hold characters a shell or sed would act on (GotSMS keys look like "id|token").
+for k in BAP_GOTSMS_KEY BAP_RUCAPTCHA_KEY; do
+  if [ -n "${!k:-}" ]; then sed -i "/^$k=/d" "$ENV"; printf "%s='%s'\n" "$k" "${!k}" >> "$ENV"; echo "$k stored in $ENV"; fi
+done
 
 say "Services"
 cat > /etc/systemd/system/bap-seaweed.service <<EOF

@@ -101,7 +101,8 @@ export function registerProviders(app: App, { db, config }: { db: Db; config: Pr
     { preHandler: runToken, schema: { body: z.object({ phone: z.string().regex(/^[0-9+\-() ]{7,20}$/, "a phone number") }) } },
     async (request, reply) => {
       if (!config.spokeo) return notConfigured(request, reply, "Spokeo");
-      const { stdout } = await promisify(execFile)(config.spokeo.bin, ["call", "spokeo", "phoneLookup", `phone=${request.body.phone}`], {
+      // api-anything is a Node script: run by this server's own node, whatever the service's PATH holds.
+      const { stdout } = await promisify(execFile)(process.execPath, [config.spokeo.bin, "call", "spokeo", "phoneLookup", `phone=${request.body.phone}`], {
         env: { ...process.env, HOME: config.spokeo.home },
         timeout: 90_000,
       }).catch((e: { stdout?: string }) => ({ stdout: e.stdout ?? "" }));
