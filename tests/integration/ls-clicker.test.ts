@@ -228,7 +228,7 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect((await api("GET", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/log`)).json().lines.join("\n")).not.toContain("10.2.2.2");
   });
 
-  test("[REQ-LSC-008] a row waits for its number and proxy («wait info»); a ticked Mac takes ready rows by itself, an unticked one does not", async () => {
+  test("[REQ-LSC-008] a row waits for its number and proxy («wait info»); a ticked Mac takes ready rows by itself, an unticked one does not; «Повторить» gives a Mac its last row again", async () => {
     // A fresh Mac: the others keep a failing row of the earlier tests, which stops their automatic runs.
     await addMac("mac-c");
     const build = (await overview()).build!.sha256;
@@ -252,6 +252,14 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     await until("both done", () => mac("mac-c"), (m) => !m.state.run.running && m.state.inputRows === before + 2 && m.state.outputRows === before + 2);
     expect((await mac("mac-a")).sent).toBe(aSent); // mac-a is not ticked: it took nothing
     expect((await auto("mac-c", false)).statusCode).toBe(204);
+
+    // «Повторить»: the Mac has nothing left of its own; its last row goes to it again as a new line of input.csv.
+    await until("mac-c idle", () => mac("mac-c"), (m) => !m.state.run.running);
+    const retried = await app.inject({ method: "POST", url: `/api/v1/agents/${ids["mac-c"]}/ls-clicker/runs`, payload: { retry: true }, cookies: { bap_session: cookie } });
+    expect(retried.statusCode).toBe(202);
+    await until("nina ran again", () => mac("mac-c"), (m) => !m.state.run.running && m.state.inputRows === before + 3 && m.state.outputRows === before + 3);
+    expect(readFileSync(join(dirs["mac-c"]!, "input.csv"), "utf8").match(/nina/g)).toHaveLength(2);
+    expect((await api("GET", "/api/v1/pipeline")).json().rows[0].lsc.agentName).toBe("mac-c");
     expect((await app.inject({ method: "PUT", url: `/api/v1/agents/${ids["mac-c"]}/ls-clicker/auto`, payload: { enabled: true } })).statusCode).toBe(401);
   });
 });

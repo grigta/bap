@@ -68,7 +68,7 @@ function FlowMap({ flow, at }: { flow: Flow; at: number }) {
 function MacRow({ mac, build, flow, selected, onSelect, onPlan }: { mac: ClickerMac; build: Overview["build"]; flow: Flow; selected: boolean; onSelect: () => void; onPlan: () => void }) {
   const queryClient = useQueryClient();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["ls-clicker"] });
-  const run = useMutation({ mutationFn: () => api(`/agents/${mac.agentId}/ls-clicker/runs`, { method: "POST" }), onSuccess: refresh, onError: notifyError(`Запуск на ${mac.name}`) });
+  const run = useMutation({ mutationFn: () => api(`/agents/${mac.agentId}/ls-clicker/runs`, { method: "POST", body: JSON.stringify({ retry: true }) }), onSuccess: refresh, onError: notifyError(`Повтор на ${mac.name}`) });
   const stop = useMutation({ mutationFn: () => api(`/agents/${mac.agentId}/ls-clicker/stop`, { method: "POST" }), onSuccess: refresh, onError: notifyError(`Остановка на ${mac.name}`) });
   const auto = useMutation({
     mutationFn: (enabled: boolean) => api(`/agents/${mac.agentId}/ls-clicker/auto`, { method: "PUT", body: JSON.stringify({ enabled }) }),

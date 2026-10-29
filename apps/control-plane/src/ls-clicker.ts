@@ -234,11 +234,25 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     return next;
   };
 
-  /** The Mac runs its own unprocessed row if it has one, else the next unsent table row. */
-  const start = (agentId: string) =>
+  /** The table row this Mac was given last, for «Повторить» after a failed run. */
+  const lastRowOf = (agentId: string, importId: string) =>
+    db
+      .selectFrom("lsclicker_queue")
+      .innerJoin("pipeline_rows", (j) => j.onRef("pipeline_rows.import_id", "=", "lsclicker_queue.import_id").onRef("pipeline_rows.n", "=", "lsclicker_queue.row_n"))
+      .select(["pipeline_rows.import_id", "pipeline_rows.n", "pipeline_rows.cells", "pipeline_rows.proxy"])
+      .where("lsclicker_queue.agent_id", "=", agentId)
+      .where("lsclicker_queue.import_id", "=", importId)
+      .orderBy("lsclicker_queue.position", "desc")
+      .executeTakeFirst();
+
+  /**
+   * The Mac runs its own unprocessed row if it has one, else the next unsent table row. A retry gives it
+   * its last row again: the failed attempt stays in output.csv as history, the row runs as a new line.
+   */
+  const start = (agentId: string, retry = false) =>
     serially(async () => {
       const imp = await db.selectFrom("pipeline_import").select(["id", "columns"]).orderBy("created_at", "desc").executeTakeFirst();
-      const next = (await unsentRows())[0];
+      const next = retry ? imp && (await lastRowOf(agentId, imp.id)) : (await unsentRows())[0];
       const row = imp && next ? { header: imp.columns as string[], cells: next.cells as string[], ...(next.proxy && { proxy: next.proxy }) } : undefined;
       // Rows already on the Mac and not processed yet: the one it runs gets its current proxy.
       const queued = await db
@@ -255,11 +269,15 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       if (answer.ok && next) {
         const { appended } = z.object({ appended: z.number().int().nullable() }).parse(answer.result);
         if (appended !== null)
-          await db
-            .insertInto("lsclicker_queue")
-            .values({ agent_id: agentId, position: appended, import_id: next.import_id, row_n: next.n })
-            .onConflict((oc) => oc.columns(["agent_id", "position"]).doUpdateSet({ import_id: next.import_id, row_n: next.n, sent_at: new Date() }))
-            .execute();
+          await db.transaction().execute(async (tx) => {
+            // A retried row moves to its new line: the table shows its latest attempt, a row is on one line only.
+            if (retry) await tx.deleteFrom("lsclicker_queue").where("import_id", "=", next.import_id).where("row_n", "=", next.n).execute();
+            await tx
+              .insertInto("lsclicker_queue")
+              .values({ agent_id: agentId, position: appended, import_id: next.import_id, row_n: next.n })
+              .onConflict((oc) => oc.columns(["agent_id", "position"]).doUpdateSet({ import_id: next.import_id, row_n: next.n, sent_at: new Date() }))
+              .execute();
+          });
       }
       if (!answer.ok && answer.code === "LS_CLICKER_NO_ROWS") return { ok: false as const, code: "NO_ROWS", message: "The table has no rows left to run" };
       return answer;
@@ -302,10 +320,10 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
 
   app.post(
     "/api/v1/agents/:id/ls-clicker/runs",
-    { preHandler: operatorAuth, schema: { params: idParams, response: { 202: z.object({ started: z.literal(true) }), ...errors } } },
+    { preHandler: operatorAuth, schema: { params: idParams, body: z.object({ retry: z.boolean().optional() }).nullish(), response: { 202: z.object({ started: z.literal(true) }), ...errors } } },
     async (request, reply) => {
       if (!(await db.selectFrom("agents").select("id").where("id", "=", request.params.id).where("deleted_at", "is", null).executeTakeFirst())) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
-      const answer = await start(request.params.id);
+      const answer = await start(request.params.id, !!request.body?.retry);
       if (!answer.ok) return sendError(reply, request, answer.code === "NO_ROWS" ? 409 : statusOf(answer.code), answer.code, answer.message);
       return reply.code(202).send({ started: true as const });
     },
