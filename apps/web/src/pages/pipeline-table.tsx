@@ -23,6 +23,9 @@ import { LsClickerPanel } from "./ls-clicker";
 
 /** A proxy as LS Clicker takes it: socks5 ip:port, optionally @login:pass. */
 const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
+/** A row whose status column says good or bad has been done: LS Clicker skips it (as on the server). */
+const DONE_STATUSES = ["good", "bad", "гуд", "бед"];
+const statusColumn = (columns: string[]) => columns.findIndex((c) => ["status", "статус"].includes(c.trim().toLowerCase()));
 /** The password is not on screen until the cell is opened. */
 const maskProxy = (p: string) => p.replace(/^([^@]+@[^:]+:).+$/, "$1•••");
 
@@ -234,6 +237,14 @@ export function PipelineTable() {
   const collapsedColumns = chosen ? all.filter((i) => chosen.includes(name(i))) : all.slice(0, DEFAULT_COLLAPSED);
   const visible = expanded ? all : collapsedColumns;
   const span = visible.length + 4;
+  const status = statusColumn(imp.columns);
+  /** Why LS Clicker will not take a row it has not taken: its status, or it is above the starting row. */
+  const skipped = (r: Pipeline["rows"][number]) => {
+    const value = status >= 0 ? (r.cells[status] ?? "").trim().toLowerCase() : "";
+    if (DONE_STATUSES.includes(value)) return { text: "пропуск", title: `статус ${value}: не запускается` };
+    if (imp.lscFrom && r.n < imp.lscFrom) return { text: "история", title: "история: не запускается" };
+    return null;
+  };
   return (
     <section aria-label="Таблица" className="grid gap-3">
       <div className="flex flex-wrap items-end gap-3">
@@ -343,8 +354,8 @@ export function PipelineTable() {
                 <Cell className="border-l font-mono" data-testid="pipeline-proxy">
                   {r.proxy ? maskProxy(r.proxy) : <span className="text-muted-foreground">—</span>}
                 </Cell>
-                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : imp.lscFrom && r.n < imp.lscFrom ? "история: не запускается" : "не отправлена"}>
-                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">{imp.lscFrom && r.n < imp.lscFrom ? "история" : "—"}</span>}
+                <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : (skipped(r)?.title ?? "не отправлена")}>
+                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">{skipped(r)?.text ?? "—"}</span>}
                 </Cell>
                 <Cell>{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</Cell>
               </tr>

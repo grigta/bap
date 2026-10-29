@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@bap/database";
-import { type LsClickerState, lsClickerState } from "@bap/protocol";
+import { DONE_STATUSES, type LsClickerState, lsClickerState, statusColumn } from "@bap/protocol";
 import type { preHandlerAsyncHookHandler } from "fastify";
+import { sql } from "kysely";
 import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
@@ -200,6 +201,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
   async function unsentRows() {
     const imp = await db.selectFrom("pipeline_import").select(["id", "columns", "lsc_from"]).orderBy("created_at", "desc").executeTakeFirst();
     if (!imp) return [];
+    const status = statusColumn(imp.columns as string[]);
     return db
       .selectFrom("pipeline_rows")
       .leftJoin("lsclicker_queue", (j) => j.onRef("lsclicker_queue.import_id", "=", "pipeline_rows.import_id").onRef("lsclicker_queue.row_n", "=", "pipeline_rows.n"))
@@ -208,6 +210,8 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       .where("lsclicker_queue.position", "is", null)
       // Rows above the operator's starting row are history: they are never run.
       .where("pipeline_rows.n", ">=", imp.lsc_from ?? 1)
+      // A row whose status is already good or bad has been done: it is not run again.
+      .$if(status >= 0, (q) => q.where(sql<string>`lower(trim(coalesce(pipeline_rows.cells->>${sql.lit(status)}, '')))`, "not in", [...DONE_STATUSES]))
       .orderBy("pipeline_rows.n")
       .execute();
   }

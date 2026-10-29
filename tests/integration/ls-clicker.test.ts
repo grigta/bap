@@ -82,7 +82,7 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect(existsSync(join(dirs["mac-a"]!, "ls-clicker"))).toBe(true);
   });
 
-  test("[REQ-LSC-002][REQ-LSC-007] each run takes the next table row (none above the starting row), placed under input.csv's own column names; its result comes back to the row", async () => {
+  test("[REQ-LSC-002][REQ-LSC-007] each run takes the next table row (none above the starting row, none already good or bad), placed under input.csv's own column names; its result comes back to the row", async () => {
     // mac-b already has an input.csv: another column order and an extra column.
     writeFileSync(join(dirs["mac-b"]!, "input.csv"), "who,note,company\n");
     expect((await api("POST", "/api/v1/pipeline/import?name=people.csv", Buffer.from(TABLE), "text/csv")).statusCode).toBe(201);
@@ -94,6 +94,11 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect((await api("GET", "/api/v1/pipeline")).json().import.lscFrom).toBe(4);
     expect((await from(0)).statusCode).toBe(400);
     expect((await from(null)).statusCode).toBe(204);
+    expect((await overview()).unsent).toBe(5);
+    // A row whose status is good or bad (any case) has been done: it is not run again.
+    expect((await api("POST", "/api/v1/pipeline/import?name=done.csv", Buffer.from("who,Status\nann,good\nbob, BAD \ncarl,\ndora,гуд\neve,new\n"), "text/csv")).statusCode).toBe(201);
+    expect((await overview()).unsent).toBe(2);
+    expect((await api("POST", "/api/v1/pipeline/import?name=people.csv", Buffer.from(TABLE), "text/csv")).statusCode).toBe(201);
     expect((await overview()).unsent).toBe(5);
 
     expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`)).statusCode).toBe(202);

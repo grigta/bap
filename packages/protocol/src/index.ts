@@ -49,6 +49,11 @@ export type PowerState = z.infer<typeof powerState>;
 /** A proxy as ls-clicker takes it (`--proxy`): socks5 `ip:port` with optional `@login:pass`. */
 export const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
 
+/** A table row whose `status` column says good or bad has been done: LS Clicker does not run it again. */
+export const DONE_STATUSES = ["good", "bad", "гуд", "бед"] as const;
+/** The table's status column (by its name), or -1. */
+export const statusColumn = (columns: string[]) => columns.findIndex((c) => ["status", "статус"].includes(c.trim().toLowerCase()));
+
 export const lsClickerState = z
   .object({
     /** `ls-clicker --version`, and the binary's sha256 (what BAP rolls out). */
