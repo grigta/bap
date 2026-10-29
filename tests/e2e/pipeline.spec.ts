@@ -10,7 +10,7 @@ import { confirmDialog, goTo, killAgent, localMac, logIn } from "./helpers.ts";
 const agents: ChildProcess[] = [];
 test.afterAll(() => agents.forEach(killAgent));
 
-test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees which fields are filled, links it to profiles by a column, opens a row to edit its cells and proxy, adds rows, and exports it with our columns", async ({ page }) => {
+test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees which fields are filled, links it to profiles by a column, opens a row to edit its cells and proxy, adds and deletes rows, and exports it with our columns", async ({ page }) => {
   test.setTimeout(90_000);
   await logIn(page);
   const profile = await localMac(page, agents, `table-${randomUUID().slice(0, 4)}`);
@@ -71,6 +71,12 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees wh
   await expect(table.getByTestId("pipeline-row").nth(3).getByLabel("Должность: пусто")).toBeVisible();
   await evidence(page, "S22", "1-add-rows");
 
+  // A row that has not gone to a Mac can be deleted from its card.
+  await table.getByTestId("pipeline-row").nth(3).click();
+  await page.getByRole("button", { name: "Удалить строку" }).click();
+  await confirmDialog(page);
+  await expect(table.getByTestId("pipeline-row")).toHaveCount(3);
+
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "Выгрузить CSV" }).click();
   const file = await download;
@@ -80,10 +86,7 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014] the operator imports a table, sees wh
   expect(exported.rows[0]!.slice(0, 4)).toEqual(["Иванов Тест Тестович", "старший оператор", profile, "AVAILABLE"]);
   expect(exported.rows[0]!.at(-1)).toBe("10.0.0.7:1080@user:secret-pass");
   expect(exported.rows[1]!.slice(3)).toEqual(["", "", "", "", "", "", "", ""]);
-  expect(exported.rows.slice(2).map((r) => r.slice(0, 3))).toEqual([
-    ["Сидоров Опыт Опытович", "практикант", ""],
-    ["Кузнецова, Проба", "", "нет"],
-  ]);
+  expect(exported.rows.slice(2).map((r) => r.slice(0, 3))).toEqual([["Сидоров Опыт Опытович", "практикант", ""]]);
 
   // A wide table moves sideways from the scrollbar above it, without scrolling down first.
   const fields = Array.from({ length: 80 }, (_, i) => `Поле ${i + 1}`);

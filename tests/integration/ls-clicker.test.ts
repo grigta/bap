@@ -194,6 +194,8 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     await until("ran with its proxy", () => existsSync(join(dirs["mac-a"]!, "proxies.log")) && log(), (l) => !!l && l.endsWith(" 10.1.1.1:1080@u:p"));
     expect((await endedSince("mac-a", first)).state.run.ok).toBe(false);
     expect((await patch(1, { cells: ["fail", "edited"] })).json().error.code).toBe("ROW_SENT");
+    const remove = await app.inject({ method: "DELETE", url: "/api/v1/pipeline/rows/1", cookies: { bap_session: cookie } });
+    expect([remove.statusCode, remove.json().error.code]).toEqual([409, "ROW_SENT"]);
 
     // The operator changes the proxy; the Mac runs its own unprocessed row again, with the new one.
     expect((await patch(1, { proxy: "10.2.2.2:1080" })).statusCode).toBe(204);

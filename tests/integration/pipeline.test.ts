@@ -127,6 +127,19 @@ describe("the operator's table in «Конвейер»", () => {
     expect((await api("GET", "/api/v1/pipeline")).json().import.rowCount).toBe(before.import.rowCount + 2);
   });
 
+  test("[REQ-UI-014] the operator deletes a row that has not gone to a Mac; the others keep their numbers", async () => {
+    const remove = (n: number) => app.inject({ method: "DELETE", url: `/api/v1/pipeline/rows/${n}`, cookies: { bap_session: cookie } });
+    const before = (await api("GET", "/api/v1/pipeline")).json();
+    const [first, second] = before.rows as { n: number }[];
+    expect((await remove(first!.n)).statusCode).toBe(204);
+    const after = (await api("GET", "/api/v1/pipeline")).json();
+    expect(after.import.rowCount).toBe(before.import.rowCount - 1);
+    expect(after.rows.map((r: { n: number }) => r.n)).toEqual(before.rows.slice(1).map((r: { n: number }) => r.n));
+    expect(after.rows[0].n).toBe(second!.n);
+    expect((await remove(first!.n)).statusCode).toBe(404);
+    expect((await remove(99_999)).json().error.code).toBe("NOT_FOUND");
+  });
+
   test("[REQ-UI-012] a new upload replaces the table; clearing removes it; a broken file is refused with the line, not the values", async () => {
     expect((await upload("a,b\n1,2\n", "второй.csv")).json()).toEqual({ rows: 1, columns: 2 });
     const view = (await api("GET", "/api/v1/pipeline")).json();

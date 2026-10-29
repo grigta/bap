@@ -125,6 +125,15 @@ export function PipelineTable() {
     onError: notifyError("Правка строки"),
   });
   const clear = useMutation({ mutationFn: () => api(`/pipeline`, { method: "DELETE" }), onSuccess: () => void refresh(), onError: notifyError("Очистить таблицу") });
+  const remove = useMutation({
+    mutationFn: (n: number) => api(`/pipeline/rows/${n}`, { method: "DELETE" }),
+    onSuccess: (_, n) => {
+      notifyDone(`Строка ${n} удалена`);
+      setOpen(null);
+      void refresh();
+    },
+    onError: notifyError("Удалить строку"),
+  });
 
   const imp = table.data?.import ?? null;
   const rows = useMemo(() => {
@@ -261,7 +270,13 @@ export function PipelineTable() {
         {rows.length > SHOWN && <p className="p-3 text-xs text-muted-foreground">Показаны первые {SHOWN} из {rows.length}: уточните поиск. В выгрузке — все строки.</p>}
         {rows.length === 0 && <p className="p-3 text-sm text-muted-foreground">Ничего не найдено.</p>}
       </div>
-      {shown && <RowSheet row={shown} columns={imp.columns} onClose={() => setOpen(null)} onSave={(body) => edit.mutate({ n: shown.n, body })} />}
+      {shown && (
+        <RowSheet row={shown} columns={imp.columns} onClose={() => setOpen(null)} onSave={(body) => edit.mutate({ n: shown.n, body })}
+          onDelete={async () => {
+            if (await confirm({ title: `Удалить строку ${shown.n}?`, description: "Строка удалится из таблицы. Номера остальных строк не изменятся.", action: "Удалить", destructive: true })) remove.mutate(shown.n);
+          }}
+        />
+      )}
       {adding && <AddRows columns={imp.columns} onClose={() => setAdding(false)} onAdded={() => void refresh()} />}
     </section>
   );
@@ -273,7 +288,7 @@ function Filled({ filled, label }: { filled: boolean; label: string }) {
 }
 
 /** One row in full: every field editable, the proxy, and what BAP and LS Clicker know about it. */
-function RowSheet({ row: r, columns, onClose, onSave }: { row: Pipeline["rows"][number]; columns: string[]; onClose: () => void; onSave: (body: { cells?: string[]; proxy?: string }) => void }) {
+function RowSheet({ row: r, columns, onClose, onSave, onDelete }: { row: Pipeline["rows"][number]; columns: string[]; onClose: () => void; onSave: (body: { cells?: string[]; proxy?: string }) => void; onDelete: () => void }) {
   const locked = r.lsc ? "Строка уже на Mac: в input.csv она не меняется" : undefined;
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
@@ -339,6 +354,13 @@ function RowSheet({ row: r, columns, onClose, onSave }: { row: Pipeline["rows"][
               </dl>
             )}
           </section>
+          {/* A row on a Mac keeps its place in input.csv there, so only an unsent row can go. */}
+          {!r.lsc && (
+            <Button variant="outline" className="justify-self-start text-fail" onClick={onDelete}>
+              <Trash2 aria-hidden />
+              Удалить строку
+            </Button>
+          )}
         </div>
       </SheetContent>
     </Sheet>

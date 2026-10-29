@@ -231,6 +231,32 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
     },
   );
 
+  // The operator deletes a row that LS Clicker has not taken: a sent row stays, its place in input.csv on the Mac is fixed.
+  app.delete(
+    "/api/v1/pipeline/rows/:n",
+    { preHandler: operatorAuth, schema: { params: z.object({ n: z.coerce.number().int().positive() }), response: { 204: z.null(), ...errors, 409: errorSchema } } },
+    async (request, reply) => {
+      const imp = await current();
+      if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
+      const deleted = await db.transaction().execute(async (tx) => {
+        // One statement checks and deletes, so a row LS Clicker takes at the same moment is never lost.
+        const res = await tx
+          .deleteFrom("pipeline_rows")
+          .where("import_id", "=", imp.id)
+          .where("n", "=", request.params.n)
+          .where(({ not, exists, selectFrom }) => not(exists(selectFrom("lsclicker_queue").select("row_n").where("lsclicker_queue.import_id", "=", imp.id).where("lsclicker_queue.row_n", "=", request.params.n))))
+          .executeTakeFirst();
+        if (res.numDeletedRows === 0n) return false;
+        await tx.updateTable("pipeline_import").set((eb) => ({ row_count: eb("row_count", "-", 1) })).where("id", "=", imp.id).execute();
+        return true;
+      });
+      if (deleted) return reply.code(204).send(null);
+      const row = await db.selectFrom("pipeline_rows").select("n").where("import_id", "=", imp.id).where("n", "=", request.params.n).executeTakeFirst();
+      if (!row) return sendError(reply, request, 404, "NOT_FOUND", "No such row");
+      return sendError(reply, request, 409, "ROW_SENT", "The row is already on a Mac: it stays in the table");
+    },
+  );
+
   app.get("/api/v1/pipeline/export", { preHandler: operatorAuth, schema: { response: { 200: z.string(), 404: errorSchema, 401: errorSchema } } }, async (request, reply) => {
     const { imp, rows } = await load();
     if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
