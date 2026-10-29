@@ -88,6 +88,8 @@ export interface Run {
   startedAt: string | null;
   finishedAt: string | null;
 }
+/** A row of «Конвейер»: the run with its profile and Mac. */
+export type ListedRun = Run & { profileName: string; profileStatus: ProfileStatus; profileLastError: string | null; agentName: string; agentModel: string | null };
 export type RunDetail = Run & {
   transitions: { from: string | null; to: string; reason: string | null; at: string }[];
   checkpoints: { sequence: number; stepId: string }[];
@@ -145,9 +147,40 @@ export interface PendingConfirmation {
   screenshotArtifactId: string | null;
 }
 
+/** A run that stopped on an error («Недоработки»). */
+export interface Issue {
+  id: string;
+  scenarioId: string;
+  scenarioVersion: string | null;
+  kind: Run["kind"];
+  profileId: string;
+  profileName: string;
+  agentName: string;
+  agentModel: string | null;
+  agentVersion: string | null;
+  status: RunStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  failedStep: { sequence: number; stepId: string; intent: string | null; error: string | null; screenshotArtifactId: string | null; failureArtifactId: string | null } | null;
+  resolvedAt: string | null;
+  resolvedNote: string | null;
+  resolvedBy: string | null;
+}
 export interface ReviewQueue {
-  runs: { id: string; scenarioId: string; status: string; errorCode: string | null; errorMessage: string | null; finishedAt: string | null }[];
+  runs: Issue[];
   profiles: { id: string; name: string; agentName: string; lastError: string | null; updatedAt: string }[];
+}
+/** The page when a step failed, as the agent saw it (failure.json). */
+export interface FailureSnapshot {
+  stepId: string;
+  intent: string | null;
+  error: string;
+  url: string | null;
+  title: string | null;
+  at: string;
+  snapshot: { url: string; title: string; elements: { ref: string; role: string; name: string; tag: string; text: string; value?: string; states: string[]; visible: boolean; interactive: boolean; label: string }[]; text: string } | null;
 }
 
 export interface AuditEvent {

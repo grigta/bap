@@ -67,6 +67,8 @@ export const stepRecord = z.object({
   error: z.string().optional(),
   /** Name of the artifact uploaded before this event. */
   screenshot: z.string().optional(),
+  /** Failed steps: name of the uploaded failure.json (the page at that moment). */
+  failure: z.string().optional(),
   intent: z.string().optional(),
   /** Recipes: found by fingerprint, healed, confirmed by the operator, or recorded. */
   resolution: z.enum(["found", "healed", "confirmed", "recorded"]).optional(),

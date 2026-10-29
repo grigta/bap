@@ -15,7 +15,7 @@ const layout = (l: { seed: number; wording: number; failOrder?: boolean }) => fe
 const modelCalls = async (runId: string) => (await (await fetch(`http://127.0.0.1:${STACK_PORTS.control}/llm-calls?run=${runId}`)).json()).calls as number;
 
 async function launch(page: Page, profile: string, expected: string) {
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });
   await page.getByLabel("Профиль").selectOption({ label: profile });
@@ -55,6 +55,6 @@ test("[REQ-DOM-014][REQ-DOM-015] demo: word forms are found without the model, t
   await evidence(page, "S12", "2-server-error-to-review");
   expect((await (await fetch(`${SHOP}/api/orders`)).json()).length).toBe(0);
   await layout({ seed: 1, wording: 0 });
-  await goTo(page, "Проверка");
+  await goTo(page, "Недоработки");
   await expect(page.getByRole("main")).toContainText("UNVERIFIED");
 });

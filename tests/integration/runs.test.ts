@@ -252,6 +252,51 @@ describe("idempotency and validation", () => {
   });
 });
 
+describe("issues («Недоработки»)", () => {
+  type Issue = { id: string; profileName: string; agentName: string; failedStep: { stepId: string; error: string; screenshotArtifactId: string | null; failureArtifactId: string | null } | null; resolvedNote: string | null; resolvedBy: string | null };
+  const issues = async (resolved = false) => (await api("GET", `/api/v1/review${resolved ? "?resolved=true" : ""}`)).json().runs as Issue[];
+  const resolve = (id: string, note?: unknown) => app.inject({ method: "POST", url: `/api/v1/runs/${id}/resolve`, payload: note === undefined ? {} : { note }, cookies: { bap_session: cookie } });
+
+  test("[REQ-UI-009] a run that stopped on an error waits with its failed step and a snapshot of the page; the operator closes it with a note", async () => {
+    const { runId } = (await createRun({ scenarioId: "crash-page", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site.url } })).json();
+    expect(await finished(runId)).toMatchObject({ status: "FAILED" });
+    const issue = (await issues()).find((r) => r.id === runId)!;
+    expect(issue).toMatchObject({ profileName: "P1", agentName: "mac-runs", failedStep: { stepId: "expect-orders", error: expect.stringMatching(/Timeout/), screenshotArtifactId: expect.any(String), failureArtifactId: expect.any(String) } });
+    const failure = (await api("GET", `/api/v1/runs/${runId}/artifacts/${issue.failedStep!.failureArtifactId}/content`)).json();
+    expect(failure).toMatchObject({ stepId: "expect-orders", url: `${site.url}/crash`, snapshot: { elements: expect.any(Array) } });
+
+    expect((await resolve(runId)).statusCode).toBe(400);
+    expect((await resolve(runId, "   ")).statusCode).toBe(400);
+    expect((await resolve(runId, "Сайт отдавал 500, перезапустил его вручную")).statusCode).toBe(200);
+    expect((await issues()).map((r) => r.id)).not.toContain(runId);
+    expect((await issues(true)).find((r) => r.id === runId)).toMatchObject({ resolvedNote: "Сайт отдавал 500, перезапустил его вручную", resolvedBy: "operator" });
+    expect((await resolve(runId, "ещё раз")).json().error.code).toBe("RUN_STATE_CONFLICT");
+  });
+
+  test("[REQ-UI-009] closing a run that blocked its profile returns the profile to work; warm-ups and successful runs are not issues", async () => {
+    const { runId } = (await createRun({ scenarioId: "slow-order", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site.url }, timeoutMs: 1500 })).json();
+    expect(await finished(runId)).toMatchObject({ status: "NEEDS_REVIEW" });
+    expect((await issues()).map((r) => r.id)).toContain(runId);
+    expect((await resolve(runId, "Проверил заказ на сайте: создан один")).statusCode).toBe(200);
+    expect((await api("GET", `/api/v1/profiles/${profileId}`)).json()).toMatchObject({ status: "AVAILABLE", lastError: null });
+
+    const ok = (await createRun(smoke())).json().runId as string;
+    expect(await finished(ok)).toMatchObject({ status: "SUCCEEDED" });
+    expect((await resolve(ok, "нечего чинить")).statusCode).toBe(409);
+    const farm = await db
+      .insertInto("runs")
+      .values({ scenario_id: "farm", kind: "farm", profile_id: profileId, agent_id: agentId, input: {}, timeout_ms: 60_000, status: "FAILED", error_code: "FARM_CAPTCHA", error_message: "captcha" })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    expect((await issues()).map((r) => r.id)).not.toContain(farm.id);
+  });
+
+  test("[REQ-UI-008] the run list carries the profile's status, last error and Mac", async () => {
+    const listed = (await api("GET", "/api/v1/runs?limit=5")).json()[0];
+    expect(listed).toMatchObject({ profileName: "P1", profileStatus: expect.any(String), profileLastError: null, agentName: "mac-runs", agentModel: expect.toBeOneOf([null, expect.any(String)]) });
+  });
+});
+
 describe("failures", () => {
   test("[REQ-RUN-002] a read step that outlives timeoutMs fails the run with TIMEOUT", async () => {
     const { runId } = (await createRun({ scenarioId: "slow-page", scenarioVersion: "1.0.0", profileId, input: { baseUrl: site.url, ms: 5000 }, timeoutMs: 1500 })).json();

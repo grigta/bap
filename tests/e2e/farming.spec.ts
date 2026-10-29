@@ -30,7 +30,7 @@ test("[REQ-FARM-003][REQ-FARM-005] demo: a recipe on a new profile waits while t
   await evidence(page, "S14", "1-settings");
 
   // 2. A recipe on the cold profile: it waits, the warm-ups go first by themselves.
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });
   await page.getByLabel("Профиль").selectOption({ label: profile });
@@ -59,8 +59,6 @@ test("[REQ-FARM-003][REQ-FARM-005] demo: a recipe on a new profile waits while t
   // 4. The profile is admitted.
   await goTo(page, "Прогрев");
   await expect(page.getByTestId(`warm-${profile}`).getByTestId("profile-warmth")).toHaveText("допущен");
-  await goTo(page, "Профили");
-  await expect(page.getByTestId(`profile-${profile}`).getByTestId("profile-warmth")).toHaveText("допущен");
   await evidence(page, "S14", "4-admitted");
 
   // Other specs run recipes on fresh profiles.

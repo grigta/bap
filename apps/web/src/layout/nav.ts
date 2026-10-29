@@ -1,15 +1,14 @@
-import { BookMarked, ClipboardCheck, Flame, Gauge, Monitor, PlayCircle, ScrollText, UserRound } from "lucide-react";
+import { BookMarked, ClipboardCheck, Flame, Gauge, Monitor, ScrollText, Workflow } from "lucide-react";
 
-/** Sections of the panel, in sidebar order. */
+/** Sections of the panel, in sidebar order; frozen ones sit at the bottom of the sidebar (ADR-0031). */
 export const NAV = [
   { to: "/", label: "Обзор", icon: Gauge },
   { to: "/agents", label: "Агенты", icon: Monitor },
-  { to: "/profiles", label: "Профили", icon: UserRound },
-  { to: "/runs", label: "Задания", icon: PlayCircle },
-  { to: "/recipes", label: "Рецепты", icon: BookMarked },
-  { to: "/farming", label: "Прогрев", icon: Flame },
-  { to: "/review", label: "Проверка", icon: ClipboardCheck },
-  { to: "/audit", label: "Аудит", icon: ScrollText },
+  { to: "/runs", label: "Конвейер", icon: Workflow },
+  { to: "/review", label: "Недоработки", icon: ClipboardCheck },
+  { to: "/audit", label: "Все логи", icon: ScrollText },
+  { to: "/recipes", label: "Рецепты", icon: BookMarked, frozen: true },
+  { to: "/farming", label: "Прогрев", icon: Flame, frozen: true },
 ] as const;
 
 export const sectionOf = (pathname: string) => NAV.find((n) => (n.to === "/" ? pathname === "/" : pathname.startsWith(n.to))) ?? NAV[0];

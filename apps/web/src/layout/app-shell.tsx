@@ -12,6 +12,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -92,20 +93,23 @@ export function AppShell({ login, children }: { login: string; children: React.R
           </div>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {NAV.map((n) => (
-                  <SidebarMenuItem key={n.to}>
-                    <SidebarMenuButton isActive={section.to === n.to} tooltip={n.label} render={<Link to={n.to} />}>
-                      <n.icon aria-hidden />
-                      <span>{n.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {[false, true].map((frozen) => (
+            <SidebarGroup key={String(frozen)} className={frozen ? "mt-auto" : undefined}>
+              {frozen && <SidebarGroupLabel>Заморожено</SidebarGroupLabel>}
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {NAV.filter((n) => ("frozen" in n) === frozen).map((n) => (
+                    <SidebarMenuItem key={n.to}>
+                      <SidebarMenuButton isActive={section.to === n.to} tooltip={n.label} render={<Link to={n.to} />} className={frozen ? "text-muted-foreground" : undefined}>
+                        <n.icon aria-hidden />
+                        <span>{n.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>

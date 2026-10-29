@@ -6,6 +6,7 @@ import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import type { Coordinator } from "./coordinator.ts";
 import type { Fleet } from "./fleet.ts";
+import { moveProfile } from "./profile-states.ts";
 import type { ObjectStore } from "./storage.ts";
 
 const RUN_STATUSES = ["QUEUED", "ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED", "RECOVERY_PENDING", "NEEDS_REVIEW", "SUCCEEDED", "FAILED", "CANCELLED"] as const;
@@ -42,6 +43,39 @@ const runSchema = z.object({
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
 });
+/** The run list («Конвейер») also shows the profile and the Mac it runs on. */
+const listedRunSchema = runSchema.extend({
+  profileName: z.string(),
+  profileStatus: z.string(),
+  profileLastError: z.string().nullable(),
+  agentName: z.string(),
+  agentModel: z.string().nullable(),
+});
+/** A run stopped on an error («Недоработки»): what failed, where, and how the operator closed it. */
+const issueSchema = z.object({
+  id: z.string(),
+  scenarioId: z.string(),
+  scenarioVersion: z.string().nullable(),
+  kind: z.enum(["run", "record", "farm"]),
+  profileId: z.string(),
+  profileName: z.string(),
+  agentName: z.string(),
+  agentModel: z.string().nullable(),
+  agentVersion: z.string().nullable(),
+  status: z.string(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  failedStep: z
+    .object({ sequence: z.number(), stepId: z.string(), intent: z.string().nullable(), error: z.string().nullable(), screenshotArtifactId: z.string().nullable(), failureArtifactId: z.string().nullable() })
+    .nullable(),
+  resolvedAt: z.string().nullable(),
+  resolvedNote: z.string().nullable(),
+  resolvedBy: z.string().nullable(),
+});
+/** Statuses of a run that stopped on an error; RECOVERY_PENDING waits for resume or cancel. */
+const ISSUE_STATUSES: RunStatus[] = ["FAILED", "NEEDS_REVIEW", "RECOVERY_PENDING"];
 const transitionSchema = z.object({ from: z.string().nullable(), to: z.string(), reason: z.string().nullable(), at: z.string() });
 const stepSchema = z.object({
   sequence: z.number(),
@@ -52,6 +86,8 @@ const stepSchema = z.object({
   durationMs: z.number(),
   error: z.string().nullable(),
   screenshotArtifactId: z.string().nullable(),
+  /** Failed steps: the page at that moment (JSON: url, title, elements). */
+  failureArtifactId: z.string().nullable(),
   intent: z.string().nullable(),
   resolution: z.enum(["found", "healed", "confirmed", "recorded"]).nullable(),
   note: z.string().nullable(),
@@ -223,11 +259,25 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
 
   app.get(
     "/api/v1/runs",
-    { preHandler: operatorAuth, schema: { querystring: z.object({ status: z.enum(RUN_STATUSES).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }), response: { 200: z.array(runSchema), ...errors } } },
+    { preHandler: operatorAuth, schema: { querystring: z.object({ status: z.enum(RUN_STATUSES).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }), response: { 200: z.array(listedRunSchema), ...errors } } },
     async (request) => {
-      let q = db.selectFrom("runs").selectAll().orderBy("created_at", "desc").limit(request.query.limit);
-      if (request.query.status) q = q.where("status", "=", request.query.status);
-      return (await q.execute()).map(viewRun);
+      let q = db
+        .selectFrom("runs")
+        .innerJoin("profiles", "profiles.id", "runs.profile_id")
+        .innerJoin("agents", "agents.id", "runs.agent_id")
+        .selectAll("runs")
+        .select(["profiles.name as profile_name", "profiles.status as profile_status", "profiles.last_error as profile_last_error", "agents.name as agent_name", "agents.model as agent_model"])
+        .orderBy("runs.created_at", "desc")
+        .limit(request.query.limit);
+      if (request.query.status) q = q.where("runs.status", "=", request.query.status);
+      return (await q.execute()).map((r) => ({
+        ...viewRun(r),
+        profileName: r.profile_name,
+        profileStatus: r.profile_status,
+        profileLastError: r.profile_last_error,
+        agentName: r.agent_name,
+        agentModel: r.agent_model,
+      }));
     },
   );
 
@@ -291,22 +341,46 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
     },
   );
 
+  // «Недоработки»: every run that stopped on an error until the operator fixes it by hand and closes it
+  // with a note; ?resolved=true lists the closed ones. Warm-ups are not issues: they repeat by themselves.
   app.get(
     "/api/v1/review",
     {
       preHandler: operatorAuth,
       schema: {
+        querystring: z.object({ resolved: z.enum(["true", "false"]).default("false") }),
         response: {
           200: z.object({
-            runs: z.array(z.object({ id: z.string(), scenarioId: z.string(), profileId: z.string(), status: z.string(), errorCode: z.string().nullable(), errorMessage: z.string().nullable(), finishedAt: z.string().nullable() })),
+            runs: z.array(issueSchema),
             profiles: z.array(z.object({ id: z.string(), name: z.string(), agentName: z.string(), lastError: z.string().nullable(), updatedAt: z.string() })),
           }),
           ...errors,
         },
       },
     },
-    async () => {
-      const runs = await db.selectFrom("runs").selectAll().where("status", "in", ["NEEDS_REVIEW", "RECOVERY_PENDING"]).orderBy("updated_at", "desc").limit(200).execute();
+    async (request) => {
+      const resolved = request.query.resolved === "true";
+      const runs = await db
+        .selectFrom("runs")
+        .innerJoin("profiles", "profiles.id", "runs.profile_id")
+        .innerJoin("agents", "agents.id", "runs.agent_id")
+        .selectAll("runs")
+        .select(["profiles.name as profile_name", "agents.name as agent_name", "agents.model as agent_model", "agents.agent_version"])
+        .where("runs.status", "in", ISSUE_STATUSES)
+        .where("runs.kind", "<>", "farm")
+        .where("runs.resolved_at", resolved ? "is not" : "is", null)
+        .orderBy(resolved ? "runs.resolved_at" : "runs.updated_at", "desc")
+        .limit(200)
+        .execute();
+      const failedSteps = runs.length
+        ? await db
+            .selectFrom("run_steps")
+            .selectAll()
+            .where("run_id", "in", runs.map((r) => r.id))
+            .where("status", "<>", "passed")
+            .orderBy("sequence")
+            .execute()
+        : [];
       const profiles = await db
         .selectFrom("profiles")
         .innerJoin("agents", "agents.id", "profiles.agent_id")
@@ -316,9 +390,58 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
         .orderBy("profiles.updated_at", "desc")
         .execute();
       return {
-        runs: runs.map((r) => ({ id: r.id, scenarioId: r.scenario_id, profileId: r.profile_id, status: r.status, errorCode: r.error_code, errorMessage: r.error_message, finishedAt: r.finished_at?.toISOString() ?? null })),
+        runs: runs.map((r) => {
+          const step = failedSteps.find((s) => s.run_id === r.id);
+          return {
+            id: r.id,
+            scenarioId: r.scenario_id,
+            scenarioVersion: r.scenario_version,
+            kind: r.kind,
+            profileId: r.profile_id,
+            profileName: r.profile_name,
+            agentName: r.agent_name,
+            agentModel: r.agent_model,
+            agentVersion: r.agent_version,
+            status: r.status,
+            errorCode: r.error_code,
+            errorMessage: r.error_message,
+            startedAt: r.started_at?.toISOString() ?? null,
+            finishedAt: r.finished_at?.toISOString() ?? null,
+            failedStep: step
+              ? { sequence: step.sequence, stepId: step.step_id, intent: step.intent, error: step.error, screenshotArtifactId: step.screenshot_artifact_id, failureArtifactId: step.failure_artifact_id }
+              : null,
+            resolvedAt: r.resolved_at?.toISOString() ?? null,
+            resolvedNote: r.resolved_note,
+            resolvedBy: r.resolved_by,
+          };
+        }),
         profiles: profiles.map((p) => ({ id: p.id, name: p.name, agentName: p.agent_name, lastError: p.last_error, updatedAt: p.updated_at.toISOString() })),
       };
+    },
+  );
+
+  // The operator fixed by hand what stopped the run (remote access to the Mac) and says what was done:
+  // the run leaves «Недоработки», its profile goes back to work, the note stays for fixing the engine.
+  app.post(
+    "/api/v1/runs/:id/resolve",
+    { preHandler: operatorAuth, schema: { params: idParams, body: z.object({ note: z.string().trim().min(1).max(2000) }), response: { 200: z.object({ resolved: z.literal(true) }), 400: errorSchema, ...errors } } },
+    async (request, reply) => {
+      const run = await db.selectFrom("runs").select(["id", "status", "profile_id", "resolved_at"]).where("id", "=", request.params.id).executeTakeFirst();
+      if (!run) return sendError(reply, request, 404, "NOT_FOUND", "Run not found");
+      const operator = await db.selectFrom("operators").select("login").where("id", "=", request.operatorId!).executeTakeFirst();
+      const updated = await db
+        .updateTable("runs")
+        .set({ resolved_at: new Date(), resolved_note: request.body.note, resolved_by: operator?.login ?? null })
+        .where("id", "=", run.id)
+        .where("status", "in", ["FAILED", "NEEDS_REVIEW"])
+        .where("resolved_at", "is", null)
+        .returning("id")
+        .executeTakeFirst();
+      if (!updated)
+        return sendError(reply, request, 409, "RUN_STATE_CONFLICT", run.resolved_at ? "The run is already closed" : run.status === "RECOVERY_PENDING" ? "Resume or cancel the run first" : `A ${run.status} run did not stop on an error`);
+      await moveProfile(db, run.profile_id, ["NEEDS_REVIEW"], "AVAILABLE", { last_error: null, warmup_failures: 0 });
+      await coordinator.tick();
+      return { resolved: true as const };
     },
   );
 
@@ -333,6 +456,7 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
       durationMs: s.duration_ms,
       error: s.error,
       screenshotArtifactId: s.screenshot_artifact_id,
+      failureArtifactId: s.failure_artifact_id,
       intent: s.intent,
       resolution: s.resolution,
       note: s.note,
@@ -356,6 +480,8 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
   );
 
   app.addContentTypeParser("image/png", { parseAs: "buffer", bodyLimit: 10 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+  // Failure snapshots (failure.json) arrive as bytes and are stored as they are, never parsed here.
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: 10 * 1024 * 1024 }, (_req, body, done) => done(null, body));
   app.put(
     "/api/v1/runs/:id/artifacts/:name",
     { preHandler: fleet.agentAuth, schema: { params: z.object({ id: z.uuid(), name: z.string().regex(/^[\w.-]+$/) }) } },
@@ -364,11 +490,12 @@ export function registerRuns(app: App, { db, fleet, coordinator, store, operator
       if (!run || run.agent_id !== request.agentId) return sendError(reply, request, 404, "NOT_FOUND", "Run not found");
       if (FINAL.includes(run.status)) return sendError(reply, request, 409, "RUN_STATE_CONFLICT", `Run is ${run.status}`);
       const body = request.body as Buffer;
+      const contentType = request.params.name.endsWith(".json") ? "application/json" : "image/png";
       const key = `runs/${request.params.id}/${request.params.name}`;
-      await store.put(key, body, "image/png");
+      await store.put(key, body, contentType);
       await db
         .insertInto("artifacts")
-        .values({ run_id: request.params.id, name: request.params.name, content_type: "image/png", size_bytes: body.length, sha256: sha256(body), storage_key: key })
+        .values({ run_id: request.params.id, name: request.params.name, content_type: contentType, size_bytes: body.length, sha256: sha256(body), storage_key: key })
         .onConflict((oc) => oc.columns(["run_id", "name"]).doNothing())
         .execute();
       return reply.code(204).send();

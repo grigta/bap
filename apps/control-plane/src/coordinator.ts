@@ -201,7 +201,8 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
                       : (busy.get(r.agent_id) ?? 0) >= effectiveLimit(r)
                         ? "AGENT_AT_CAPACITY"
                         : null;
-      if (reason === "PROFILE_WARMING" && !warming.has(r.profile_id)) {
+      // Only between runs: right after a failed warm-up the profile is still on its way to review or release.
+      if (reason === "PROFILE_WARMING" && r.profile_status === "AVAILABLE" && !warming.has(r.profile_id)) {
         warming.add(r.profile_id);
         await warmUp(r.profile_id, r.agent_id, r.warmups, requiredWarmups);
       }
@@ -422,6 +423,9 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
         const shot = step.screenshot
           ? await db.selectFrom("artifacts").select("id").where("run_id", "=", runId).where("name", "=", step.screenshot).executeTakeFirst()
           : undefined;
+        const failure = step.failure
+          ? await db.selectFrom("artifacts").select("id").where("run_id", "=", runId).where("name", "=", step.failure).executeTakeFirst()
+          : undefined;
         await db
           .insertInto("run_steps")
           .values({
@@ -434,6 +438,7 @@ export function createCoordinator(db: Db, fleet: Fleet, fleetConfig: FleetConfig
             duration_ms: step.durationMs,
             error: step.error ?? null,
             screenshot_artifact_id: shot?.id ?? null,
+            failure_artifact_id: failure?.id ?? null,
             intent: step.intent ?? null,
             resolution: step.resolution ?? null,
             note: step.note ?? null,

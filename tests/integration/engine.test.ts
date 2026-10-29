@@ -140,6 +140,35 @@ describe("step outcomes", () => {
     expect(readFileSync(result.reportPath, "utf8")).toContain('<li class="failed">');
     saveEvidence("failure", join(work, "artifacts", result.runId));
   });
+
+  test("[REQ-UI-009] a failed step leaves a snapshot of the page: address, title and elements, passwords masked", async () => {
+    const scenario = defineScenario({
+      id: "broken-login",
+      version: "1.0.0",
+      inputSchema: z.object({}),
+      autoResume: true,
+      initialState: () => ({}),
+      steps: [
+        {
+          id: "fill",
+          intent: "Войти",
+          run: async ({ page }) => {
+            await page.setContent('<title>Вход</title><label>Пароль <input type="password" value="hunter2-secret"></label><button>Войти</button>');
+            await page.getByRole("button", { name: "Нет такой кнопки" }).click();
+          },
+        },
+      ],
+    });
+    const result = await run(scenario, {});
+    const step = result.steps[0]!;
+    expect(step.status).toBe("failed");
+    expect(step.failure).toBe("01-fill.failure.json");
+    const raw = readFileSync(join(work, "artifacts", result.runId, step.failure!), "utf8");
+    const failure = JSON.parse(raw);
+    expect(failure).toMatchObject({ stepId: "fill", intent: "Войти", url: "about:blank", title: "Вход", error: expect.stringMatching(/Нет такой кнопки/) });
+    expect(failure.snapshot.elements).toEqual(expect.arrayContaining([expect.objectContaining({ role: "button", name: "Войти" }), expect.objectContaining({ role: "textbox", name: "Пароль" })]));
+    expect(raw).not.toContain("hunter2-secret");
+  });
 });
 
 describe("scenario bundles", () => {

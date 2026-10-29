@@ -16,7 +16,7 @@ import { PageHeader } from "@/layout/app-shell";
 import { HttpError, api } from "@/lib/api";
 import { seconds, shortId, time } from "@/lib/format";
 import { notifyError } from "@/lib/notify";
-import { CANCELLABLE_RUN, FINAL_RUN, type PendingConfirmation, type Profile, RUN_STATUSES, type Run, type RunDetail, type RunStatus, type Step, type StepResolution } from "@/lib/types";
+import { CANCELLABLE_RUN, FINAL_RUN, type ListedRun, type PendingConfirmation, type Profile, RUN_STATUSES, type Run, type RunDetail, type RunStatus, type Step, type StepResolution } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const MARK = { passed: "✓", failed: "✗", unverified: "?" } as const;
@@ -321,10 +321,10 @@ function waiting(r: Run) {
 
 export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus }) {
   const navigate = useNavigate();
-  const runs = useQuery({ queryKey: ["runs", status ?? ""], queryFn: () => api<Run[]>(`/runs${status ? `?status=${status}` : ""}`), refetchInterval: 2000 });
+  const runs = useQuery({ queryKey: ["runs", status ?? ""], queryFn: () => api<ListedRun[]>(`/runs${status ? `?status=${status}` : ""}`), refetchInterval: 2000 });
 
-  const c = columns<Run>();
-  const cols: Column<Run>[] = [
+  const c = columns<ListedRun>();
+  const cols: Column<ListedRun>[] = [
     c.accessor("id", {
       header: "Задание",
       enableSorting: false,
@@ -336,6 +336,37 @@ export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus
     }),
     c.accessor(runTitle, { id: "scenario", header: "Сценарий" }),
     c.accessor("status", { header: "Статус", cell: (i) => <StatusBadge status={i.getValue()} data-testid="run-row-status" /> }),
+    c.accessor("profileName", {
+      header: "Профиль",
+      cell: (i) => (
+        <div className="grid justify-items-start gap-1">
+          <span>{i.getValue()}</span>
+          <StatusBadge status={i.row.original.profileStatus} data-testid="run-profile-status" />
+        </div>
+      ),
+    }),
+    c.accessor("agentName", {
+      header: "Mac",
+      cell: (i) => (
+        <div className="grid">
+          <span>{i.getValue()}</span>
+          {i.row.original.agentModel && <span className="text-xs text-muted-foreground">{i.row.original.agentModel}</span>}
+        </div>
+      ),
+    }),
+    c.accessor((r) => r.profileLastError ?? "", {
+      id: "profileError",
+      header: "Ошибка профиля",
+      enableSorting: false,
+      cell: (i) =>
+        i.getValue() ? (
+          <span data-testid="run-profile-error" title={i.getValue()} className="line-clamp-2 max-w-64 text-xs text-fail">
+            {i.getValue()}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    }),
     c.accessor("createdAt", { header: "Создано", cell: (i) => <span className="tabular-nums">{time(i.getValue())}</span> }),
     c.accessor((r) => (r.status === "QUEUED" ? -1 : r.startedAt ? Date.parse(r.startedAt) - Date.parse(r.createdAt) : 0), {
       id: "waiting",
@@ -354,7 +385,7 @@ export function RunsPage({ runId, status }: { runId?: string; status?: RunStatus
 
   return (
     <>
-      <PageHeader title="Задания" description="Запуск сценариев и ход выполнения: шаги со скриншотами и журнал переходов." />
+      <PageHeader title="Конвейер" description="Все проходы: сценарий, профиль и его состояние, Mac, ход выполнения со скриншотами и журналом переходов." />
       <NewRun onCreated={(id) => navigate({ to: "/runs/$runId", params: { runId: id }, search: (s) => s })} />
       {runId && <RunPanel key={runId} id={runId} />}
       <div className="mb-3 flex items-center gap-2">

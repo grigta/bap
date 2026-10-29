@@ -34,11 +34,11 @@ test("operator sees one run per profile, waiting runs with their reason, slots a
   const runs = [];
   for (let i = 0; i < 4; i++) runs.push((await (await start("shared", 2500)).json()).runId as string);
 
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   await expect(page.locator("td", { hasText: "PROFILE_BUSY" })).toHaveCount(3, { timeout: 10_000 });
   await evidence(page, "S6", "runs-one-per-profile");
-  await goTo(page, "Профили");
-  await expect(page.getByTestId("profile-shared").getByTestId("profile-status")).toHaveText(/RESERVED|IN_USE/);
+  // «Конвейер» shows the profile's state next to each run.
+  await expect(page.getByTestId(`run-${runs[0]}`).getByTestId("run-profile-status")).toHaveText(/RESERVED|IN_USE/);
   await evidence(page, "S6", "profile-in-use");
   await goTo(page, "Агенты");
   await expect(page.getByTestId("agent-sched-mac").getByTestId("slots")).toHaveText("1 / 2");
@@ -47,7 +47,7 @@ test("operator sees one run per profile, waiting runs with their reason, slots a
   await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Пауза" }).click();
   await expect(page.getByTestId("agent-sched-mac").getByTestId("agent-status")).toHaveText("DRAINING");
   const drained = (await (await start("other", 100)).json()).runId as string;
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   await expect(page.getByTestId(`run-${drained}`)).toContainText("AGENT_DRAINING", { timeout: 10_000 });
   await evidence(page, "S6", "runs-drained");
 

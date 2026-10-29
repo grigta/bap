@@ -435,6 +435,9 @@ importers:
       '@bap/browser-adapters':
         specifier: workspace:*
         version: link:../browser-adapters
+      '@bap/dom-snapshot':
+        specifier: workspace:*
+        version: link:../dom-snapshot
       '@bap/scenario-sdk':
         specifier: workspace:*
         version: link:../scenario-sdk

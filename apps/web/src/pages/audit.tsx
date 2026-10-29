@@ -77,7 +77,7 @@ export function AuditPage({ denied }: { denied: boolean }) {
   ];
   return (
     <>
-      <PageHeader title="Аудит" description="Все изменяющие действия оператора и агентов, включая отказы. Тела запросов и секреты не сохраняются." />
+      <PageHeader title="Все логи" description="Все изменяющие действия оператора и агентов, включая отказы. Тела запросов и секреты не сохраняются." />
       <div className="mb-3 flex items-center gap-2">
         <Checkbox id="denied-only" checked={denied} onCheckedChange={(v) => navigate({ to: "/audit", search: { denied: v ? true : undefined } })} />
         <Label htmlFor="denied-only">Только отказы</Label>

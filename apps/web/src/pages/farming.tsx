@@ -134,7 +134,7 @@ export function FarmingPage() {
     <>
       <PageHeader title="Прогрев" description="Перед рецептами профиль проходит несколько сессий обычного поведения: поиск, сайты из выдачи, чтение страницы прокруткой. Если рецепт запущен на непрогретом профиле, он ждёт, а прогрев ставится сам." />
       {settings.data && <Settings current={settings.data} />}
-      {profiles.data?.length === 0 && <EmptyState icon={Flame} title="Профилей пока нет" description="Импортируйте сессии Linken Sphere на странице «Профили»." />}
+      {profiles.data?.length === 0 && <EmptyState icon={Flame} title="Профилей пока нет" description="Профили появятся здесь, когда будут добавлены на сервер." />}
       {!!profiles.data?.length && <DataTable id="farming" data={profiles.data} columns={cols} rowTestId={(p) => `warm-${p.name}`} />}
     </>
   );

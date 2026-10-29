@@ -27,7 +27,7 @@ const crashAndRestart = async () => {
 };
 
 async function launch(page: Page, item: string) {
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   await page.getByLabel("Сценарий").selectOption("wizard-order@1.1.0");
   await expect(page.getByLabel("Профиль").getByRole("option", { name: "rec-p", exact: true })).toBeEnabled({ timeout: 20_000 });
   await page.getByLabel("Профиль").selectOption({ label: "rec-p" });
@@ -92,11 +92,11 @@ test("[REQ-UI-004][REQ-UI-005] operator resumes a crashed run, cancels a running
   await setMode({});
   expect(await ordersFor(third)).toBe(1);
 
-  await goTo(page, "Проверка");
+  await goTo(page, "Недоработки");
   const queued = page.getByTestId("review-profile-rec-p");
   await expect(queued).toContainText("interrupted mutating step");
   await evidence(page, "S7", "review-queue");
-  await queued.getByRole("button", { name: "Release" }).click();
+  await queued.getByRole("button", { name: "Вернуть в работу" }).click();
   await confirmDialog(page);
   await expect(queued).toHaveCount(0);
   const profile = await (await page.request.get("/api/v1/profiles")).json();

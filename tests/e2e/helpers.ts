@@ -17,7 +17,7 @@ export async function logIn(page: Page, password: string = E2E_OPERATOR.password
   await page.getByRole("button", { name: "Выйти" }).or(page.getByRole("alert")).waitFor();
 }
 
-export type Section = "Обзор" | "Агенты" | "Профили" | "Задания" | "Рецепты" | "Прогрев" | "Проверка" | "Аудит";
+export type Section = "Обзор" | "Агенты" | "Конвейер" | "Недоработки" | "Все логи" | "Рецепты" | "Прогрев";
 
 /** Opens a section from the sidebar. */
 export async function goTo(page: Page, section: Section) {

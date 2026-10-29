@@ -15,7 +15,7 @@ const modelCalls = async (runId: string) => (await (await fetch(`http://127.0.0.
 const runIdFromUrl = (page: Page) => page.url().split("/runs/")[1]!.split("?")[0]!;
 
 async function launch(page: Page, profile: string) {
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   await page.getByLabel("Сценарий").selectOption(`${recipe}@1.0.0`);
   await expect(page.getByLabel("Профиль").getByRole("option", { name: profile, exact: true })).toBeEnabled({ timeout: 10_000 });
   await page.getByLabel("Профиль").selectOption({ label: profile });

@@ -47,7 +47,7 @@ test("[REQ-RUN-009] operator launches a run and watches statuses, step screensho
   test.setTimeout(90_000);
   await logIn(page);
   const profileId = await agentWithProfile(page, "runner-mac");
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   await launch(page, "staging-smoke-test@1.0.0", "runner-mac-profile", { baseUrl: "http://127.0.0.1:4310" });
 
   const detail = page.getByTestId("run-detail");

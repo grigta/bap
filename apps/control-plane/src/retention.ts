@@ -21,6 +21,7 @@ export async function purgeArtifacts(db: Db, store: ObjectStore, olderThan: Date
   const ids = expired.map((a) => a.id);
   await db.transaction().execute(async (tx) => {
     await tx.updateTable("run_steps").set({ screenshot_artifact_id: null }).where("screenshot_artifact_id", "in", ids).execute();
+    await tx.updateTable("run_steps").set({ failure_artifact_id: null }).where("failure_artifact_id", "in", ids).execute();
     await tx.deleteFrom("artifacts").where("id", "in", ids).execute();
   });
   return expired.length;

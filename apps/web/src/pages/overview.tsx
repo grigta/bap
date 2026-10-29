@@ -145,7 +145,7 @@ export function OverviewPage() {
         <Reading testId="reading-running" label="Выполняются" value={r.filter((x) => ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED"].includes(x.status)).length} to="/runs" />
         <Reading testId="reading-queued" label="В очереди" value={r.filter((x) => x.status === "QUEUED").length} to="/runs" />
         <Reading testId="reading-failed" label="Ошибки за 24 ч" value={day.filter((x) => x.status === "FAILED").length} tone="fail" to="/runs" />
-        <Reading testId="reading-review" label="Ждут проверки" value={(review.data?.runs.length ?? 0) + (review.data?.profiles.length ?? 0)} tone="wait" to="/review" />
+        <Reading testId="reading-review" label="Недоработки" value={(review.data?.runs.length ?? 0) + (review.data?.profiles.length ?? 0)} tone="wait" to="/review" />
       </div>
       <div className="grid items-start gap-6 lg:grid-cols-[3fr_2fr]">
         <div className="grid content-start gap-6">

@@ -65,6 +65,7 @@ export async function executeRun(assign: RunAssignPayload, deps: RunnerDeps): Pr
   const reportStep = (step: StepRecord) => {
     // Upload first: the progress event refers to the screenshot by name.
     if (step.screenshot) deps.store.enqueueArtifact({ runId, name: step.screenshot, path: join(artifactsDir, step.screenshot) });
+    if (step.failure) deps.store.enqueueArtifact({ runId, name: step.failure, path: join(artifactsDir, step.failure) });
     emit({
       type: "run.progress",
       payload: {
@@ -78,6 +79,7 @@ export async function executeRun(assign: RunAssignPayload, deps: RunnerDeps): Pr
           durationMs: step.durationMs,
           ...(step.error && { error: step.error }),
           ...(step.screenshot && { screenshot: step.screenshot }),
+          ...(step.failure && { failure: step.failure }),
           ...(step.intent && { intent: step.intent }),
           ...(step.resolution && { resolution: step.resolution }),
           ...(step.note && { note: step.note }),

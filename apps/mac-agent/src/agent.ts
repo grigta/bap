@@ -169,7 +169,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
             // In order: an event referring to a screenshot is sent only after the upload.
             const res = await fetch(`${opts.serverUrl}/api/v1/runs/${item.artifact.runId}/artifacts/${item.artifact.name}`, {
               method: "PUT",
-              headers: { authorization: `Bearer ${agentKey}`, "content-type": "image/png" },
+              headers: { authorization: `Bearer ${agentKey}`, "content-type": item.artifact.name.endsWith(".json") ? "application/octet-stream" : "image/png" },
               body: readFileSync(item.artifact.path),
             }).catch(() => null);
             if (res?.ok || res?.status === 404 || res?.status === 409) store.remove(item.rowId); // 404/409: the run is gone or final

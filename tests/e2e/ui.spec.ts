@@ -66,7 +66,7 @@ test("[REQ-UI-004] a run has its own address: it opens after a reload and after 
 
 test("the run status filter lives in the URL, so back and forward restore it", async ({ page }) => {
   await logIn(page);
-  await goTo(page, "Задания");
+  await goTo(page, "Конвейер");
   const filter = page.getByLabel("Фильтр статуса");
   await filter.selectOption("SUCCEEDED");
   await expect(page).toHaveURL(/status=SUCCEEDED/);
@@ -83,7 +83,7 @@ test("the run status filter lives in the URL, so back and forward restore it", a
 test("Cmd+K finds a run by the start of its id and opens it", async ({ page }) => {
   await logIn(page);
   await page.keyboard.press("ControlOrMeta+k");
-  await page.getByPlaceholder("Раздел, id задания, агент, профиль…").fill(runId.slice(0, 6));
+  await page.getByPlaceholder("Раздел, id задания, агент…").fill(runId.slice(0, 6));
   await expect(page.getByRole("option").first()).toContainText(runId.slice(0, 8));
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
@@ -129,7 +129,7 @@ for (const scheme of ["light", "dark"] as const) {
     await page.getByRole("heading", { name: "Вход" }).waitFor();
     const found: Record<string, string[]> = { login: await axe(page) };
     await logIn(page);
-    for (const path of ["/", "/agents", "/profiles", "/runs", `/runs/${runId}`, "/recipes", "/farming", "/review", "/audit"]) {
+    for (const path of ["/", "/agents", "/runs", `/runs/${runId}`, "/recipes", "/farming", "/review", "/audit"]) {
       await page.goto(path);
       await page.getByRole("heading", { level: 1 }).waitFor();
       await page.waitForTimeout(800); // data arrives with the first poll

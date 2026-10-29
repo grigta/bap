@@ -12,7 +12,6 @@ import { LoginPage } from "@/pages/login";
 const page = <M extends Record<K, React.ComponentType<any>>, K extends keyof M & string>(load: () => Promise<M>, name: K) => lazy(async () => ({ default: (await load())[name] }));
 const OverviewPage = page(() => import("@/pages/overview"), "OverviewPage");
 const AgentsPage = page(() => import("@/pages/agents"), "AgentsPage");
-const ProfilesPage = page(() => import("@/pages/profiles"), "ProfilesPage");
 const RunsPage = page(() => import("@/pages/runs"), "RunsPage");
 const ReviewPage = page(() => import("@/pages/review"), "ReviewPage");
 const RecipesPage = page(() => import("@/pages/recipes"), "RecipesPage");
@@ -39,7 +38,6 @@ const runsSearch = z.object({ status: z.enum(RUN_STATUSES).optional().catch(unde
 const overviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: OverviewPage });
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/agents", component: () => <AgentsPage /> });
 const agentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/agents/$agentId", component: () => <AgentsPage agentId={agentRoute.useParams().agentId} /> });
-const profilesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/profiles", component: ProfilesPage });
 const runsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/runs", validateSearch: runsSearch, component: () => <RunsPage status={runsRoute.useSearch().status} /> });
 const runRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -63,7 +61,7 @@ const auditRoute = createRoute({
   component: () => <AuditPage denied={!!auditRoute.useSearch().denied} />,
 });
 
-const routeTree = rootRoute.addChildren([overviewRoute, agentsRoute, agentRoute, profilesRoute, runsRoute, runRoute, recipesRoute, recipeRoute, farmingRoute, reviewRoute, auditRoute]);
+const routeTree = rootRoute.addChildren([overviewRoute, agentsRoute, agentRoute, runsRoute, runRoute, recipesRoute, recipeRoute, farmingRoute, reviewRoute, auditRoute]);
 
 /** A page that throws shows what failed in place of the page, not a blank panel. */
 function PageError({ error, reset }: ErrorComponentProps) {

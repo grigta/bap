@@ -1,7 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { type BrowserProvider, type BrowserSession, ProfileNotFoundError } from "@bap/browser-adapters";
+import { captureSnapshot } from "@bap/dom-snapshot";
 import type { Scenario, StepContext, StepNote } from "@bap/scenario-sdk";
 import type { Page } from "playwright-core";
 import { z } from "zod";
@@ -27,6 +28,8 @@ export interface StepRecord {
   startedAt: string;
   durationMs: number;
   screenshot?: string;
+  /** Failed steps: the page at that moment (failure.json), for fixing the engine from a precise picture. */
+  failure?: string;
   error?: string;
   intent?: string;
   resolution?: StepNote["resolution"];
@@ -206,6 +209,11 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
         // A recipe step says what it checked (e.g. the site answered 500): the reason goes into the error too.
         const why = annotation.note ? ` (${annotation.note})` : "";
         const failure = error !== undefined ? message(error) : interrupted && !ok ? `interrupted mutating step: verify could not confirm its effect${why}` : !ok ? `verify did not confirm the step${why}` : undefined;
+        const failed = ok ? undefined : await writeFailure(page, disconnected, join(artifactsDir, `${String(index + 1).padStart(2, "0")}-${step.id}.failure.json`), {
+          stepId: step.id,
+          intent: step.intent ?? null,
+          error: (failure ?? "") + diagnostics,
+        });
         const record: StepRecord = {
           sequence: index + 1,
           id: step.id,
@@ -214,6 +222,7 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
           startedAt: new Date(stepStarted).toISOString(),
           durationMs: Date.now() - stepStarted,
           ...(shot && { screenshot: shot }),
+          ...(failed && { failure: failed }),
           ...(failure && { error: failure + diagnostics }),
           ...(step.intent && { intent: step.intent }),
           ...annotation,
@@ -285,5 +294,33 @@ export async function runRecording(opts: RecordingRunOptions): Promise<Recording
     return { status: "FAILED", errorCode: "RECORDING_FAILED", errorMessage: message(e) };
   } finally {
     await session.closeSession();
+  }
+}
+
+/** Elements kept in a failure snapshot: enough to see the page, small enough to upload. */
+const FAILURE_ELEMENTS = 400;
+
+/**
+ * The page when a step failed: address, title and its elements (password values masked by the snapshot).
+ * Best effort: a page that cannot be read still leaves what is known, and the run's outcome never depends on it.
+ */
+async function writeFailure(page: Page, disconnected: boolean, path: string, what: { stepId: string; intent: string | null; error: string }): Promise<string | undefined> {
+  let url: string | null = null;
+  let title: string | null = null;
+  let snapshot: unknown = null;
+  if (!disconnected) {
+    url = page.url();
+    title = await page.title().catch(() => null);
+    const snap = await captureSnapshot(page, { maxElements: FAILURE_ELEMENTS }).catch(() => null);
+    if (snap) {
+      snapshot = snap.page;
+      await snap.dispose();
+    }
+  }
+  try {
+    writeFileSync(path, JSON.stringify({ ...what, url, title, at: new Date().toISOString(), snapshot }, null, 2) + "\n");
+    return basename(path);
+  } catch {
+    return undefined;
   }
 }

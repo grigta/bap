@@ -136,6 +136,9 @@ export interface RunsTable {
   updated_at: Timestamp;
   started_at: Timestamp | null;
   finished_at: Timestamp | null;
+  resolved_at: Timestamp | null;
+  resolved_note: string | null;
+  resolved_by: string | null;
 }
 
 export interface RunTransitionsTable {
@@ -179,6 +182,7 @@ export interface RunStepsTable {
   duration_ms: number;
   error: string | null;
   screenshot_artifact_id: string | null;
+  failure_artifact_id: string | null;
   intent: string | null;
   resolution: "found" | "healed" | "confirmed" | "recorded" | null;
   note: string | null;

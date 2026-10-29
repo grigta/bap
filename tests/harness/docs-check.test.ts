@@ -142,6 +142,13 @@ describe("docs:check CLI", () => {
     execFileSync("node", [cli, "--root", root, "--write-status"]);
     expect(spawnSync("node", [cli, "--root", root]).status).toBe(0);
   });
+
+  test("a STATUS.md that still names a removed requirement is regenerated, not blocking", () => {
+    const root = fixture({ "docs/STATUS.md": "# Статус разработки\n\n- REQ-OLD-001\n" });
+    expect(spawnSync("node", [cli, "--root", root], { encoding: "utf8" }).stderr).toMatch(/ссылка на несуществующее REQ-OLD-001/);
+    execFileSync("node", [cli, "--root", root, "--write-status"]);
+    expect(readFileSync(join(root, "docs/STATUS.md"), "utf8")).not.toContain("REQ-OLD-001");
+  });
 });
 
 describe("coverage gate", () => {

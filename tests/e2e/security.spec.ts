@@ -65,7 +65,7 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
       const { runId } = await (
         await page.request.post("/api/v1/runs", { data: { scenarioId: "slow-page", scenarioVersion: "1.0.0", profileId: profile.id, input: { baseUrl: "http://127.0.0.1:4310", ms: 10 } }, headers: { "idempotency-key": randomUUID() } })
       ).json();
-      await goTo(page, "Задания");
+      await goTo(page, "Конвейер");
       await page.getByTestId(`run-${runId}`).getByRole("link").first().click();
       await expect(page.getByTestId("run-detail").getByTestId("run-status")).toHaveText("FAILED", { timeout: 30_000 });
       await expect(page.getByTestId("run-error")).toContainText("BUNDLE_CHECKSUM_MISMATCH");
@@ -92,7 +92,7 @@ test("[REQ-UI-006][REQ-SEC-004][REQ-SEC-005][REQ-SEC-006] security demo: invitat
     await evidence(page, "S8", "4-agent-revoked");
 
     // 7. Audit shows every step above, refusals included.
-    await goTo(page, "Аудит");
+    await goTo(page, "Все логи");
     const rows = page.getByTestId("audit-row");
     for (const action of ["Приглашение агента", "Регистрация агента", "Ротация ключа (запрос)", "Ротация ключа (агент сменил ключ)", "Запуск задания", "Revoke агента"])
       await expect(rows.filter({ hasText: action }).first()).toBeVisible();

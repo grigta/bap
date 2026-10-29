@@ -89,6 +89,8 @@ export function check(root: string, { junitDir = join(root, "reports/junit"), ge
     if (!stages.some((s) => s.reqs.includes(r.id))) errors.push(`${rel(r.file)}: ${r.id} не закреплено ни за одной стадией`);
 
   for (const [file, text] of texts) {
+    // The old STATUS.md is about to be replaced: what it says no longer counts.
+    if (generating && file === join(root, STATUS_FILE)) continue;
     const prose = stripCode(text);
     for (const m of prose.matchAll(REQ_ID))
       if (!reqIds.has(m[0])) errors.push(`${rel(file)}: ссылка на несуществующее ${m[0]}`);
