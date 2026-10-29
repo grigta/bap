@@ -46,6 +46,9 @@ export const powerState = z.object({
 export type PowerState = z.infer<typeof powerState>;
 
 /** What a Mac's agent reports about LS Clicker there; null when the Mac has no LS Clicker directory. */
+/** A proxy as ls-clicker takes it (`--proxy`): socks5 `ip:port` with optional `@login:pass`. */
+export const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
+
 export const lsClickerState = z
   .object({
     /** `ls-clicker --version`, and the binary's sha256 (what BAP rolls out). */
@@ -139,7 +142,9 @@ export const agentRequestPayload = z.discriminatedUnion("method", [
    */
   z.object({
     method: z.literal("lsclicker.run"),
-    row: z.object({ header: z.array(z.string()), cells: z.array(z.string()) }).optional(),
+    row: z.object({ header: z.array(z.string()), cells: z.array(z.string()), proxy: z.string().optional() }).optional(),
+    /** Proxies of rows already in this Mac's input.csv, by position (its line in output.csv once processed). */
+    proxies: z.record(z.string(), z.string()).optional(),
     /** The run's token: the engine calls its providers through the server with it (ADR-0035). */
     token: z.string().optional(),
   }),

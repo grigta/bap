@@ -174,7 +174,11 @@ export interface Issue {
 export interface Pipeline {
   import: { fileName: string; columns: string[]; profileColumn: number | null; rowCount: number; createdAt: string; createdBy: string | null } | null;
   rows: {
+    /** The row's number in the table (for edits). */
+    n: number;
     cells: string[];
+    /** ip:port[@login:pass]: LS Clicker binds it to the row's new Linken Sphere profile. */
+    proxy: string | null;
     ours: {
       profileId: string;
       profileName: string;

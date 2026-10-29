@@ -163,7 +163,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
       try {
         switch (req.method) {
           case "lsclicker.run":
-            return clicker.start(req.row, req.token);
+            return clicker.start(req.row, req.token, req.proxies);
           case "lsclicker.stop":
             return clicker.stop();
           case "lsclicker.log":

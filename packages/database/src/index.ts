@@ -168,6 +168,7 @@ export interface PipelineRowsTable {
   import_id: string;
   n: number;
   cells: unknown;
+  proxy: string | null;
 }
 
 export interface LsClickerQueueTable {

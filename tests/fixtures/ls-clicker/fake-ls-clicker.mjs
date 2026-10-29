@@ -15,7 +15,10 @@ if (arg === "--plan") {
   writeFileSync("plan.json", JSON.stringify({ businessDetails: { "Legal business name": "next row" } }));
   process.exit(0);
 }
-if (process.argv.slice(2).join(" ") !== "--signup --new-profile --go-live --fill-payments") process.exit(2);
+const args = process.argv.slice(2);
+const proxyAt = args.indexOf("--proxy");
+const proxy = proxyAt >= 0 ? args.splice(proxyAt, 2)[1] : null;
+if (args.join(" ") !== "--signup --new-profile --go-live --fill-payments") process.exit(2);
 const input = lines("input.csv");
 const done = Math.max(lines("output.csv").length - 1, 0);
 const row = input[1 + done];
@@ -24,6 +27,8 @@ if (!row) {
   process.exit(0);
 }
 const first = row.split(",")[0];
+// Which proxy the row's profile got (the real engine binds it to the new Linken Sphere session).
+writeFileSync("proxies.log", `${existsSync("proxies.log") ? readFileSync("proxies.log", "utf8") : ""}${done + 1} ${proxy ?? "-"}\n`);
 // Like the real engine under BAP: providers only through the server, with the run's token.
 if (process.env.BAP_RUN_TOKEN) {
   const call = async (path, body) => {

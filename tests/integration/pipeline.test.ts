@@ -78,11 +78,34 @@ describe("the operator's table in «Конвейер»", () => {
     expect(res.headers["content-disposition"]).toContain(encodeURIComponent("люди-конвейер.csv"));
     const csv = parseCsv(res.body);
     expect(csv.delimiter).toBe(";");
-    expect(csv.columns).toEqual(["Сотрудник", "Профиль", "Заметка", "Статус профиля", "Mac", "Последний проход", "Статус прохода", "Ошибка", "Когда", "LS Clicker: Mac"]);
-    expect(csv.rows[0]).toEqual(["Иван Тестов", "shop-a", "первая", "AVAILABLE", "mac-table · MacBook Air · Apple M5 · 16 GB", "table-test", "FAILED", "STEP_FAILED: кнопки нет", "2026-10-02T10:00:00.000Z", ""]);
+    expect(csv.columns).toEqual(["Сотрудник", "Профиль", "Заметка", "Статус профиля", "Mac", "Последний проход", "Статус прохода", "Ошибка", "Когда", "LS Clicker: Mac", "Прокси"]);
+    expect(csv.rows[0]).toEqual(["Иван Тестов", "shop-a", "первая", "AVAILABLE", "mac-table · MacBook Air · Apple M5 · 16 GB", "table-test", "FAILED", "STEP_FAILED: кнопки нет", "2026-10-02T10:00:00.000Z", "", ""]);
     expect(csv.rows[1]!.slice(3, 5)).toEqual(["NEEDS_REVIEW", "mac-table · MacBook Air · Apple M5 · 16 GB"]);
     expect(csv.rows[1]![7]).toBe("капча");
-    expect(csv.rows[2]!.slice(3)).toEqual(["", "", "", "", "", "", ""]);
+    expect(csv.rows[2]!.slice(3)).toEqual(["", "", "", "", "", "", "", ""]);
+  });
+
+  test("[REQ-UI-013] the operator edits a row's cells and its proxy; a proxy must be ip:port or ip:port@login:pass; the export ends with it", async () => {
+    const patch = (n: number, payload: object) => app.inject({ method: "PATCH", url: `/api/v1/pipeline/rows/${n}`, payload, cookies: { bap_session: cookie } });
+    expect((await patch(1, { cells: ["Иван Тестов", "shop-a", "исправлено"] })).statusCode).toBe(204);
+    expect((await patch(1, { proxy: "10.0.0.7:1080@user:p@ss:word" })).statusCode).toBe(204);
+    expect((await patch(2, { proxy: "10.0.0.8:1080" })).statusCode).toBe(204);
+    expect((await patch(1, { cells: ["слишком", "мало"] })).json().error.code).toBe("CELLS_INVALID");
+    for (const bad of ["10.0.0.7", "10.0.0.7:port", "10.0.0.7:1080@onlylogin", "a b:1"]) expect((await patch(1, { proxy: bad })).statusCode, bad).toBe(400);
+    expect((await patch(99, { proxy: "1.2.3.4:5" })).statusCode).toBe(404);
+    const rows = (await api("GET", "/api/v1/pipeline")).json().rows;
+    expect(rows[0]).toMatchObject({ n: 1, cells: ["Иван Тестов", "shop-a", "исправлено"], proxy: "10.0.0.7:1080@user:p@ss:word" });
+    expect(rows[2].proxy).toBeNull();
+    const csv = parseCsv((await api("GET", "/api/v1/pipeline/export")).body);
+    expect(csv.columns.at(-1)).toBe("Прокси");
+    expect(csv.rows.map((r) => r.at(-1))).toEqual(["10.0.0.7:1080@user:p@ss:word", "10.0.0.8:1080", ""]);
+    // Clearing it.
+    expect((await patch(2, { proxy: "" })).statusCode).toBe(204);
+    expect((await api("GET", "/api/v1/pipeline")).json().rows[1].proxy).toBeNull();
+    // The journal records the edit, never the values.
+    const journal = JSON.stringify(await db.selectFrom("audit_events").selectAll().execute());
+    expect(journal).not.toContain("p@ss");
+    expect(journal).not.toContain("исправлено");
   });
 
   test("[REQ-UI-012] a new upload replaces the table; clearing removes it; a broken file is refused with the line, not the values", async () => {

@@ -142,9 +142,9 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
 
   test("[REQ-LSC-002] the export carries LS Clicker's results; a table sharing no column with input.csv is refused without naming any value", async () => {
     const csv = parseCsv((await api("GET", "/api/v1/pipeline/export")).body);
-    expect(csv.columns.slice(-3)).toEqual(["LS Clicker: Mac", "who", "result"]);
-    expect(csv.rows[0]!.slice(-3)).toEqual(["mac-a", "ann", "registered"]);
-    expect(csv.rows[4]!.slice(-3)).toEqual(["mac-b", "", ""]);
+    expect(csv.columns.slice(-4)).toEqual(["LS Clicker: Mac", "who", "result", "Прокси"]);
+    expect(csv.rows[0]!.slice(-4)).toEqual(["mac-a", "ann", "registered", ""]);
+    expect(csv.rows[4]!.slice(-4)).toEqual(["mac-b", "", "", ""]);
 
     await api("POST", "/api/v1/pipeline/import?name=other.csv", Buffer.from("name,city\nzed,Oslo\n"), "text/csv");
     const refused = await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`);
@@ -172,5 +172,27 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect((await app.inject({ method: "GET", url: `/api/v1/agents/me/ls-clicker/build?sha256=${FAKE_SHA}` })).statusCode).toBe(401);
     const journal = JSON.stringify(await db.selectFrom("audit_events").selectAll().execute());
     for (const value of ["ann", "Acme", "registered", "ella"]) expect(journal).not.toContain(value);
+  });
+
+  test("[REQ-UI-013] a row's proxy goes with it to the engine (--proxy); a row left unprocessed on the Mac gets its proxy as edited; a sent row's cells are locked", async () => {
+    await until("mac-a idle", () => mac("mac-a"), (m) => !m.state.run.running);
+    await api("POST", "/api/v1/pipeline/import?name=proxies.csv", Buffer.from("who,company\nfail,Omega\nzoe,Sigma\n"), "text/csv");
+    const patch = (n: number, payload: object) => app.inject({ method: "PATCH", url: `/api/v1/pipeline/rows/${n}`, payload, cookies: { bap_session: cookie } });
+    expect((await patch(1, { proxy: "10.1.1.1:1080@u:p" })).statusCode).toBe(204);
+    const log = () => readFileSync(join(dirs["mac-a"]!, "proxies.log"), "utf8").trim().split("\n").at(-1);
+
+    // «fail» goes to mac-a with its proxy and stays unprocessed there.
+    expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`)).statusCode).toBe(202);
+    await until("ran with its proxy", () => existsSync(join(dirs["mac-a"]!, "proxies.log")) && log(), (l) => !!l && l.endsWith(" 10.1.1.1:1080@u:p"));
+    await until("failed", () => mac("mac-a"), (m) => !m.state.run.running && m.state.run.ok === false);
+    expect((await patch(1, { cells: ["fail", "edited"] })).json().error.code).toBe("ROW_SENT");
+
+    // The operator changes the proxy; the Mac runs its own unprocessed row again, with the new one.
+    expect((await patch(1, { proxy: "10.2.2.2:1080" })).statusCode).toBe(204);
+    expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`)).statusCode).toBe(202);
+    await until("ran with the edited proxy", log, (l) => !!l && l.endsWith(" 10.2.2.2:1080"));
+    await until("idle", () => mac("mac-a"), (m) => !m.state.run.running);
+    // The engine's log names the proxy only as «with its proxy».
+    expect((await api("GET", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/log`)).json().lines.join("\n")).not.toContain("10.2.2.2");
   });
 });

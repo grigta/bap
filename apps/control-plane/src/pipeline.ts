@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import { CsvError, parseCsv, toCsv } from "@bap/csv";
+import { PROXY_FORMAT } from "@bap/protocol";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 /** Our columns, appended to the operator's own in the table and the export. */
@@ -25,7 +26,7 @@ const lsc = z.object({ agentName: z.string(), result: z.object({ header: z.array
 type Lsc = z.infer<typeof lsc>;
 const pipelineSchema = z.object({
   import: z.object({ fileName: z.string(), columns: z.array(z.string()), profileColumn: z.number().nullable(), rowCount: z.number(), createdAt: z.string(), createdBy: z.string().nullable() }).nullable(),
-  rows: z.array(z.object({ cells: z.array(z.string()), ours, lsc })),
+  rows: z.array(z.object({ n: z.number(), cells: z.array(z.string()), proxy: z.string().nullable(), ours, lsc })),
 });
 type Ours = z.infer<typeof ours>;
 
@@ -55,13 +56,14 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
   /** Our side of each row: the profile named in the chosen column, its Mac and its latest run. */
   const load = async () => {
     const imp = await current();
-    if (!imp) return { imp: null, rows: [] as { cells: string[]; ours: Ours; lsc: Lsc }[] };
-    const stored = await db.selectFrom("pipeline_rows").select(["n", "cells"]).where("import_id", "=", imp.id).orderBy("n").execute();
+    if (!imp) return { imp: null, rows: [] as { n: number; cells: string[]; proxy: string | null; ours: Ours; lsc: Lsc }[] };
+    const stored = await db.selectFrom("pipeline_rows").select(["n", "cells", "proxy"]).where("import_id", "=", imp.id).orderBy("n").execute();
     const cells = stored.map((r) => r.cells as string[]);
     const sent = await lscOf(imp.id);
     const lscAt = (i: number) => sent.get(stored[i]!.n) ?? null;
+    const own = (i: number) => ({ n: stored[i]!.n, proxy: stored[i]!.proxy });
     const col = imp.profile_column;
-    if (col === null) return { imp, rows: cells.map((c, i) => ({ cells: c, ours: null, lsc: lscAt(i) })) };
+    if (col === null) return { imp, rows: cells.map((c, i) => ({ ...own(i), cells: c, ours: null, lsc: lscAt(i) })) };
     const profiles = await db
       .selectFrom("profiles")
       .innerJoin("agents", "agents.id", "profiles.agent_id")
@@ -91,6 +93,7 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
         const p = byKey.get(key(c[col] ?? ""));
         const run = p && latest.find((r) => r.profile_id === p.id);
         return {
+          ...own(i),
           cells: c,
           ours: p
             ? {
@@ -163,6 +166,44 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
     },
   );
 
+  // The operator edits a row: its cells until LS Clicker has taken it (input.csv on a Mac is never rewritten),
+  // its proxy until it has been processed (the proxy is read when the row starts).
+  app.patch(
+    "/api/v1/pipeline/rows/:n",
+    {
+      preHandler: operatorAuth,
+      schema: {
+        params: z.object({ n: z.coerce.number().int().positive() }),
+        body: z.object({ cells: z.array(z.string()).optional(), proxy: z.string().trim().regex(PROXY_FORMAT, "ip:port or ip:port@login:pass").or(z.literal("")).nullable().optional() }),
+        response: { 204: z.null(), ...errors, 409: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const imp = await current();
+      if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
+      const row = await db.selectFrom("pipeline_rows").select("n").where("import_id", "=", imp.id).where("n", "=", request.params.n).executeTakeFirst();
+      if (!row) return sendError(reply, request, 404, "NOT_FOUND", "No such row");
+      const { cells, proxy } = request.body;
+      if (cells && cells.length !== (imp.columns as string[]).length) return sendError(reply, request, 400, "CELLS_INVALID", `The row has ${(imp.columns as string[]).length} columns`);
+      const sent = await db
+        .selectFrom("lsclicker_queue")
+        .leftJoin("lsclicker_results", (j) => j.onRef("lsclicker_results.agent_id", "=", "lsclicker_queue.agent_id").onRef("lsclicker_results.position", "=", "lsclicker_queue.position"))
+        .select(["lsclicker_results.position as done"])
+        .where("lsclicker_queue.import_id", "=", imp.id)
+        .where("lsclicker_queue.row_n", "=", row.n)
+        .executeTakeFirst();
+      if (cells && sent) return sendError(reply, request, 409, "ROW_SENT", "The row is already on a Mac: its cells can no longer change there");
+      if (proxy !== undefined && sent && sent.done !== null) return sendError(reply, request, 409, "ROW_PROCESSED", "The row has been processed: its proxy is no longer used");
+      await db
+        .updateTable("pipeline_rows")
+        .set({ ...(cells && { cells: JSON.stringify(cells) }), ...(proxy !== undefined && { proxy: proxy || null }) })
+        .where("import_id", "=", imp.id)
+        .where("n", "=", row.n)
+        .execute();
+      return reply.code(204).send(null);
+    },
+  );
+
   app.get("/api/v1/pipeline/export", { preHandler: operatorAuth, schema: { response: { 200: z.string(), 404: errorSchema, 401: errorSchema } } }, async (request, reply) => {
     const { imp, rows } = await load();
     if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
@@ -174,8 +215,8 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
     const resultHeader = rows.find((r) => r.lsc?.result)?.lsc?.result?.header ?? [];
     const lscCells = (l: Lsc) => [l?.agentName ?? "", ...resultHeader.map((_, i) => l?.result?.cells[i] ?? "")];
     const csv = toCsv(imp.delimiter, [
-      [...(imp.columns as string[]), ...OUR_COLUMNS, "LS Clicker: Mac", ...resultHeader],
-      ...rows.map((r) => [...r.cells, ...extra(r.ours), ...lscCells(r.lsc)]),
+      [...(imp.columns as string[]), ...OUR_COLUMNS, "LS Clicker: Mac", ...resultHeader, "Прокси"],
+      ...rows.map((r) => [...r.cells, ...extra(r.ours), ...lscCells(r.lsc), r.proxy ?? ""]),
     ]);
     const name = imp.file_name.replace(/\.csv$/i, "") + "-конвейер.csv";
     return reply

@@ -14,6 +14,58 @@ import { dateTime } from "@/lib/format";
 import { notifyDone, notifyError } from "@/lib/notify";
 import type { Pipeline } from "@/lib/types";
 
+/** A proxy as LS Clicker takes it: socks5 ip:port, optionally @login:pass. */
+const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
+/** The password is not on screen until the cell is opened. */
+const maskProxy = (p: string) => p.replace(/^([^@]+@[^:]+:).+$/, "$1•••");
+
+/**
+ * A cell the operator edits in place: click, type, Enter or leaving saves, Esc cancels. `locked` explains
+ * why it cannot change (e.g. the row is already on a Mac).
+ */
+function EditableCell({ value, label, locked, shown, check, onSave, testId }: { value: string; label: string; locked?: string; shown?: string; check?: (v: string) => string | null; onSave: (v: string) => void; testId?: string }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const problem = draft !== null && check ? check(draft) : null;
+  const save = () => {
+    if (draft === null || problem) return;
+    if (draft !== value) onSave(draft);
+    setDraft(null);
+  };
+  if (draft === null)
+    return (
+      <button
+        type="button"
+        data-testid={testId}
+        disabled={!!locked}
+        title={locked ?? "Изменить"}
+        aria-label={`${label}: ${shown ?? value}`}
+        onClick={() => setDraft(value)}
+        className="w-full rounded-sm text-left break-words hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
+      >
+        {shown ?? value}
+        {!value && <span className="text-muted-foreground">—</span>}
+      </button>
+    );
+  return (
+    <div className="grid gap-1">
+      <Input
+        autoFocus
+        aria-label={label}
+        aria-invalid={!!problem}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") save();
+          if (e.key === "Escape") setDraft(null);
+        }}
+        className="h-7 min-w-40 text-xs"
+      />
+      {problem && <span className="text-[11px] text-fail">{problem}</span>}
+    </div>
+  );
+}
+
 /** Rows drawn at once: a big table stays responsive; the search narrows it down. */
 const SHOWN = 500;
 
@@ -42,6 +94,11 @@ export function PipelineTable() {
     mutationFn: (column: number | null) => api(`/pipeline/profile-column`, { method: "PUT", body: JSON.stringify({ column }) }),
     onSuccess: () => void refresh(),
     onError: notifyError("Колонка с профилем"),
+  });
+  const edit = useMutation({
+    mutationFn: ({ n, body }: { n: number; body: { cells?: string[]; proxy?: string } }) => api(`/pipeline/rows/${n}`, { method: "PATCH", body: JSON.stringify(body) }),
+    onSuccess: () => void refresh(),
+    onError: notifyError("Правка строки"),
   });
   const clear = useMutation({ mutationFn: () => api(`/pipeline`, { method: "DELETE" }), onSuccess: () => void refresh(), onError: notifyError("Очистить таблицу") });
 
@@ -137,7 +194,7 @@ export function PipelineTable() {
                   {c || `колонка ${i + 1}`}
                 </th>
               ))}
-              {["Статус профиля", "Mac", "Последний проход", "Ошибка", "LS Clicker"].map((c) => (
+              {["Статус профиля", "Mac", "Последний проход", "Ошибка", "LS Clicker", "Прокси"].map((c) => (
                 <th key={c} scope="col" className="border-l px-3 py-2 font-medium">
                   {c}
                 </th>
@@ -148,8 +205,13 @@ export function PipelineTable() {
             {rows.slice(0, SHOWN).map((r, n) => (
               <tr key={n} data-testid="pipeline-row" className="border-t align-top">
                 {r.cells.map((c, i) => (
-                  <td key={i} className="max-w-64 px-3 py-2 break-words">
-                    {c}
+                  <td key={i} className="max-w-64 px-3 py-2">
+                    <EditableCell
+                      value={c}
+                      label={`${imp.columns[i] || `колонка ${i + 1}`}, строка ${r.n}`}
+                      locked={r.lsc ? "Строка уже на Mac: в input.csv она не меняется" : undefined}
+                      onSave={(v) => edit.mutate({ n: r.n, body: { cells: r.cells.map((x, j) => (j === i ? v : x)) } })}
+                    />
                   </td>
                 ))}
                 <td className="border-l px-3 py-2">{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</td>
@@ -176,6 +238,17 @@ export function PipelineTable() {
                 <td className="max-w-64 px-3 py-2 text-xs text-fail">{r.ours?.lastRun?.errorCode ? `${r.ours.lastRun.errorCode}: ${r.ours.lastRun.errorMessage ?? ""}` : (r.ours?.profileLastError ?? "")}</td>
                 <td data-testid="pipeline-lsc" className="px-3 py-2 text-xs" title={r.lsc?.result ? r.lsc.result.header.map((h, i) => `${h}: ${r.lsc!.result!.cells[i] ?? ""}`).join("\n") : undefined}>
                   {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">—</span>}
+                </td>
+                <td className="min-w-48 border-l px-3 py-2 font-mono text-xs">
+                  <EditableCell
+                    testId="pipeline-proxy"
+                    value={r.proxy ?? ""}
+                    shown={r.proxy ? maskProxy(r.proxy) : undefined}
+                    label={`Прокси, строка ${r.n}`}
+                    locked={r.lsc?.result ? "Строка обработана: прокси больше не используется" : undefined}
+                    check={(v) => (v.trim() === "" || PROXY_FORMAT.test(v.trim()) ? null : "ip:port или ip:port@login:pass")}
+                    onSave={(v) => edit.mutate({ n: r.n, body: { proxy: v.trim() } })}
+                  />
                 </td>
               </tr>
             ))}

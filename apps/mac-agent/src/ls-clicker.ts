@@ -96,17 +96,20 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
     },
 
     /** A Mac with an unprocessed row of its own runs that first; otherwise the operator's row is appended and run. */
-    start(row?: { header: string[]; cells: string[] }, token?: string) {
+    start(row?: { header: string[]; cells: string[]; proxy?: string }, token?: string, proxies: Record<string, string> = {}) {
       running();
       if (!existsSync(bin)) throw new LsClickerError("LS_CLICKER_MISSING", "ls-clicker is not installed on this Mac yet");
       const pending = rowsOf(read(input)).rows.length > rowsOf(read(output)).rows.length;
       if (!pending && !row) throw new LsClickerError("LS_CLICKER_NO_ROWS", "no unprocessed row on this Mac and none was given");
+      const next = rowsOf(read(output)).rows.length;
       const appended = pending ? null : this.append(row!.header, row!.cells);
+      // The row's proxy goes to its new Linken Sphere profile; the engine binds it before the start.
+      const proxy = appended === null ? proxies[String(next)] : row!.proxy;
       tail = [];
       Object.assign(run, { running: true, startedAt: new Date().toISOString(), finishedAt: null, ok: null });
       // The engine reaches its providers through the server with the run's token; no key is on this Mac (ADR-0035).
       const env = { ...process.env, ...(token && { BAP_SERVER: opts.serverUrl, BAP_RUN_TOKEN: token, ...(opts.caCert && { BAP_CA_CERT: opts.caCert }) }) };
-      const p = spawn(bin, RUN_ARGS, { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
+      const p = spawn(bin, [...RUN_ARGS, ...(proxy ? ["--proxy", proxy] : [])], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
       child = p;
       let rest = "";
       const onData = (chunk: Buffer) => {
@@ -126,7 +129,8 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       };
       p.on("error", (e) => done(false, `не запустился: ${e.message}`));
       p.on("exit", (code, signal) => done(code === 0, signal ? `остановлен (${signal})` : undefined));
-      opts.log(appended === null ? "ls-clicker started on the Mac's own next row" : `ls-clicker started on row ${appended + 1}`);
+      // The proxy itself is not logged: it carries a login and a password.
+      opts.log(`ls-clicker started on ${appended === null ? "the Mac's own next row" : `row ${appended + 1}`}${proxy ? " with its proxy" : ""}`);
       return { started: true as const, appended };
     },
 

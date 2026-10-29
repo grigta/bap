@@ -203,7 +203,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     return db
       .selectFrom("pipeline_rows")
       .leftJoin("lsclicker_queue", (j) => j.onRef("lsclicker_queue.import_id", "=", "pipeline_rows.import_id").onRef("lsclicker_queue.row_n", "=", "pipeline_rows.n"))
-      .select(["pipeline_rows.import_id", "pipeline_rows.n", "pipeline_rows.cells"])
+      .select(["pipeline_rows.import_id", "pipeline_rows.n", "pipeline_rows.cells", "pipeline_rows.proxy"])
       .where("pipeline_rows.import_id", "=", imp.id)
       .where("lsclicker_queue.position", "is", null)
       .orderBy("pipeline_rows.n")
@@ -226,8 +226,19 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     serially(async () => {
       const imp = await db.selectFrom("pipeline_import").select(["id", "columns"]).orderBy("created_at", "desc").executeTakeFirst();
       const next = (await unsentRows())[0];
-      const row = imp && next ? { header: imp.columns as string[], cells: next.cells as string[] } : undefined;
-      const answer = await ask(agentId, { method: "lsclicker.run", token: await issueRunToken(db, agentId), ...(row && { row }) });
+      const row = imp && next ? { header: imp.columns as string[], cells: next.cells as string[], ...(next.proxy && { proxy: next.proxy }) } : undefined;
+      // Rows already on the Mac and not processed yet: the one it runs gets its current proxy.
+      const queued = await db
+        .selectFrom("lsclicker_queue")
+        .innerJoin("pipeline_rows", (j) => j.onRef("pipeline_rows.import_id", "=", "lsclicker_queue.import_id").onRef("pipeline_rows.n", "=", "lsclicker_queue.row_n"))
+        .leftJoin("lsclicker_results", (j) => j.onRef("lsclicker_results.agent_id", "=", "lsclicker_queue.agent_id").onRef("lsclicker_results.position", "=", "lsclicker_queue.position"))
+        .select(["lsclicker_queue.position", "pipeline_rows.proxy"])
+        .where("lsclicker_queue.agent_id", "=", agentId)
+        .where("pipeline_rows.proxy", "is not", null)
+        .where("lsclicker_results.position", "is", null)
+        .execute();
+      const proxies = Object.fromEntries(queued.map((q) => [String(q.position), q.proxy!]));
+      const answer = await ask(agentId, { method: "lsclicker.run", token: await issueRunToken(db, agentId), proxies, ...(row && { row }) });
       if (answer.ok && next) {
         const { appended } = z.object({ appended: z.number().int().nullable() }).parse(answer.result);
         if (appended !== null)
