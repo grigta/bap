@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Download, FileUp, Maximize2, Minimize2, Pencil, Play, Plus, Settings2, Table2, Trash2 } from "lucide-react";
+import { normalizeProxy } from "@bap/protocol";
 import { useEffect, useRef, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
@@ -21,8 +22,6 @@ import { notifyDone, notifyError } from "@/lib/notify";
 import type { Pipeline } from "@/lib/types";
 import { LsClickerPanel } from "./ls-clicker";
 
-/** A proxy as LS Clicker takes it: socks5 ip:port, optionally @login:pass. */
-const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
 /** A row whose status column says good or bad has been done: LS Clicker skips it (as on the server). */
 const DONE_STATUSES = ["good", "bad", "гуд", "бед"];
 const statusColumn = (columns: string[]) => columns.findIndex((c) => ["status", "статус"].includes(c.trim().toLowerCase()));
@@ -539,7 +538,7 @@ function RowSheet({
                 label={`Прокси, строка ${r.n}`}
                 placeholder="+ прокси"
                 locked={r.lsc?.result ? "Строка обработана: прокси больше не используется" : undefined}
-                check={(v) => (v.trim() === "" || PROXY_FORMAT.test(v.trim()) ? null : "ip:port или ip:port@login:pass")}
+                check={(v) => (v.trim() === "" || normalizeProxy(v) ? null : "не похоже на прокси: ip:port, ip:port:login:pass, login:pass@ip:port, можно с socks5://, http://")}
                 onSave={(v) => onSave({ proxy: v.trim() })}
               />
             </div>

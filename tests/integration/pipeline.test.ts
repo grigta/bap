@@ -85,7 +85,7 @@ describe("the operator's table in «Конвейер»", () => {
     expect(csv.rows[2]!.slice(3)).toEqual(["", "", "", "", "", "", "", ""]);
   });
 
-  test("[REQ-UI-013] the operator edits a row's cells and its proxy; a proxy must be ip:port or ip:port@login:pass; the export ends with it", async () => {
+  test("[REQ-UI-013] the operator edits a row's cells and its proxy; a proxy is taken in any common form and stored as ls-clicker takes it; the export ends with it", async () => {
     const patch = (n: number, payload: object) => app.inject({ method: "PATCH", url: `/api/v1/pipeline/rows/${n}`, payload, cookies: { bap_session: cookie } });
     expect((await patch(1, { cells: ["Иван Тестов", "shop-a", "исправлено"] })).statusCode).toBe(204);
     expect((await patch(1, { proxy: "10.0.0.7:1080@user:p@ss:word" })).statusCode).toBe(204);
@@ -93,6 +93,16 @@ describe("the operator's table in «Конвейер»", () => {
     expect((await patch(1, { cells: ["слишком", "мало"] })).json().error.code).toBe("CELLS_INVALID");
     for (const bad of ["10.0.0.7", "10.0.0.7:port", "10.0.0.7:1080@onlylogin", "a b:1"]) expect((await patch(1, { proxy: bad })).statusCode, bad).toBe(400);
     expect((await patch(99, { proxy: "1.2.3.4:5" })).statusCode).toBe(404);
+    // Any common way of writing a proxy is stored in the one form ls-clicker takes.
+    for (const [written, stored] of [
+      ["user:pass@10.0.0.9:1080", "10.0.0.9:1080@user:pass"],
+      ["10.0.0.9:1080:user:pass", "10.0.0.9:1080@user:pass"],
+      ["http://user:pass@10.0.0.9:3128", "http://10.0.0.9:3128@user:pass"],
+    ]) {
+      expect((await patch(3, { proxy: written! })).statusCode).toBe(204);
+      expect((await api("GET", "/api/v1/pipeline")).json().rows[2].proxy).toBe(stored);
+    }
+    expect((await patch(3, { proxy: "" })).statusCode).toBe(204);
     const rows = (await api("GET", "/api/v1/pipeline")).json().rows;
     expect(rows[0]).toMatchObject({ n: 1, cells: ["Иван Тестов", "shop-a", "исправлено"], proxy: "10.0.0.7:1080@user:p@ss:word" });
     expect(rows[2].proxy).toBeNull();

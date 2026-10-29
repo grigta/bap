@@ -344,6 +344,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@bap/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@base-ui/react':
         specifier: ^1.9.0
         version: 1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)

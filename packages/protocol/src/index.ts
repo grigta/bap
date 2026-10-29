@@ -46,8 +46,49 @@ export const powerState = z.object({
 export type PowerState = z.infer<typeof powerState>;
 
 /** What a Mac's agent reports about LS Clicker there; null when the Mac has no LS Clicker directory. */
-/** A proxy as ls-clicker takes it (`--proxy`): socks5 `ip:port` with optional `@login:pass`. */
-export const PROXY_FORMAT = /^[^\s:@]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
+/** A proxy as ls-clicker takes it (`--proxy`): `[http://|ssh://]ip:port[@login:pass]`, socks5 without a scheme. */
+export const PROXY_FORMAT = /^((http|ssh):\/\/)?[^\s:@/]+:\d{1,5}(@[^\s:@]+:\S+)?$/;
+
+const PROXY_TYPES: Record<string, "socks5" | "http" | "ssh"> = { socks5: "socks5", socks5h: "socks5", socks: "socks5", http: "http", https: "http", ssh: "ssh" };
+const isPort = (p: string | undefined) => !!p && /^\d{1,5}$/.test(p) && Number(p) > 0 && Number(p) < 65_536;
+const isHost = (h: string | undefined) => !!h && /^[A-Za-z0-9.-]+$/.test(h);
+
+/**
+ * Any common way of writing a proxy, as ls-clicker takes it (PROXY_FORMAT), or null if it is not a proxy:
+ * `ip:port`, `ip:port:login:pass`, `login:pass:ip:port`, `ip:port@login:pass`, `login:pass@ip:port`,
+ * each with an optional `socks5://`, `http(s)://` or `ssh://` and spaces instead of colons.
+ */
+export function normalizeProxy(input: string): string | null {
+  let s = input.trim();
+  let type: "socks5" | "http" | "ssh" = "socks5";
+  const scheme = /^([a-z0-9]+):\/\//i.exec(s);
+  if (scheme) {
+    const known = PROXY_TYPES[scheme[1]!.toLowerCase()];
+    if (!known) return null;
+    type = known;
+    s = s.slice(scheme[0].length);
+  }
+  s = s.replace(/\/+$/, "");
+  if (!s.includes(":") && /\s/.test(s)) s = s.split(/\s+/).join(":");
+  let host: string | undefined, port: string | undefined, login: string | undefined, pass: string | undefined;
+  const at = s.indexOf("@");
+  if (at >= 0) {
+    const [left, right] = [s.slice(0, at), s.slice(at + 1)];
+    const [l, r] = [left.split(":"), right.split(":")];
+    const credentials = (parts: string[]) => [parts[0], parts.slice(1).join(":")] as const;
+    if (l.length === 2 && isPort(l[1])) [host, port, [login, pass]] = [l[0], l[1], credentials(r)];
+    else if (r.length === 2 && isPort(r[1])) [host, port, [login, pass]] = [r[0], r[1], credentials(l)];
+    if (!login || !pass) return null;
+  } else {
+    const p = s.split(":");
+    if (p.length === 2) [host, port] = p;
+    else if (p.length >= 4 && isPort(p[1]) && isHost(p[0])) [host, port, login, pass] = [p[0], p[1], p[2], p.slice(3).join(":")];
+    else if (p.length === 4 && isPort(p[3])) [login, pass, host, port] = p;
+    else return null;
+  }
+  if (!isHost(host) || !isPort(port) || (login !== undefined && (!login || !pass || /\s/.test(login + pass)))) return null;
+  return `${type === "socks5" ? "" : `${type}://`}${host}:${Number(port)}${login ? `@${login}:${pass}` : ""}`;
+}
 
 /** A table row whose `status` column says good or bad has been done: LS Clicker does not run it again. */
 export const DONE_STATUSES = ["good", "bad", "гуд", "бед"] as const;

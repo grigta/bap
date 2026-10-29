@@ -72,8 +72,9 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
   await expect(sheet.getByRole("button", { name: /^Должность, строка 1:/ })).toHaveText("старший оператор");
   await sheet.getByTestId("pipeline-proxy-edit").click();
   await page.getByLabel("Прокси, строка 1").fill("10.0.0.7");
-  await expect(page.getByText("ip:port или ip:port@login:pass", { exact: true })).toBeVisible();
-  await page.getByLabel("Прокси, строка 1").fill("10.0.0.7:1080@user:secret-pass");
+  await expect(page.getByText(/^не похоже на прокси/)).toBeVisible();
+  // Written as login:pass@ip:port, stored as ls-clicker takes it.
+  await page.getByLabel("Прокси, строка 1").fill("user:secret-pass@10.0.0.7:1080");
   await page.getByLabel("Прокси, строка 1").press("Enter");
   await expect(sheet.getByTestId("pipeline-proxy-edit")).toHaveText("10.0.0.7:1080@user:•••");
   await evidence(page, "S21", "1-table-proxy");

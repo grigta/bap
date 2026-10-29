@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import { CsvError, parseCsv, toCsv, toEngineCsv } from "@bap/csv";
-import { PROXY_FORMAT } from "@bap/protocol";
+import { normalizeProxy } from "@bap/protocol";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 /** Our columns, appended to the operator's own in the table and the export. */
@@ -213,7 +213,7 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       preHandler: operatorAuth,
       schema: {
         params: z.object({ n: z.coerce.number().int().positive() }),
-        body: z.object({ cells: z.array(z.string()).optional(), proxy: z.string().trim().regex(PROXY_FORMAT, "ip:port or ip:port@login:pass").or(z.literal("")).nullable().optional() }),
+        body: z.object({ cells: z.array(z.string()).optional(), proxy: z.string().max(500).nullable().optional() }),
         response: { 204: z.null(), ...errors, 409: errorSchema },
       },
     },
@@ -222,7 +222,10 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
       const row = await db.selectFrom("pipeline_rows").select("n").where("import_id", "=", imp.id).where("n", "=", request.params.n).executeTakeFirst();
       if (!row) return sendError(reply, request, 404, "NOT_FOUND", "No such row");
-      const { cells, proxy } = request.body;
+      const { cells } = request.body;
+      // Any common way of writing a proxy is stored in the one form ls-clicker takes; empty clears it.
+      const proxy = request.body.proxy === undefined ? undefined : request.body.proxy?.trim() ? normalizeProxy(request.body.proxy) : "";
+      if (proxy === null) return sendError(reply, request, 400, "PROXY_INVALID", "Not a proxy: ip:port, ip:port:login:pass, login:pass@ip:port or with socks5://, http:// or ssh://");
       if (cells && cells.length !== (imp.columns as string[]).length) return sendError(reply, request, 400, "CELLS_INVALID", `The row has ${(imp.columns as string[]).length} columns`);
       const sent = await db
         .selectFrom("lsclicker_queue")
