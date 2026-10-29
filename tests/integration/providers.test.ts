@@ -77,7 +77,7 @@ beforeAll(async () => {
   await bare.ready();
   baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });
   cookie = (await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { login: "operator", password: "pw" } })).cookies[0]!.value;
-  const api = (method: "GET" | "POST", url: string, payload?: object | Buffer, contentType?: string) =>
+  const api = (method: "GET" | "POST" | "PATCH", url: string, payload?: object | Buffer, contentType?: string) =>
     app.inject({ method, url, payload, cookies: { bap_session: cookie }, ...(contentType && { headers: { "content-type": contentType } }) });
   const { token } = (await api("POST", "/api/v1/agents/enrollments")).json();
   const enrolled = (await app.inject({ method: "POST", url: "/api/v1/agents/enroll", payload: { token, name: "mac-keys", platform: "darwin", architecture: "arm64" } })).json();
@@ -88,6 +88,8 @@ beforeAll(async () => {
   const sha = createHash("sha256").update(FAKE).digest("hex");
   await until("build installed", async () => (await api("GET", "/api/v1/ls-clicker")).json().macs[0]?.state.sha256, (s) => s === sha);
   await api("POST", "/api/v1/pipeline/import?name=t.csv", Buffer.from("who,company\nann,Acme\n"), "text/csv");
+  // A row runs only with its proxy («wait info» otherwise).
+  await api("PATCH", "/api/v1/pipeline/rows/1", { proxy: "10.9.9.9:1080" });
   expect((await api("POST", `/api/v1/agents/${agentId}/ls-clicker/runs`)).statusCode).toBe(202);
 });
 
