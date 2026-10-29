@@ -56,7 +56,8 @@ describe("warm-up session", () => {
     for (const h of opened) expect(h.referer).toMatch(new RegExp(`^${site.url}/`));
     expect(hits.some((h) => h.server === "ad")).toBe(false);
     // Each site reports it was scrolled, and was read for at least the set time.
-    await expect.poll(async () => (await log()).reads.length).toBe(3);
+    // The last page reports on pagehide: under load its beacon may come a little later.
+    await expect.poll(async () => (await log()).reads.length, { timeout: 10_000 }).toBe(3);
     for (const r of (await log()).reads) {
       expect(r.scrolls, r.site).toBeGreaterThan(0);
       expect(r.maxY, r.site).toBeGreaterThan(0);
