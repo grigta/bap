@@ -19,6 +19,7 @@ import { registerRecipes } from "./recipes.ts";
 import { registerPipeline } from "./pipeline.ts";
 import { DEFAULT_REMOTE, type RemoteConfig, registerRemote } from "./remote.ts";
 import { registerRuns } from "./runs.ts";
+import { registerLsClicker } from "./ls-clicker.ts";
 import { purgeArtifacts } from "./retention.ts";
 import { webHandler } from "./web.ts";
 import type { ObjectStore } from "./storage.ts";
@@ -44,6 +45,8 @@ export interface AppOptions {
   llmLimits?: Partial<LlmLimits>;
   /** Timeouts of the operator's remote browser sessions. */
   remote?: Partial<RemoteConfig>;
+  /** URL of the existing LS Clicker panel. */
+  lsClicker?: { panelUrl: string; fetch?: typeof globalThis.fetch };
 }
 
 export interface RegisteredRoute {
@@ -54,7 +57,7 @@ export interface RegisteredRoute {
   websocket: boolean;
 }
 
-export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir, model = null, llmLimits, remote }: AppOptions) {
+export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60 * 1000, logger = false, fleet, scheduler, store, retention, https, webDir, model = null, llmLimits, remote, lsClicker }: AppOptions) {
   // Request bodies are never logged; credentials in headers are redacted should headers ever be logged (REQ-SEC-008).
   const redact = ["req.headers.authorization", "req.headers.cookie", "req.headers[\"idempotency-key\"]", "res.headers[\"set-cookie\"]"];
   const app = Fastify({
@@ -215,6 +218,7 @@ export function buildApp({ db, secureCookies = true, sessionTtlMs = 12 * 60 * 60
     const remoteSessions = registerRemote(scoped as unknown as App, { db, fleet: agents, fleetConfig, coordinator, store, operatorAuth: auth, config: { ...DEFAULT_REMOTE, ...remote } });
     hooks.remoteProfiles = remoteSessions.profiles;
     registerRuns(scoped as unknown as App, { db, fleet: agents, coordinator, store, operatorAuth: auth, closeRemote: remoteSessions.closeForProfile });
+    registerLsClicker(scoped as unknown as App, { panelUrl: lsClicker?.panelUrl, fetch: lsClicker?.fetch, operatorAuth: auth });
     registerFarming(scoped as unknown as App, { db, coordinator, operatorAuth: auth });
     registerPipeline(scoped as unknown as App, { db, operatorAuth: auth });
     const gated = model && gatedModel(db, model, { ...DEFAULT_LIMITS, ...llmLimits }, (entry) => app.log.info(entry, "llm call"));
