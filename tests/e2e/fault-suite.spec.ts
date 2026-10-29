@@ -3,7 +3,8 @@
 // tests/e2e/fault-report.ts turns the results into reports/fault-suite/index.html.
 import { type ChildProcess, execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -11,6 +12,7 @@ import { promisify } from "node:util";
 import { type APIRequestContext, type Page, expect, test } from "@playwright/test";
 import { startFakeLinkenSphere } from "../support/fake-linken-sphere.ts";
 import { outageProxy } from "../support/outage-proxy.ts";
+import { evidence } from "./evidence.ts";
 import { goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_FLEET, STACK_PORTS, STACK_SCHEDULER } from "./stack-config.ts";
 
@@ -97,6 +99,7 @@ async function openRun(page: Page, runId: string) {
   return page.getByTestId("run-detail");
 }
 const agentRow = (page: Page, name: string) => page.getByTestId(`agent-${name}`);
+let launchApp: (() => void) | undefined;
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(120_000);
@@ -108,7 +111,14 @@ test.beforeAll(async ({ browser }) => {
   // Unique per run: a developer's stack is reused between runs and agent names are unique.
   const suffix = randomUUID().slice(0, 4);
   mac = await enroll(`fault-mac-${suffix}`, { BAP_PROVIDER: "local" });
-  lsMac = await enroll(`fault-ls-mac-${suffix}`, { BAP_LS_API_URL: ls.url });
+  // "Start Linken Sphere" from the panel runs this instead of `open -a`: it brings the emulator's API back.
+  const appStart = createServer((_req, res) => void ls.up().then(() => res.end()));
+  await new Promise<void>((r) => appStart.listen(0, "127.0.0.1", r));
+  launchApp = () => appStart.close();
+  const launch = join(mkdtempSync(join(tmpdir(), "bap-fault-launch-")), "open-linken-sphere");
+  writeFileSync(launch, `#!/bin/sh\nexec curl -s -X POST http://127.0.0.1:${(appStart.address() as { port: number }).port}/\n`);
+  chmodSync(launch, 0o755);
+  lsMac = await enroll(`fault-ls-mac-${suffix}`, { BAP_LS_API_URL: ls.url, BAP_LS_LAUNCH: launch });
 });
 
 test.afterAll(async () => {
@@ -117,6 +127,7 @@ test.afterAll(async () => {
     killAgent(a?.process);
   }
   await ls?.stop();
+  launchApp?.();
   await net.close();
   await fetch(`${site}/api/orders`, { method: "DELETE" });
 });
@@ -230,7 +241,7 @@ test("4. Аварийное завершение браузера", async ({ pag
 
 test("5. Недоступность Local API", async ({ page }) => {
   test.setTimeout(120_000);
-  fault("Local API Linken Sphere (эмулятор с настоящим Chromium) перестаёт отвечать.", "Агент «LS ✗»; новое задание на его профиль не назначается и ждёт с причиной PROVIDER_UNAVAILABLE; после возврата API — «LS ✓», задание выполняется.");
+  fault("Local API Linken Sphere (эмулятор с настоящим Chromium) перестаёт отвечать.", "Агент «LS ✗»; новое задание на его профиль не назначается и ждёт с причиной PROVIDER_UNAVAILABLE; оператор запускает LS кликом по статусу, API возвращается — «LS ✓», задание выполняется.");
   const profileId = await newProfile(lsMac, "ls-p");
   const row = agentRow(page, lsMac.name);
   await expect(row).toContainText("✓");
@@ -242,12 +253,15 @@ test("5. Недоступность Local API", async ({ page }) => {
   const waiting = await runView(runId);
   await goTo(page, "Задания");
   await shot(page, "API недоступен: LS ✗, задание в очереди");
-  await ls.up();
-  const done = await waitRun(runId, ["SUCCEEDED", "FAILED"]);
   await goTo(page, "Агенты");
+  await evidence(page, "S15", "3-ls-start-button");
+  await row.getByRole("button", { name: `Запустить Linken Sphere на ${lsMac.name}` }).click();
+  await expect(page.getByText(`Linken Sphere запущен на ${lsMac.name}`)).toBeVisible({ timeout: 20_000 });
+  const done = await waitRun(runId, ["SUCCEEDED", "FAILED"]);
   await expect(row.getByTestId("agent-ls")).toHaveText("✓", { timeout: 10_000 });
+  await evidence(page, "S15", "4-ls-started");
   await shot(page, "после: LS ✓");
-  observed(`Пока API недоступен: задание ${waiting.status}, причина ${waiting.queueReason}. После возврата: ${done.status} (${transitions(done)}).`);
+  observed(`Пока API недоступен: задание ${waiting.status}, причина ${waiting.queueReason}. После запуска из панели: ${done.status} (${transitions(done)}).`);
   expect(waiting).toMatchObject({ status: "QUEUED", queueReason: "PROVIDER_UNAVAILABLE" });
   expect(done.status).toBe("SUCCEEDED");
 });

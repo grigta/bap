@@ -33,6 +33,8 @@ export interface BrowserProvider {
   /** Stops whatever browser still holds the profile, e.g. after the agent crashed mid-run. */
   forceRelease(profileId: string): Promise<void>;
   openSession(profileId: string, runId: string): Promise<BrowserSession>;
+  /** Starts the provider's app; "running" when it already was. Providers without an app lack it. */
+  start?(): Promise<"started" | "running">;
 }
 
 export class ProfileNotFoundError extends Error {

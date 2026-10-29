@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
 import { CdpSession } from "./cdp-session.ts";
 import { type ListenerLookup, assertLoopbackOnly, isLoopbackHost, lsofListeners } from "./loopback.ts";
 import { type BrowserProvider, ProfileNotFoundError, type ProfileState, type ProfileSummary } from "./types.ts";
@@ -12,7 +15,17 @@ export interface LinkenSphereOptions {
   timeoutMs?: number;
   /** Where ports listen; lsof by default (tests substitute it). */
   listeners?: ListenerLookup;
+  /** Opens the Linken Sphere app; `open -a "Linken Sphere 2"` by default. */
+  launch?: () => Promise<void>;
+  /** How long a started app may take to bring its API up (it signs in by itself with autologin). */
+  startTimeoutMs?: number;
 }
+
+export class LinkenSphereStartError extends Error {
+  readonly code = "LS_START_TIMEOUT";
+}
+
+const openApp = async () => void (await promisify(execFile)("open", ["-a", "Linken Sphere 2"]));
 
 export interface LsSessionSummary {
   name: string;
@@ -58,6 +71,8 @@ export class LinkenSphereProvider implements BrowserProvider {
   private readonly headless: boolean;
   private readonly apiPort: number;
   private readonly listeners: ListenerLookup;
+  private readonly launch: () => Promise<void>;
+  private readonly startTimeoutMs: number;
 
   constructor(options: LinkenSphereOptions) {
     const url = new URL(options.apiUrl);
@@ -66,6 +81,20 @@ export class LinkenSphereProvider implements BrowserProvider {
     this.headless = options.headless ?? false;
     this.apiPort = Number(url.port || 80);
     this.listeners = options.listeners ?? lsofListeners;
+    this.launch = options.launch ?? openApp;
+    this.startTimeoutMs = options.startTimeoutMs ?? 90_000;
+  }
+
+  async start(): Promise<"started" | "running"> {
+    if (await this.isAvailable()) return "running";
+    await this.launch();
+    // The app needs ~20 s to start and sign in; its API is the only sign that it is ready.
+    const deadline = Date.now() + this.startTimeoutMs;
+    while (Date.now() < deadline) {
+      if (await this.isAvailable()) return "started";
+      await sleep(500);
+    }
+    throw new LinkenSphereStartError(`Linken Sphere did not answer on its Local API within ${Math.round(this.startTimeoutMs / 1000)} s after start: is it signed in?`);
   }
 
   async isAvailable(): Promise<boolean> {

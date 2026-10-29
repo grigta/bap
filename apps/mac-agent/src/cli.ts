@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { parseArgs } from "node:util";
+import { parseArgs, promisify } from "node:util";
 import { type BrowserProvider, LinkenSphereProvider, LocalChromiumProvider } from "@bap/browser-adapters";
 import { CheckpointStore, type RunStatus, loadScenarioBundle, runScenario } from "@bap/engine";
 import { startAgent } from "./agent.ts";
@@ -26,6 +26,8 @@ const USAGE = `usage:
 const EXIT: Record<RunStatus, number> = { SUCCEEDED: 0, FAILED: 1, NEEDS_REVIEW: 2, CANCELLED: 4 };
 const EXIT_USAGE = 3;
 const lsApiUrl = process.env.BAP_LS_API_URL ?? "http://127.0.0.1:41234";
+// How the panel's "start Linken Sphere" opens the app: `open -a "Linken Sphere 2"` unless an executable is given (tests).
+const lsLaunch = process.env.BAP_LS_LAUNCH ? async () => void (await promisify(execFile)(process.env.BAP_LS_LAUNCH!)) : undefined;
 const self = resolve(import.meta.filename);
 /** Installed as one file by the installer (not run from the repository): can replace itself. */
 const installed = self.endsWith(".mjs");
@@ -81,7 +83,7 @@ if (command === "enroll") {
       ? new LocalChromiumProvider({ profilesDir: join(dataDir(), "profiles"), headless: process.env.BAP_HEADLESS !== "false" })
       : process.env.BAP_LS_API_URL === ""
         ? null
-        : new LinkenSphereProvider({ apiUrl: lsApiUrl }),
+        : new LinkenSphereProvider({ apiUrl: lsApiUrl, launch: lsLaunch }),
     providerName: local ? "local-chromium" : "linken-sphere",
     maxSessions: Number(process.env.BAP_MAX_SESSIONS ?? 2),
     dataDir: dataDir(),

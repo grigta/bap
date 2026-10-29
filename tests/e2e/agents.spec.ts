@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { evidence } from "./evidence.ts";
-import { confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
+import { agentMenu, confirmDialog, goTo, killAgent, logIn, spawnAgent } from "./helpers.ts";
 import { STACK_FLEET, STACK_PORTS } from "./stack-config.ts";
 
 const cli = resolve(import.meta.dirname, "../../apps/mac-agent/src/cli.ts");
 const server = `http://127.0.0.1:${STACK_PORTS.controlPlane}`;
 
-test("[REQ-UI-002] operator invites an agent, watches its connection and drains, then revokes it", async ({ page }) => {
+test("[REQ-UI-002][REQ-UI-007] operator invites an agent, sees its Mac model, watches its connection and pauses it, then revokes it", async ({ page }) => {
   test.setTimeout(60_000);
   const env = { ...process.env, BAP_AGENT_DATA: mkdtempSync(join(tmpdir(), "bap-e2e-agent-")), BAP_LS_API_URL: "" };
   let agent: ChildProcess | undefined;
@@ -36,7 +36,14 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
     await expect(row.getByTestId("agent-status")).toHaveText("ACTIVE", { timeout: 10_000 });
     await expect(row.getByTestId("agent-connection")).toHaveText("ONLINE");
     await expect(row).toContainText("с назад");
+    // The model comes from system_profiler: macOS only (CI runs on Linux).
+    if (process.platform === "darwin") await expect(row.getByTestId("agent-model")).toHaveText(/^Mac.* · .* · \d+ GB$/);
     await evidence(page, "S3", "agents-online");
+    await evidence(page, "S15", "1-agent-model");
+    await page.getByRole("button", { name: "Ещё действия с e2e-mac" }).click();
+    await page.getByRole("menu").evaluate((menu) => Promise.all(menu.getAnimations({ subtree: true }).map((a) => a.finished)));
+    await evidence(page, "S15", "2-agent-menu");
+    await page.keyboard.press("Escape");
 
     await row.getByRole("link", { name: "e2e-mac" }).click();
     await expect(page.getByTestId("agent-card")).toContainText(/Последние [2-9]\d* heartbeat/, { timeout: 10_000 });
@@ -52,18 +59,18 @@ test("[REQ-UI-002] operator invites an agent, watches its connection and drains,
     agent.kill("SIGCONT");
     await expect(row.getByTestId("agent-connection")).toHaveText("ONLINE", { timeout: 8000 });
 
-    await row.getByRole("button", { name: "Drain" }).click();
+    await row.getByRole("button", { name: "Пауза" }).click();
     await expect(row.getByTestId("agent-status")).toHaveText("DRAINING");
 
     const exited = new Promise<number | null>((r) => agent!.once("exit", r));
-    await row.getByRole("button", { name: "Revoke" }).click();
+    await agentMenu(page, "e2e-mac", "Отозвать доступ");
     await confirmDialog(page);
     await expect(row.getByTestId("agent-status")).toHaveText("REVOKED");
     expect(await exited).toBe(0);
     await evidence(page, "S3", "agents-revoked");
 
     // A revoked agent can be deleted from the panel.
-    await expect(row.getByRole("button", { name: "Revoke" })).toBeHidden();
+    await expect(row.getByRole("button", { name: "Ещё действия с e2e-mac" })).toBeHidden();
     await row.getByRole("button", { name: "Удалить" }).click();
     await confirmDialog(page);
     await expect(row).toBeHidden();

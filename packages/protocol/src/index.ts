@@ -20,6 +20,8 @@ export const agentHello = z.object({
     updatable: z.boolean().default(false),
     platform: z.string(),
     architecture: z.string(),
+    /** The Mac as people call it, e.g. "MacBook Air · Apple M5 · 16 GB"; null when unknown. */
+    model: z.string().nullable().default(null),
     /** Runs executing right now on this agent (they survive a dropped connection). */
     activeRuns: z.array(z.uuid()).default([]),
     /** Runs that were executing when the agent process died; their sessions have been closed. */
@@ -107,6 +109,8 @@ export const agentRequestPayload = z.discriminatedUnion("method", [
   z.object({ method: z.literal("profiles.verify"), externalId: z.string().min(1) }),
   /** Cheap check after a run: is the profile there and released by the browser? */
   z.object({ method: z.literal("profiles.check"), externalId: z.string().min(1) }),
+  /** Starts the browser provider app (Linken Sphere) and answers once its API responds. */
+  z.object({ method: z.literal("provider.start") }),
 ]);
 export type AgentRequestPayload = z.infer<typeof agentRequestPayload>;
 

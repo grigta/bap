@@ -25,6 +25,12 @@ export async function goTo(page: Page, section: Section) {
   await page.getByRole("heading", { level: 1, name: section }).waitFor();
 }
 
+/** Picks an item from the "⋯" menu of an agent row on «Агенты». */
+export async function agentMenu(page: Page, agent: string, item: "Отключить" | "Сменить ключ" | "Отозвать доступ") {
+  await page.getByRole("button", { name: `Ещё действия с ${agent}` }).click();
+  await page.getByRole("menuitem", { name: item }).click();
+}
+
 /** Accepts the in-app confirmation dialog that the last click opened. */
 export async function confirmDialog(page: Page) {
   const dialog = page.getByRole("alertdialog");

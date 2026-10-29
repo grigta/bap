@@ -46,6 +46,8 @@ const agentSchema = z.object({
   upToDate: z.boolean().nullable(),
   platform: z.string(),
   architecture: z.string(),
+  /** "MacBook Air · Apple M5 · 16 GB"; null until an agent that knows it says hello. */
+  model: z.string().nullable(),
   heartbeat: heartbeatSchema,
   /** Effective limit of parallel sessions: the operator's limit, else what the agent reports. */
   maxSessions: z.number().nullable(),
@@ -105,7 +107,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     let query = db
       .selectFrom("agents")
       .leftJoin("agent_capabilities", "agent_capabilities.agent_id", "agents.id")
-      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "last_heartbeat", "max_sessions", "duplicate_messages", "updatable", "agent_capabilities.payload as capabilities"])
+      .select(["agents.id", "name", "status", "last_seen_at", "agent_version", "platform", "architecture", "model", "last_heartbeat", "max_sessions", "duplicate_messages", "updatable", "agent_capabilities.payload as capabilities"])
       .where("deleted_at", "is", null)
       .orderBy("name");
     if (id) query = query.where("agents.id", "=", id);
@@ -128,6 +130,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       upToDate: r.updatable ? r.agent_version === current : null,
       platform: r.platform,
       architecture: r.architecture,
+      model: r.model,
       heartbeat: (r.last_heartbeat as z.infer<typeof heartbeatSchema>) ?? null,
       maxSessions: r.max_sessions ?? (r.capabilities as { maxSessions?: number } | null)?.maxSessions ?? null,
       reportedMaxSessions: (r.capabilities as { maxSessions?: number } | null)?.maxSessions ?? null,
@@ -258,6 +261,22 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       },
     );
   }
+
+  // Linken Sphere closed or crashed on a Mac: the operator starts it from the panel (REQ-AGENT-004).
+  app.post(
+    "/api/v1/agents/:id/ls/start",
+    { preHandler: operatorAuth, schema: { params: idParams, response: { 200: z.object({ started: z.boolean() }), ...unauthorized, 404: errorSchema, 409: errorSchema } } },
+    async (request, reply) => {
+      const [agent] = await listAgents(request.params.id);
+      if (!agent) return sendError(reply, request, 404, "NOT_FOUND", "Agent not found");
+      try {
+        return (await ask(agent.id, { method: "provider.start" })) as { started: boolean };
+      } catch (e) {
+        if (e instanceof AgentRequestError) return sendError(reply, request, 409, e.code, e.message);
+        throw e;
+      }
+    },
+  );
 
   app.patch(
     "/api/v1/agents/:id",
@@ -451,6 +470,7 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
             updatable: msg.payload.updatable,
             platform: msg.payload.platform,
             architecture: msg.payload.architecture,
+            model: msg.payload.model,
           }))
           .where("id", "=", agentId)
           .returning("current_epoch")
@@ -537,6 +557,20 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
   // The newest connection is the live one; older sockets are about to close.
   const liveSocket = (agentId: string) => [...(sockets.get(agentId) ?? [])].filter((s) => s.readyState === s.OPEN).at(-1);
 
+  const ask: Fleet["request"] = (agentId, payload, timeoutMs = 120_000) => {
+    const socket = liveSocket(agentId);
+    if (!socket) return Promise.reject(new AgentRequestError("AGENT_UNAVAILABLE", "The agent is not connected"));
+    const msg = message({ type: "server.request" as const, payload });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(msg.id);
+        reject(new AgentRequestError("AGENT_TIMEOUT", `The agent did not answer ${payload.method} within ${timeoutMs} ms`));
+      }, timeoutMs);
+      pending.set(msg.id, { socket, resolve, reject, timer });
+      socket.send(JSON.stringify(msg));
+    });
+  };
+
   return {
     agentAuth,
     handlers,
@@ -547,18 +581,6 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
       socket.send(JSON.stringify(msg));
       return true;
     },
-    request(agentId, payload, timeoutMs = 120_000) {
-      const socket = liveSocket(agentId);
-      if (!socket) return Promise.reject(new AgentRequestError("AGENT_UNAVAILABLE", "The agent is not connected"));
-      const msg = message({ type: "server.request" as const, payload });
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pending.delete(msg.id);
-          reject(new AgentRequestError("AGENT_TIMEOUT", `The agent did not answer ${payload.method} within ${timeoutMs} ms`));
-        }, timeoutMs);
-        pending.set(msg.id, { socket, resolve, reject, timer });
-        socket.send(JSON.stringify(msg));
-      });
-    },
+    request: ask,
   };
 }

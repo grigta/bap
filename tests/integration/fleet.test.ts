@@ -195,13 +195,13 @@ describe("connection", () => {
     child.kill();
   });
 
-  test("heartbeats carry metrics and the agent card returns their history", async () => {
+  test("[REQ-UI-007] heartbeats carry metrics and the agent card returns their history; the agent reports its Mac model", async () => {
     const agent = await newAgent("mac-metrics");
-    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 3, dataDir: tmpdir(), log: () => {} });
+    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: null, providerName: "none", maxSessions: 3, dataDir: tmpdir(), log: () => {}, model: "MacBook Air · Apple M5 · 16 GB" });
     const view = await until("3 heartbeats", () => agentView(agent.agentId), (a) => a.heartbeats.length >= 3);
     running.stop();
     // Run from the repository, the agent reports its commit and does not update itself.
-    expect(view).toMatchObject({ agentVersion: expect.stringMatching(/^dev-/), upToDate: null, maxSessions: 3, heartbeat: { activeSessions: 0, lsAvailable: false } });
+    expect(view).toMatchObject({ model: "MacBook Air · Apple M5 · 16 GB", agentVersion: expect.stringMatching(/^dev-/), upToDate: null, maxSessions: 3, heartbeat: { activeSessions: 0, lsAvailable: false } });
     expect(view.heartbeat.memoryPercent).toBeGreaterThan(0);
     // Power comes from pmset, read in the background: by the latest heartbeat a real reading on macOS; null elsewhere (CI runs on Linux).
     const power = process.platform === "darwin" ? { source: expect.stringMatching(/^(ac|battery|unknown)$/), batteryPercent: expect.toBeOneOf([null, expect.any(Number)]), charging: expect.toBeOneOf([null, expect.any(Boolean)]), sleepPrevented: expect.toBeOneOf([null, expect.any(Boolean)]) } : null;
@@ -368,6 +368,58 @@ describe("Linken Sphere availability", () => {
     await new Promise((r) => stub.close(r));
     stub.closeAllConnections();
     await until("LS down", () => agentView(agent.agentId), (a) => a.heartbeat?.lsAvailable === false);
+    running.stop();
+  });
+
+  test("[REQ-AGENT-004] the operator starts Linken Sphere from the panel: the agent opens the app and answers once the API is up", async () => {
+    const lsApi = createServer((_req, res) => res.writeHead(200, { "content-type": "application/json" }).end("[]"));
+    const port = await new Promise<number>((r) => {
+      const probe = createServer().listen(0, "127.0.0.1", () => {
+        const p = (probe.address() as { port: number }).port;
+        probe.close(() => r(p));
+      });
+    });
+    let launches = 0;
+    // The app takes a moment to bring its API up, as Linken Sphere does after `open -a`.
+    const launch = async () => {
+      launches++;
+      setTimeout(() => lsApi.listen(port, "127.0.0.1"), 500);
+    };
+    const agent = await newAgent("mac-ls-start");
+    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider: new LinkenSphereProvider({ apiUrl: `http://127.0.0.1:${port}`, launch }), providerName: "linken-sphere", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
+    await until("LS down", () => agentView(agent.agentId), (a) => a.connection === "ONLINE" && a.heartbeat?.lsAvailable === false);
+
+    const started = await api("POST", `/api/v1/agents/${agent.agentId}/ls/start`);
+    expect(started.statusCode).toBe(200);
+    expect(started.json()).toEqual({ started: true });
+    await until("LS up", () => agentView(agent.agentId), (a) => a.heartbeat?.lsAvailable === true);
+    // Already running: nothing is launched again.
+    expect((await api("POST", `/api/v1/agents/${agent.agentId}/ls/start`)).json()).toEqual({ started: false });
+    expect(launches).toBe(1);
+    running.stop();
+    lsApi.closeAllConnections();
+    await new Promise((r) => lsApi.close(r));
+
+    // An agent that is not connected, or has no Linken Sphere, cannot start it.
+    expect((await api("POST", `/api/v1/agents/${agent.agentId}/ls/start`)).json()).toMatchObject({ error: { code: "AGENT_UNAVAILABLE" } });
+    const bare = await newAgent("mac-ls-none");
+    const none = startAgent({ serverUrl: baseUrl, agentKey: bare.agentKey, provider: null, providerName: "none", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
+    await until("ONLINE", () => agentView(bare.agentId), (a) => a.connection === "ONLINE");
+    const refused = await api("POST", `/api/v1/agents/${bare.agentId}/ls/start`);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({ error: { code: "PROVIDER_UNAVAILABLE" } });
+    none.stop();
+    expect((await api("POST", "/api/v1/agents/00000000-0000-4000-8000-000000000000/ls/start")).statusCode).toBe(404);
+  });
+
+  test("[REQ-AGENT-004] an app whose API never answers fails the start with a reason", async () => {
+    const agent = await newAgent("mac-ls-stuck");
+    const provider = new LinkenSphereProvider({ apiUrl: "http://127.0.0.1:9", launch: async () => {}, startTimeoutMs: 1500 });
+    const running = startAgent({ serverUrl: baseUrl, agentKey: agent.agentKey, provider, providerName: "linken-sphere", maxSessions: 1, dataDir: tmpdir(), log: () => {} });
+    await until("ONLINE", () => agentView(agent.agentId), (a) => a.connection === "ONLINE");
+    const res = await api("POST", `/api/v1/agents/${agent.agentId}/ls/start`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: { code: "LS_START_TIMEOUT" } });
     running.stop();
   });
 });

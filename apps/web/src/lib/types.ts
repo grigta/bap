@@ -29,6 +29,8 @@ export interface Agent {
   agentVersion: string | null;
   /** Installed agents: on the server's current build; null when run from a repository. */
   upToDate: boolean | null;
+  /** "MacBook Air · Apple M5 · 16 GB"; null until the agent reports it. */
+  model: string | null;
   heartbeat: Heartbeat | null;
   maxSessions: number | null;
   reportedMaxSessions: number | null;

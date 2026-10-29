@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { arch, cpus, freemem, platform, totalmem } from "node:os";
 import { readFileSync } from "node:fs";
-import { type BrowserProvider, ProfileNotFoundError } from "@bap/browser-adapters";
+import { type BrowserProvider, LinkenSphereStartError, ProfileNotFoundError } from "@bap/browser-adapters";
 import { AGENT_SOCKET_PATH, type AgentEvent, type AgentRequestPayload, type HeartbeatPayload, type RunAssignPayload, message, serverMessage } from "@bap/protocol";
 import WebSocket from "ws";
 import { AgentStore, type OutboxEvent } from "./agent-store.ts";
 import { checkServerUrl } from "./config.ts";
+import { readModel } from "./model.ts";
 import { readPower } from "./power.ts";
 import { devBuild, installBuild } from "./self-update.ts";
 import { purgeLocalRuns } from "./retention.ts";
@@ -40,6 +41,8 @@ export interface AgentOptions {
   selfUpdate?: { file: string; build: string; restart: () => void };
   /** Local data of settled runs is deleted after this many days (REQ-SEC-010); kept when omitted. */
   retentionDays?: number;
+  /** The Mac model shown in the panel; read from system_profiler when omitted. */
+  model?: string | null;
 }
 
 export interface RunningAgent {
@@ -90,6 +93,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   const runningInThisProcess = runningByDataDir.get(opts.dataDir)!;
   const log = opts.log ?? ((line: string) => console.log(line));
   const cpu = cpuSampler();
+  const model = opts.model === undefined ? readModel() : opts.model;
   const url = opts.serverUrl.replace(/^http/, "ws") + AGENT_SOCKET_PATH;
   const store = new AgentStore(opts.dataDir);
   let agentKey = opts.agentKey;
@@ -126,6 +130,14 @@ export function startAgent(opts: AgentOptions): RunningAgent {
   const handleRequest = async (req: AgentRequestPayload, requestId: string): Promise<unknown> => {
     const provider = opts.provider;
     if (!provider) throw new CodedError("PROVIDER_UNAVAILABLE", "this agent has no browser provider");
+    if (req.method === "provider.start") {
+      if (!provider.start) throw new CodedError("PROVIDER_UNAVAILABLE", "this agent's browser provider has no app to start");
+      const state = await provider.start().catch((e: unknown) => {
+        throw e instanceof LinkenSphereStartError ? new CodedError(e.code, e.message) : e;
+      });
+      log(state === "started" ? "started Linken Sphere" : "Linken Sphere was already running");
+      return { started: state === "started" };
+    }
     if (req.method === "profiles.list") return provider.listProfiles();
     if (req.method === "profiles.check") return { state: await provider.profileState(req.externalId) };
     // Verify: the profile must open and close cleanly; the window appears briefly on this Mac.
@@ -255,6 +267,7 @@ export function startAgent(opts: AgentOptions): RunningAgent {
               updatable: !!opts.selfUpdate,
               platform: platform(),
               architecture: arch(),
+              model,
               // Runs finished while offline still count: their results are in the outbox and arrive next.
               // Otherwise the server could resume such a run before learning it already ended.
               // Interrupted runs never do: nothing executes them any more, whatever the outbox holds.

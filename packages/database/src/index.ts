@@ -11,6 +11,7 @@ export interface AgentsTable {
   name: string;
   platform: string;
   architecture: string;
+  model: string | null;
   status: Generated<string>;
   current_epoch: Generated<string>;
   agent_version: string | null;

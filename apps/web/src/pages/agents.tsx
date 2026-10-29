@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Check, Copy, Monitor, UserPlus, X } from "lucide-react";
+import { Check, Copy, Ellipsis, KeyRound, Monitor, Pause, Play, Power, ShieldOff, Trash2, UserPlus, X } from "lucide-react";
 import { useState } from "react";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { useConfirm } from "@/components/confirm";
@@ -11,6 +11,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
@@ -191,6 +192,7 @@ function AgentSheet({ id }: { id: string | undefined }) {
           <div data-testid="agent-card" className="flex h-full flex-col">
             <SheetHeader className="border-b">
               <SheetTitle>{a.name}</SheetTitle>
+              {a.model && <p className="text-sm text-muted-foreground">{a.model}</p>}
               <SheetDescription className="flex flex-wrap items-center gap-2">
                 <StatusBadge status={a.status} />
                 <StatusBadge status={a.connection} />
@@ -211,7 +213,9 @@ function AgentSheet({ id }: { id: string | undefined }) {
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Linken Sphere</dt>
-                  <dd>{a.heartbeat ? (a.heartbeat.lsAvailable ? "доступен" : "недоступен") : "—"}</dd>
+                  <dd>
+                    <LsStatus agent={a} />
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Питание</dt>
@@ -254,10 +258,85 @@ function AgentVersion({ agent: a }: { agent: Agent }) {
   );
 }
 
+/**
+ * Whether Linken Sphere answers on the Mac. When it does not, the status is a button: the agent opens
+ * the app and answers once its API is up (about 20 s; it signs in by itself).
+ */
+function LsStatus({ agent: a }: { agent: Agent }) {
+  const queryClient = useQueryClient();
+  const start = useMutation({
+    mutationFn: () => api<{ started: boolean }>(`/agents/${a.id}/ls/start`, { method: "POST" }),
+    onSuccess: (r) => {
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent", a.id] });
+      notifyDone(r.started ? `Linken Sphere запущен на ${a.name}` : `Linken Sphere на ${a.name} уже работал`);
+    },
+    onError: notifyError("Запуск Linken Sphere"),
+  });
+  const v = a.heartbeat?.lsAvailable;
+  if (v === undefined)
+    return (
+      <span data-testid="agent-ls" className="text-muted-foreground" aria-label="нет данных">
+        —
+      </span>
+    );
+  if (v && !start.isPending)
+    return (
+      <span data-testid="agent-ls" aria-label="Linken Sphere работает" className="inline-flex items-center gap-1 text-ok">
+        <Check className="size-4" aria-hidden />
+        <span className="sr-only">✓</span>
+      </span>
+    );
+  const status = (
+    <>
+      <X className="size-4" aria-hidden />
+      <span data-testid="agent-ls" className="sr-only">
+        ✗
+      </span>
+    </>
+  );
+  if (a.connection !== "ONLINE" || a.status === "REVOKED")
+    return (
+      <span aria-label="Linken Sphere не отвечает" className="inline-flex items-center text-fail">
+        {status}
+      </span>
+    );
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="xs"
+            variant="outline"
+            className="text-fail"
+            aria-label={`Запустить Linken Sphere на ${a.name}`}
+            disabled={start.isPending}
+            onClick={() => start.mutate()}
+          />
+        }
+      >
+        {start.isPending ? (
+          <>
+            <Spinner aria-hidden />
+            запуск…
+          </>
+        ) : (
+          <>
+            {status}
+            запустить
+          </>
+        )}
+      </TooltipTrigger>
+      <TooltipContent>Linken Sphere не отвечает. Агент откроет его на этом Mac, это около 20 секунд.</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** One main action by status; the rest in a menu, so a row stays short. */
 function AgentActions({ agent: a, act }: { agent: Agent; act: (id: string, action: AgentAction) => void }) {
   const confirm = useConfirm();
   const revoke = async () => {
-    if (await confirm({ title: `Отозвать ключ агента ${a.name}?`, description: "Агент сразу отключится и не сможет подключиться снова. Вернуть узел можно только новым приглашением.", action: "Отозвать", destructive: true }))
+    if (await confirm({ title: `Отозвать доступ агента ${a.name}?`, description: "Агент сразу отключится и не сможет подключиться снова. Вернуть узел можно только новым приглашением.", action: "Отозвать", destructive: true }))
       act(a.id, "revoke");
   };
   const remove = async () => {
@@ -274,31 +353,49 @@ function AgentActions({ agent: a, act }: { agent: Agent; act: (id: string, actio
   if (a.status === "REVOKED")
     return (
       <div className="flex justify-end">
-        <Button size="xs" variant="destructive" onClick={remove}>
+        <Button size="xs" variant="outline" className="text-destructive" onClick={remove}>
+          <Trash2 aria-hidden />
           Удалить
         </Button>
       </div>
     );
+  const paused = a.status === "DRAINING" || a.status === "DISABLED";
   return (
-    <div className="flex justify-end gap-1">
-      {a.status === "DRAINING" || a.status === "DISABLED" ? (
+    <div className="flex items-center justify-end gap-1">
+      {paused ? (
         <Button size="xs" variant="outline" onClick={() => act(a.id, "activate")}>
-          Activate
+          <Play aria-hidden />
+          Возобновить
         </Button>
       ) : (
-        <Button size="xs" variant="outline" disabled={a.status !== "ACTIVE"} onClick={() => act(a.id, "drain")}>
-          Drain
-        </Button>
+        <Tooltip>
+          <TooltipTrigger render={<Button size="xs" variant="outline" onClick={() => act(a.id, "drain")} />}>
+            <Pause aria-hidden />
+            Пауза
+          </TooltipTrigger>
+          <TooltipContent>Доработает текущие задания, новых не возьмёт</TooltipContent>
+        </Tooltip>
       )}
-      <Button size="xs" variant="outline" disabled={a.status === "DISABLED"} onClick={() => act(a.id, "disable")}>
-        Disable
-      </Button>
-      <Button size="xs" variant="outline" disabled={a.connection !== "ONLINE"} onClick={() => act(a.id, "rotate-key")}>
-        Rotate key
-      </Button>
-      <Button size="xs" variant="destructive" onClick={revoke}>
-        Revoke
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label={`Ещё действия с ${a.name}`} />}>
+          <Ellipsis aria-hidden />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem disabled={a.status === "DISABLED"} onClick={() => act(a.id, "disable")}>
+            <Power aria-hidden />
+            Отключить
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={a.connection !== "ONLINE"} onClick={() => act(a.id, "rotate-key")}>
+            <KeyRound aria-hidden />
+            Сменить ключ
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onClick={revoke}>
+            <ShieldOff aria-hidden />
+            Отозвать доступ
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -321,27 +418,22 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
     c.accessor("name", {
       header: "Агент",
       cell: (i) => (
-        <Link to="/agents/$agentId" params={{ agentId: i.row.original.id }} className="font-medium hover:underline">
-          {i.getValue()}
-        </Link>
+        <div className="grid">
+          <Link to="/agents/$agentId" params={{ agentId: i.row.original.id }} className="font-medium hover:underline">
+            {i.getValue()}
+          </Link>
+          {i.row.original.model && (
+            <span data-testid="agent-model" className="text-xs text-muted-foreground">
+              {i.row.original.model}
+            </span>
+          )}
+        </div>
       ),
     }),
     c.accessor("status", { header: "Статус", cell: (i) => <StatusBadge status={i.getValue()} data-testid="agent-status" /> }),
     c.accessor("connection", { header: "Связь", cell: (i) => <StatusBadge status={i.getValue()} data-testid="agent-connection" /> }),
-    c.accessor("lastSeenAt", { header: "Последний сигнал", cell: (i) => <span className="text-muted-foreground tabular-nums">{ago(i.getValue(), now)}</span> }),
-    c.accessor((a) => a.heartbeat?.lsAvailable, {
-      id: "ls",
-      header: "LS",
-      cell: (i) => {
-        const v = i.getValue();
-        return (
-          <span data-testid="agent-ls" aria-label={v === undefined ? "нет данных" : v ? "Linken Sphere доступен" : "Linken Sphere недоступен"} className={v ? "text-ok" : v === false ? "text-fail" : "text-muted-foreground"}>
-            {v === undefined ? "—" : v ? <Check className="inline size-4" aria-hidden /> : <X className="inline size-4" aria-hidden />}
-            <span className="sr-only">{v === undefined ? "—" : v ? "✓" : "✗"}</span>
-          </span>
-        );
-      },
-    }),
+    c.accessor("lastSeenAt", { header: "Сигнал", cell: (i) => <span className="text-muted-foreground tabular-nums">{ago(i.getValue(), now)}</span> }),
+    c.accessor((a) => a.heartbeat?.lsAvailable, { id: "ls", header: "LS", cell: (i) => <LsStatus agent={i.row.original} /> }),
     c.accessor((a) => a.heartbeat?.power?.batteryPercent ?? 101, {
       id: "power",
       header: "Питание",

@@ -44,7 +44,7 @@ test("operator sees one run per profile, waiting runs with their reason, slots a
   await expect(page.getByTestId("agent-sched-mac").getByTestId("slots")).toHaveText("1 / 2");
   await evidence(page, "S6", "agent-slots");
 
-  await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Drain" }).click();
+  await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Пауза" }).click();
   await expect(page.getByTestId("agent-sched-mac").getByTestId("agent-status")).toHaveText("DRAINING");
   const drained = (await (await start("other", 100)).json()).runId as string;
   await goTo(page, "Задания");
@@ -52,7 +52,7 @@ test("operator sees one run per profile, waiting runs with their reason, slots a
   await evidence(page, "S6", "runs-drained");
 
   await goTo(page, "Агенты");
-  await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Activate" }).click();
+  await page.getByTestId("agent-sched-mac").getByRole("button", { name: "Возобновить" }).click();
   for (const id of [...runs, drained])
     await expect.poll(async () => (await (await page.request.get(`/api/v1/runs/${id}`)).json()).status, { timeout: 60_000 }).toBe("SUCCEEDED");
 });
