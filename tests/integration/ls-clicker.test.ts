@@ -38,8 +38,10 @@ async function until<T>(what: string, read: () => Promise<T> | T, ok: (v: T) => 
     await sleep(100);
   }
 }
-const overview = async () => (await api("GET", "/api/v1/ls-clicker")).json() as { build: { sha256: string } | null; unsent: number; macs: { agentId: string; name: string; sent: number; processed: number; state: { sha256: string | null; version: string | null; inputRows: number; outputRows: number; run: { running: boolean; ok: boolean | null }; stage: { node: string } | null } }[] };
+const overview = async () => (await api("GET", "/api/v1/ls-clicker")).json() as { build: { sha256: string } | null; unsent: number; macs: { agentId: string; name: string; sent: number; processed: number; state: { sha256: string | null; version: string | null; inputRows: number; outputRows: number; run: { running: boolean; ok: boolean | null; finishedAt: string | null }; stage: { node: string } | null } }[] };
 const mac = async (name: string) => (await overview()).macs.find((m) => m.name === name)!;
+/** The Mac's run that started at or after `since` has ended: a heartbeat sent before the start does not count. */
+const endedSince = (name: string, since: number) => until(`${name}: run ended`, () => mac(name), (m) => !m.state.run.running && !!m.state.run.finishedAt && Date.parse(m.state.run.finishedAt) >= since);
 const table = async () => (await api("GET", "/api/v1/pipeline")).json().rows as { cells: string[]; lsc: { agentName: string; result: { header: string[]; cells: string[] } | null } | null }[];
 
 beforeAll(async () => {
@@ -116,25 +118,30 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect((await mac("mac-a")).state.stage).toMatchObject({ node: "businessDetails" });
 
     // dora → mac-a, fail → mac-b (which then fails).
+    const both = Date.now();
     expect((await api("POST", "/api/v1/ls-clicker/runs")).json().started.sort()).toEqual(["mac-a", "mac-b"]);
-    await until("both done", overview, (o) => o.macs.every((m) => !m.state.run.running) && o.unsent === 0);
-    const b = await until("mac-b failed", () => mac("mac-b"), (m) => m.state.run.ok === false);
+    await endedSince("mac-a", both);
+    const b = await endedSince("mac-b", both);
+    expect(b.state.run.ok).toBe(false);
+    expect((await overview()).unsent).toBe(0);
     expect(b.state).toMatchObject({ inputRows: 2, outputRows: 1 });
     // mac-b runs its own unprocessed row again; mac-a has nothing left to take.
+    const again2 = Date.now();
     const all = (await api("POST", "/api/v1/ls-clicker/runs")).json();
     expect(all.started).toEqual(["mac-b"]);
     expect(all.skipped).toEqual([{ name: "mac-a", reason: "в таблице не осталось строк" }]);
-    await until("mac-b done", () => mac("mac-b"), (m) => !m.state.run.running);
+    await endedSince("mac-b", again2);
     expect((await mac("mac-b")).state.inputRows).toBe(2);
     expect((await api("POST", `/api/v1/agents/${a}/ls-clicker/runs`)).json().error.code).toBe("NO_ROWS");
   });
 
   test("[REQ-LSC-003] a run can be stopped; the plan of the next row is shown to the operator", async () => {
     process.env.FAKE_LS_MS = "20000";
-    await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/runs`);
-    await until("running", () => mac("mac-b"), (m) => m.state.run.running);
+    const started = Date.now();
+    expect((await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/runs`)).statusCode).toBe(202);
+    // Stopping goes to the agent, which knows its run at once (no heartbeat needed).
     expect((await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/stop`)).statusCode).toBe(202);
-    await until("stopped", () => mac("mac-b"), (m) => !m.state.run.running && m.state.run.ok === false);
+    expect((await endedSince("mac-b", started)).state.run.ok).toBe(false);
     process.env.FAKE_LS_MS = "300";
     expect((await api("POST", `/api/v1/agents/${ids["mac-b"]}/ls-clicker/stop`)).json().error.code).toBe("LS_CLICKER_IDLE");
     expect((await api("GET", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/plan`)).json()).toEqual({ plan: { businessDetails: { "Legal business name": "next row" } } });
@@ -182,16 +189,18 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     const log = () => readFileSync(join(dirs["mac-a"]!, "proxies.log"), "utf8").trim().split("\n").at(-1);
 
     // «fail» goes to mac-a with its proxy and stays unprocessed there.
+    const first = Date.now();
     expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`)).statusCode).toBe(202);
     await until("ran with its proxy", () => existsSync(join(dirs["mac-a"]!, "proxies.log")) && log(), (l) => !!l && l.endsWith(" 10.1.1.1:1080@u:p"));
-    await until("failed", () => mac("mac-a"), (m) => !m.state.run.running && m.state.run.ok === false);
+    expect((await endedSince("mac-a", first)).state.run.ok).toBe(false);
     expect((await patch(1, { cells: ["fail", "edited"] })).json().error.code).toBe("ROW_SENT");
 
     // The operator changes the proxy; the Mac runs its own unprocessed row again, with the new one.
     expect((await patch(1, { proxy: "10.2.2.2:1080" })).statusCode).toBe(204);
+    const second = Date.now();
     expect((await api("POST", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/runs`)).statusCode).toBe(202);
     await until("ran with the edited proxy", log, (l) => !!l && l.endsWith(" 10.2.2.2:1080"));
-    await until("idle", () => mac("mac-a"), (m) => !m.state.run.running);
+    await endedSince("mac-a", second);
     // The engine's log names the proxy only as «with its proxy».
     expect((await api("GET", `/api/v1/agents/${ids["mac-a"]}/ls-clicker/log`)).json().lines.join("\n")).not.toContain("10.2.2.2");
   });
