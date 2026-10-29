@@ -54,7 +54,10 @@ export function DataTable<T extends RowData>({
             <TableRow key={row.id} data-testid={rowTestId?.(row.original)} className={cn("text-sm", rowClassName?.(row.original))}>
               {row.getAllCells().map((cell) => (
                 <TableCell key={cell.id} className="py-2 align-middle">
-                  <table.FlexRender cell={cell} />
+                  {/* Called, not mounted: the column definitions are rebuilt on every render (the panel ticks each
+                      second), and as a component each cell would be a new type every time — its menus and inputs
+                      would be torn down and rebuilt under the operator's hand. */}
+                  {typeof cell.column.columnDef.cell === "function" ? cell.column.columnDef.cell(cell.getContext()) : <table.FlexRender cell={cell} />}
                 </TableCell>
               ))}
             </TableRow>

@@ -108,6 +108,25 @@ describe("the operator's table in «Конвейер»", () => {
     expect(journal).not.toContain("исправлено");
   });
 
+  test("[REQ-UI-014] the operator adds rows: comma-separated values in the table's column order, quotes allowed, missing values empty", async () => {
+    const add = (text: string) => app.inject({ method: "POST", url: "/api/v1/pipeline/rows", payload: { text }, cookies: { bap_session: cookie } });
+    const before = (await api("GET", "/api/v1/pipeline")).json();
+    const res = await add('Новый Тест,shop-a,"с запятой, внутри"\nЕщё Один,nobody\n');
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toEqual({ added: 2 });
+    const after = (await api("GET", "/api/v1/pipeline")).json();
+    expect(after.import.rowCount).toBe(before.import.rowCount + 2);
+    expect(after.rows.slice(-2).map((r: { n: number; cells: string[] }) => [r.n, r.cells])).toEqual([
+      [before.rows.at(-1).n + 1, ["Новый Тест", "shop-a", "с запятой, внутри"]],
+      [before.rows.at(-1).n + 2, ["Ещё Один", "nobody", ""]],
+    ]);
+    const tooLong = await add("a,b,c\nтут,слишком,много,значений\n");
+    expect(tooLong.statusCode).toBe(400);
+    expect(tooLong.json().error.message).toBe("строка 2: 4 значения при 3 колонках");
+    expect(tooLong.body).not.toContain("слишком");
+    expect((await api("GET", "/api/v1/pipeline")).json().import.rowCount).toBe(before.import.rowCount + 2);
+  });
+
   test("[REQ-UI-012] a new upload replaces the table; clearing removes it; a broken file is refused with the line, not the values", async () => {
     expect((await upload("a,b\n1,2\n", "второй.csv")).json()).toEqual({ rows: 1, columns: 2 });
     const view = (await api("GET", "/api/v1/pipeline")).json();

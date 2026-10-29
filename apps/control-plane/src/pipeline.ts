@@ -3,7 +3,7 @@ import type { preHandlerAsyncHookHandler } from "fastify";
 import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
-import { CsvError, parseCsv, toCsv } from "@bap/csv";
+import { CsvError, parseCsv, toCsv, toEngineCsv } from "@bap/csv";
 import { PROXY_FORMAT } from "@bap/protocol";
 
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -163,6 +163,33 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       if (column !== null && column >= (imp.columns as string[]).length) return sendError(reply, request, 400, "COLUMN_INVALID", `The table has ${(imp.columns as string[]).length} columns`);
       await db.updateTable("pipeline_import").set({ profile_column: column }).where("id", "=", imp.id).execute();
       return reply.code(204).send(null);
+    },
+  );
+
+  // The operator adds rows by hand: one line per row, values comma-separated in the table's column order.
+  app.post(
+    "/api/v1/pipeline/rows",
+    { preHandler: operatorAuth, schema: { body: z.object({ text: z.string().min(1).max(MAX_BYTES) }), response: { 201: z.object({ added: z.number() }), ...errors } } },
+    async (request, reply) => {
+      const imp = await current();
+      if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
+      const columns = imp.columns as string[];
+      let rows: string[][];
+      try {
+        // Parsed under the table's own header, written with commas: the lines are read as comma-separated.
+        rows = parseCsv(toEngineCsv([columns]) + request.body.text).rows;
+      } catch (e) {
+        if (e instanceof CsvError) return sendError(reply, request, 400, "CSV_INVALID", e.message.replace(/строка (\d+)/, (_m, n) => `строка ${Number(n) - 1}`));
+        throw e;
+      }
+      if (rows.length === 0) return sendError(reply, request, 400, "CSV_INVALID", "нет строк");
+      const last = await db.selectFrom("pipeline_rows").select((eb) => eb.fn.max("n").as("n")).where("import_id", "=", imp.id).executeTakeFirst();
+      const from = Number(last?.n ?? 0);
+      await db.transaction().execute(async (tx) => {
+        await tx.insertInto("pipeline_rows").values(rows.map((cells, i) => ({ import_id: imp.id, n: from + i + 1, cells: JSON.stringify(cells) }))).execute();
+        await tx.updateTable("pipeline_import").set((eb) => ({ row_count: eb("row_count", "+", rows.length) })).where("id", "=", imp.id).execute();
+      });
+      return reply.code(201).send({ added: rows.length });
     },
   );
 

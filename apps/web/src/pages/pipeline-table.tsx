@@ -1,15 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Download, FileUp, Pencil, Table2, Trash2 } from "lucide-react";
+import { Check, Clock, Download, FileUp, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { dateTime } from "@/lib/format";
 import { notifyDone, notifyError } from "@/lib/notify";
 import type { Pipeline } from "@/lib/types";
@@ -96,6 +100,8 @@ export function PipelineTable() {
     if (from.current && to.current && to.current.scrollLeft !== from.current.scrollLeft) to.current.scrollLeft = from.current.scrollLeft;
   };
   const [search, setSearch] = useState("");
+  const [open, setOpen] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
   const table = useQuery({ queryKey: ["pipeline"], queryFn: () => api<Pipeline>("/pipeline"), refetchInterval: 5000 });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["pipeline"] });
 
@@ -127,6 +133,7 @@ export function PipelineTable() {
     return q ? all.filter((r) => r.cells.some((c) => c.toLowerCase().includes(q))) : all;
   }, [table.data, search]);
   const matched = table.data?.rows.filter((r) => r.ours).length ?? 0;
+  const shown = table.data?.rows.find((r) => r.n === open);
 
   const pick = (
     <>
@@ -187,6 +194,10 @@ export function PipelineTable() {
         </div>
         <Input aria-label="Поиск по таблице" placeholder="Поиск по таблице" value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 w-56" />
         <div className="ml-auto flex gap-2">
+          <Button variant="outline" onClick={() => setAdding(true)}>
+            <Plus aria-hidden />
+            Строка
+          </Button>
           {pick}
           <Button variant="outline" render={<a href="/api/v1/pipeline/export" download />}>
             <Download aria-hidden />
@@ -203,81 +214,46 @@ export function PipelineTable() {
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">Нажмите на значение, чтобы изменить его (Enter — сохранить, Esc — отменить). Прокси строки — справа: ip:port или ip:port@login:pass, он подключается к её профилю Linken Sphere.</p>
+      <p className="text-xs text-muted-foreground">✓ — значение есть, ✗ — пусто. Нажмите на строку, чтобы открыть её данные: там их можно изменить и задать прокси.</p>
       {/* A scrollbar above the table too: a wide table moves sideways without scrolling down to its end first. */}
       <div ref={topBar} aria-hidden data-testid="pipeline-scroll-top" onScroll={() => sync(topBar, box)} className="overflow-x-auto overflow-y-hidden">
         <div style={{ width: wide, height: 1 }} />
       </div>
       <div ref={box} data-testid="pipeline-scroll" onScroll={() => sync(box, topBar)} className="max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border bg-card">
-        <table ref={tableEl} data-testid="pipeline-table" className="w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-muted text-left text-xs text-muted-foreground">
+        <table ref={tableEl} data-testid="pipeline-table" className="text-xs">
+          <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
             <tr>
-              {imp.columns.map((c, i) => (
-                <th key={i} scope="col" className={i === imp.profileColumn ? "px-3 py-2 font-medium text-foreground" : "px-3 py-2 font-medium"}>
-                  {c || `колонка ${i + 1}`}
-                </th>
-              ))}
-              {["Статус профиля", "Mac", "Последний проход", "Ошибка", "LS Clicker"].map((c) => (
-                <th key={c} scope="col" className="border-l px-3 py-2 font-medium">
-                  {c}
-                </th>
-              ))}
-              {/* Pinned to the right edge: wide tables keep the proxy in view. */}
-              <th scope="col" className="sticky right-0 z-10 border-l bg-muted px-3 py-2 font-medium shadow-[-4px_0_6px_-4px_rgb(0_0_0/0.15)]">
-                Прокси
+              <th scope="col" className="px-2 py-1 text-left font-medium">
+                #
               </th>
+              {[...imp.columns.map((c, i) => c || `колонка ${i + 1}`), "Прокси", "LS Clicker", "Статус профиля"].map((c, i) => (
+                <th key={i} scope="col" title={c} className={cn("h-28 px-1 py-1 align-bottom font-medium", i === imp.columns.length && "border-l")}>
+                  {/* Turned on its side: a dozen columns fit where a few names would. */}
+                  <span className="mx-auto block max-h-24 truncate [writing-mode:vertical-rl] rotate-180">{c}</span>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, SHOWN).map((r, n) => (
-              <tr key={n} data-testid="pipeline-row" className="border-t align-top">
+            {rows.slice(0, SHOWN).map((r) => (
+              <tr key={r.n} data-testid="pipeline-row" onClick={() => setOpen(r.n)} className={cn("cursor-pointer border-t hover:bg-accent/60", open === r.n && "bg-accent")}>
+                <td className="px-2 py-1 text-muted-foreground tabular-nums">
+                  <button type="button" className="hover:underline" aria-label={`Открыть строку ${r.n}`} onClick={() => setOpen(r.n)}>
+                    {r.n}
+                  </button>
+                </td>
                 {r.cells.map((c, i) => (
-                  <td key={i} className="max-w-64 px-3 py-2">
-                    <EditableCell
-                      value={c}
-                      label={`${imp.columns[i] || `колонка ${i + 1}`}, строка ${r.n}`}
-                      locked={r.lsc ? "Строка уже на Mac: в input.csv она не меняется" : undefined}
-                      onSave={(v) => edit.mutate({ n: r.n, body: { cells: r.cells.map((x, j) => (j === i ? v : x)) } })}
-                    />
+                  <td key={i} className="px-1 py-1 text-center">
+                    <Filled filled={c.trim() !== ""} label={imp.columns[i] || `колонка ${i + 1}`} />
                   </td>
                 ))}
-                <td className="border-l px-3 py-2">{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">—</span>}</td>
-                <td className="px-3 py-2">
-                  {r.ours ? (
-                    <>
-                      {r.ours.agentName}
-                      {r.ours.agentModel && <span className="block text-xs text-muted-foreground">{r.ours.agentModel}</span>}
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
+                <td className="border-l px-1 py-1 text-center" data-testid="pipeline-proxy">
+                  <Filled filled={!!r.proxy} label="Прокси" />
                 </td>
-                <td className="px-3 py-2">
-                  {r.ours?.lastRun ? (
-                    <Link to="/runs/$runId" params={{ runId: r.ours.lastRun.id }} search={{}} className="grid justify-items-start gap-1 hover:underline">
-                      <span>{r.ours.lastRun.scenarioId}</span>
-                      <StatusBadge status={r.ours.lastRun.status} />
-                    </Link>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
+                <td className="px-1 py-1 text-center" data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : "не отправлена"}>
+                  {r.lsc ? r.lsc.result ? <Check className="mx-auto size-3.5 text-ok" aria-label="обработана" /> : <Clock className="mx-auto size-3.5 text-wait" aria-label="в очереди" /> : <span className="text-muted-foreground">·</span>}
                 </td>
-                <td className="max-w-64 px-3 py-2 text-xs text-fail">{r.ours?.lastRun?.errorCode ? `${r.ours.lastRun.errorCode}: ${r.ours.lastRun.errorMessage ?? ""}` : (r.ours?.profileLastError ?? "")}</td>
-                <td data-testid="pipeline-lsc" className="px-3 py-2 text-xs" title={r.lsc?.result ? r.lsc.result.header.map((h, i) => `${h}: ${r.lsc!.result!.cells[i] ?? ""}`).join("\n") : undefined}>
-                  {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">—</span>}
-                </td>
-                <td className="sticky right-0 min-w-48 border-l bg-card px-3 py-2 font-mono text-xs shadow-[-4px_0_6px_-4px_rgb(0_0_0/0.15)]">
-                  <EditableCell
-                    testId="pipeline-proxy"
-                    value={r.proxy ?? ""}
-                    shown={r.proxy ? maskProxy(r.proxy) : undefined}
-                    label={`Прокси, строка ${r.n}`}
-                    placeholder="+ прокси"
-                    locked={r.lsc?.result ? "Строка обработана: прокси больше не используется" : undefined}
-                    check={(v) => (v.trim() === "" || PROXY_FORMAT.test(v.trim()) ? null : "ip:port или ip:port@login:pass")}
-                    onSave={(v) => edit.mutate({ n: r.n, body: { proxy: v.trim() } })}
-                  />
-                </td>
+                <td className="px-1 py-1 text-center">{r.ours ? <StatusBadge status={r.ours.profileStatus} data-testid="pipeline-profile-status" /> : <span className="text-muted-foreground">·</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -285,6 +261,129 @@ export function PipelineTable() {
         {rows.length > SHOWN && <p className="p-3 text-xs text-muted-foreground">Показаны первые {SHOWN} из {rows.length}: уточните поиск. В выгрузке — все строки.</p>}
         {rows.length === 0 && <p className="p-3 text-sm text-muted-foreground">Ничего не найдено.</p>}
       </div>
+      {shown && <RowSheet row={shown} columns={imp.columns} onClose={() => setOpen(null)} onSave={(body) => edit.mutate({ n: shown.n, body })} />}
+      {adding && <AddRows columns={imp.columns} onClose={() => setAdding(false)} onAdded={() => void refresh()} />}
     </section>
+  );
+}
+
+/** ✓ when the field has a value, ✗ when it is empty: the overview shows completeness, not the data. */
+function Filled({ filled, label }: { filled: boolean; label: string }) {
+  return filled ? <Check className="mx-auto size-3.5 text-ok" aria-label={`${label}: есть`} /> : <X className="mx-auto size-3.5 text-fail/70" aria-label={`${label}: пусто`} />;
+}
+
+/** One row in full: every field editable, the proxy, and what BAP and LS Clicker know about it. */
+function RowSheet({ row: r, columns, onClose, onSave }: { row: Pipeline["rows"][number]; columns: string[]; onClose: () => void; onSave: (body: { cells?: string[]; proxy?: string }) => void }) {
+  const locked = r.lsc ? "Строка уже на Mac: в input.csv она не меняется" : undefined;
+  return (
+    <Sheet open onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="w-full gap-0 sm:max-w-xl" data-testid="pipeline-row-sheet">
+        <SheetHeader className="border-b">
+          <SheetTitle>Строка {r.n}</SheetTitle>
+          <SheetDescription>{locked ?? "Нажмите на значение, чтобы изменить его (Enter — сохранить, Esc — отменить)."}</SheetDescription>
+        </SheetHeader>
+        <div className="grid gap-5 overflow-y-auto p-4 text-sm">
+          <section aria-label="Прокси" className="grid gap-1">
+            <h3 className="text-xs text-muted-foreground">Прокси — подключается к профилю Linken Sphere этой строки</h3>
+            <div className="font-mono text-xs">
+              <EditableCell
+                testId="pipeline-proxy-edit"
+                value={r.proxy ?? ""}
+                shown={r.proxy ? maskProxy(r.proxy) : undefined}
+                label={`Прокси, строка ${r.n}`}
+                placeholder="+ прокси"
+                locked={r.lsc?.result ? "Строка обработана: прокси больше не используется" : undefined}
+                check={(v) => (v.trim() === "" || PROXY_FORMAT.test(v.trim()) ? null : "ip:port или ip:port@login:pass")}
+                onSave={(v) => onSave({ proxy: v.trim() })}
+              />
+            </div>
+          </section>
+          <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-3 gap-y-1.5">
+            {r.cells.map((c, i) => (
+              <div key={i} className="contents">
+                <dt className="truncate pt-0.5 text-xs text-muted-foreground" title={columns[i]}>
+                  {columns[i] || `колонка ${i + 1}`}
+                </dt>
+                <dd className="min-w-0">
+                  <EditableCell value={c} label={`${columns[i] || `колонка ${i + 1}`}, строка ${r.n}`} locked={locked} onSave={(v) => onSave({ cells: r.cells.map((x, j) => (j === i ? v : x)) })} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <section aria-label="Состояние" className="grid gap-1.5 border-t pt-3 text-xs">
+            <div>
+              Профиль: {r.ours ? <StatusBadge status={r.ours.profileStatus} /> : <span className="text-muted-foreground">не связан</span>}
+              {r.ours && <span className="text-muted-foreground"> · {r.ours.agentName}</span>}
+            </div>
+            {r.ours?.lastRun && (
+              <div>
+                Последний проход:{" "}
+                <Link to="/runs/$runId" params={{ runId: r.ours.lastRun.id }} search={{}} className="hover:underline">
+                  {r.ours.lastRun.scenarioId}
+                </Link>{" "}
+                <StatusBadge status={r.ours.lastRun.status} />
+                {r.ours.lastRun.errorCode && <span className="block text-fail">{`${r.ours.lastRun.errorCode}: ${r.ours.lastRun.errorMessage ?? ""}`}</span>}
+              </div>
+            )}
+            <div>
+              LS Clicker: {r.lsc ? `${r.lsc.agentName} · ${r.lsc.result ? "обработана" : "в очереди"}` : <span className="text-muted-foreground">не отправлена</span>}
+            </div>
+            {r.lsc?.result && (
+              <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-3 gap-y-1 rounded-md bg-muted/50 p-2">
+                {r.lsc.result.header.map((h, i) => (
+                  <div key={i} className="contents">
+                    <dt className="truncate text-muted-foreground">{h}</dt>
+                    <dd className="break-words">{r.lsc!.result!.cells[i] ?? ""}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </section>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/** «+ строка»: lines of comma-separated values in the table's column order, one row per line. */
+function AddRows({ columns, onClose, onAdded }: { columns: string[]; onClose: () => void; onAdded: () => void }) {
+  const [text, setText] = useState("");
+  const add = useMutation({
+    mutationFn: () => api<{ added: number }>("/pipeline/rows", { method: "POST", body: JSON.stringify({ text }) }),
+    onSuccess: (r) => {
+      notifyDone(`Добавлено строк: ${r.added}`);
+      onAdded();
+      onClose();
+    },
+    onError: notifyError("Добавить строки"),
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <form
+          className="grid gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            add.mutate();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Добавить строки</DialogTitle>
+            <DialogDescription>Одна строка — одна запись. Значения через запятую в порядке колонок; значение с запятой — в кавычках. Недостающие останутся пустыми.</DialogDescription>
+          </DialogHeader>
+          <p className="rounded-md bg-muted/50 p-2 font-mono text-[11px] break-words text-muted-foreground">{columns.map((c, i) => c || `колонка ${i + 1}`).join(",")}</p>
+          <Label htmlFor="add-rows" className="sr-only">
+            Строки
+          </Label>
+          <Textarea id="add-rows" value={text} onChange={(e) => setText(e.target.value)} rows={6} className="font-mono text-xs" placeholder="значение1,значение2,…" required />
+          <DialogFooter>
+            <Button type="submit" disabled={!text.trim() || add.isPending}>
+              <Plus aria-hidden />
+              Добавить
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
