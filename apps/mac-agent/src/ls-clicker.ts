@@ -14,6 +14,8 @@ export class LsClickerError extends Error {
   }
 }
 
+/** The full run of one row (ADR-0034); the number is found inside it, so nothing else may move the row cursor first. */
+export const RUN_ARGS = ["--signup", "--new-profile", "--go-live", "--fill-payments"];
 /** Lines of the engine's output kept for the operator. */
 const TAIL = 200;
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
@@ -37,7 +39,9 @@ const writeAtomically = (path: string, data: string | Buffer, mode?: number) => 
 
 /**
  * LS Clicker on this Mac (ADR-0034): BAP is its only control. The agent runs exactly
- * `ls-clicker --find-number --first-row` (the engine picks the next unprocessed row), reports its state,
+ * the full run of the next row — `ls-clicker --signup --new-profile --go-live --fill-payments`: a new
+ * profile, a clean number for the row's state, the account, then setup and Payments. The engine picks the
+ * next unprocessed row itself (the one after those in output.csv). The agent reports its state,
  * appends rows the operator sent to input.csv and installs the build the server rolls out.
  * Rows are only ever appended: row N of output.csv is the result of row N of input.csv.
  */
@@ -102,7 +106,7 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       Object.assign(run, { running: true, startedAt: new Date().toISOString(), finishedAt: null, ok: null });
       // The engine reaches its providers through the server with the run's token; no key is on this Mac (ADR-0035).
       const env = { ...process.env, ...(token && { BAP_SERVER: opts.serverUrl, BAP_RUN_TOKEN: token, ...(opts.caCert && { BAP_CA_CERT: opts.caCert }) }) };
-      const p = spawn(bin, ["--find-number", "--first-row"], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
+      const p = spawn(bin, RUN_ARGS, { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
       child = p;
       let rest = "";
       const onData = (chunk: Buffer) => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A stand-in for ls-clicker in tests: the same files and arguments, no browser and no real sites.
-// --find-number --first-row takes the next unprocessed input row (row N of output = row N of input).
+// --signup --new-profile --go-live --fill-payments runs the next unprocessed input row (row N of output = row N of input).
 // FAKE_LS_MS sets how long a row takes; a row whose first cell is "fail" exits with code 1.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -15,7 +15,7 @@ if (arg === "--plan") {
   writeFileSync("plan.json", JSON.stringify({ businessDetails: { "Legal business name": "next row" } }));
   process.exit(0);
 }
-if (arg !== "--find-number") process.exit(2);
+if (process.argv.slice(2).join(" ") !== "--signup --new-profile --go-live --fill-payments") process.exit(2);
 const input = lines("input.csv");
 const done = Math.max(lines("output.csv").length - 1, 0);
 const row = input[1 + done];
