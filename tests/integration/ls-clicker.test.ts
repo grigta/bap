@@ -158,10 +158,18 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
 
   test("[REQ-LSC-009] every failed run goes to «Недоработки» with its error, whole log and stage; the operator closes it with a note", async () => {
     // mac-b failed on «fail» (table row 5) in the test before.
-    const [f] = await until("recorded", async () => (await api("GET", "/api/v1/ls-clicker/failures")).json() as { id: string; agentName: string; rowN: number | null; error: string; log: string[]; stage: { node: string; url: string }; lsProfile: string | null; screenshot: boolean }[], (l) => l.some((x) => x.agentName === "mac-b"));
+    const [f] = await until("recorded", async () => (await api("GET", "/api/v1/ls-clicker/failures")).json() as { id: string; agentName: string; rowN: number | null; error: string; log: string[]; stage: { node: string; url: string }; lsProfile: string | null; screenshot: boolean; page: { alerts: string[]; elements: { text: string }[] } | null; pageScreenshot: boolean; html: boolean }[], (l) => l.some((x) => x.agentName === "mac-b"));
     expect(f).toMatchObject({ agentName: "mac-b", rowN: 5, error: "ОШИБКА: форма не принята", lsProfile: "0f0e0d0c-0b0a-4908-8706-050403020100", screenshot: false, stage: { node: "businessDetails", url: "https://qbo.example/businessdetails" } });
     expect(f!.log).toContain("ОШИБКА: форма не принята");
     expect((await api("GET", `/api/v1/ls-clicker/failures/${f!.id}/screenshot`)).statusCode).toBe(404);
+    // The engine's dump of the page it stopped on: errors shown there, its controls, the page as an image and HTML.
+    expect(f!.page).toMatchObject({ alerts: ["That code didn't work."], elements: [{ text: "Resend code" }] });
+    expect(f).toMatchObject({ pageScreenshot: true, html: true });
+    const page = await api("GET", `/api/v1/ls-clicker/failures/${f!.id}/page`);
+    expect([page.statusCode, page.headers["content-type"], page.rawPayload.length]).toEqual([200, "image/png", 200]);
+    const html = await api("GET", `/api/v1/ls-clicker/failures/${f!.id}/html`);
+    expect(html.headers["content-disposition"]).toMatch(/^attachment/);
+    expect(html.body).toContain("Enter the code");
     // A failure is recorded once, however many heartbeats report it.
     await sleep(600);
     expect((await api("GET", "/api/v1/ls-clicker/failures")).json().filter((x: { id: string }) => x.id === f!.id)).toHaveLength(1);

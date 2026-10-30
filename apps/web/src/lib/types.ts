@@ -192,6 +192,16 @@ export interface Pipeline {
     lsc: { agentName: string; result: { header: string[]; cells: string[] } | null } | null;
   }[];
 }
+export interface ClickerPageDump {
+  url?: string;
+  title?: string;
+  reason?: string;
+  headings?: string[];
+  alerts?: string[];
+  frames?: string[];
+  text?: string;
+  elements?: { tag: string; text: string; id: string; testid: string; role: string; type: string; name: string; disabled: boolean; invalid: boolean }[];
+}
 /** A failed LS Clicker run on «Недоработки»: the error, the whole log, where the engine stood, the screen. */
 export interface LsClickerFailure {
   id: string;
@@ -206,6 +216,10 @@ export interface LsClickerFailure {
   stage: { node: string; errors: string[]; url: string } | null;
   lsProfile: string | null;
   screenshot: boolean;
+  /** The engine's dump of the page it stopped on. */
+  page: ClickerPageDump | null;
+  pageScreenshot: boolean;
+  html: boolean;
   resolvedAt: string | null;
   resolvedBy: string | null;
   resolvedNote: string | null;

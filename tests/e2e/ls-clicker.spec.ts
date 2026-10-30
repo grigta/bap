@@ -80,6 +80,9 @@ test("[REQ-LSC-004][REQ-LSC-008][REQ-LSC-009] LS Clicker is run from BAP: the bu
   await failure.getByRole("button", { name: /Строка/ }).click();
   await expect(failure.getByTestId("review-lsc-log")).toContainText("строка 2: начинаю");
   await expect(failure.getByTestId("review-lsc-details")).toContainText("businessDetails");
+  // The page the engine stopped on: its error message and its buttons.
+  await expect(failure.getByTestId("review-lsc-alerts")).toHaveText("That code didn't work.");
+  await expect(failure.getByTestId("review-lsc-elements")).toContainText("Resend code");
   await evidence(page, "S22", "2-ls-clicker-failure");
   await failure.getByRole("button", { name: "Доработано" }).click();
   await page.getByLabel("Что сделано").fill("проверил форму");

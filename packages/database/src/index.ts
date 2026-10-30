@@ -167,6 +167,9 @@ export interface LsClickerFailuresTable {
   stage: unknown;
   ls_profile: string | null;
   screenshot_key: string | null;
+  page: unknown;
+  page_screenshot_key: string | null;
+  html_key: string | null;
   resolved_at: Timestamp | null;
   resolved_by: string | null;
   resolved_note: string | null;

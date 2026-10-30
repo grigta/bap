@@ -125,6 +125,9 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     stage: lsClickerState.unwrap().shape.stage,
     lsProfile: z.string().nullable(),
     screenshot: z.string().nullable(),
+    page: z.record(z.string(), z.unknown()).nullable().default(null),
+    pageScreenshot: z.string().nullable().default(null),
+    html: z.string().nullable().default(null),
   });
   const recordFailure = async (agentId: string, state: NonNullable<LsClickerState>) => {
     const finishedAt = state.run.finishedAt;
@@ -153,6 +156,10 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
       const id = crypto.randomUUID();
       const screenshotKey = full?.screenshot ? `ls-clicker-failures/${id}.jpg` : null;
       if (screenshotKey) await store.put(screenshotKey, Buffer.from(full!.screenshot!, "base64"), "image/jpeg");
+      const pageKey = full?.pageScreenshot ? `ls-clicker-failures/${id}-page.png` : null;
+      if (pageKey) await store.put(pageKey, Buffer.from(full!.pageScreenshot!, "base64"), "image/png");
+      const htmlKey = full?.html ? `ls-clicker-failures/${id}.html` : null;
+      if (htmlKey) await store.put(htmlKey, Buffer.from(full!.html!, "utf8"), "text/plain; charset=utf-8");
       await db
         .insertInto("lsclicker_failures")
         .values({
@@ -167,6 +174,9 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
           stage: JSON.stringify(full?.stage ?? state.stage),
           ls_profile: full?.lsProfile ?? log.map((l) => /новый профиль:\s*([0-9a-f-]{36})/i.exec(l)?.[1]).filter(Boolean).at(-1) ?? null,
           screenshot_key: screenshotKey,
+          page: full?.page ? JSON.stringify(full.page) : null,
+          page_screenshot_key: pageKey,
+          html_key: htmlKey,
         })
         .onConflict((oc) => oc.columns(["agent_id", "finished_at"]).doNothing())
         .execute();
@@ -188,6 +198,9 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     stage: z.unknown(),
     lsProfile: z.string().nullable(),
     screenshot: z.boolean(),
+    page: z.unknown(),
+    pageScreenshot: z.boolean(),
+    html: z.boolean(),
     resolvedAt: z.string().nullable(),
     resolvedBy: z.string().nullable(),
     resolvedNote: z.string().nullable(),
@@ -219,6 +232,9 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
         stage: r.stage,
         lsProfile: r.ls_profile,
         screenshot: !!r.screenshot_key,
+        page: r.page,
+        pageScreenshot: !!r.page_screenshot_key,
+        html: !!r.html_key,
         resolvedAt: r.resolved_at?.toISOString() ?? null,
         resolvedBy: r.resolved_by,
         resolvedNote: r.resolved_note,
@@ -226,10 +242,15 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     },
   );
 
-  app.get("/api/v1/ls-clicker/failures/:id/screenshot", { preHandler: operatorAuth, schema: { params: idParams } }, async (request, reply) => {
-    const row = await db.selectFrom("lsclicker_failures").select("screenshot_key").where("id", "=", request.params.id).executeTakeFirst();
-    const object = row?.screenshot_key ? await store.get(row.screenshot_key) : null;
-    if (!object) return sendError(reply, request, 404, "NOT_FOUND", "No screenshot for this failure");
+  // The Mac's screen, the page as an image and the page's HTML (as a file to save, never rendered here).
+  const files = { screenshot: "screenshot_key", page: "page_screenshot_key", html: "html_key" } as const;
+  app.get("/api/v1/ls-clicker/failures/:id/:file", { preHandler: operatorAuth, schema: { params: z.object({ id: z.uuid(), file: z.enum(["screenshot", "page", "html"]) }) } }, async (request, reply) => {
+    const column = files[request.params.file];
+    const row = await db.selectFrom("lsclicker_failures").select(column).where("id", "=", request.params.id).executeTakeFirst();
+    const key = row?.[column as keyof typeof row] as string | null | undefined;
+    const object = key ? await store.get(key) : null;
+    if (!object) return sendError(reply, request, 404, "NOT_FOUND", "No such file for this failure");
+    if (request.params.file === "html") reply.header("content-disposition", `attachment; filename="failure-${request.params.id.slice(0, 8)}.html"`);
     return reply.header("cache-control", "private, max-age=86400").type(object.contentType).send(object.body);
   });
 

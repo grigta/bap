@@ -33,6 +33,26 @@ export interface LsClickerFailure {
   lsProfile: string | null;
   /** The Mac's screen right after the failure (JPEG, base64), or null when it could not be taken. */
   screenshot: string | null;
+  /** The engine's dump of the page it stopped on (failure/): address, headings, errors, visible controls, text. */
+  page: Record<string, unknown> | null;
+  /** That page as an image (PNG, base64) and as HTML. */
+  pageScreenshot: string | null;
+  html: string | null;
+}
+
+/** The page dump the engine left in failure/ for this run, if any. */
+function readPageDump(dir: string, since: number) {
+  const fresh = (f: string) => existsSync(f) && statSync(f).mtimeMs >= since;
+  const at = (name: string) => join(dir, "failure", name);
+  let page: Record<string, unknown> | null = null;
+  try {
+    if (fresh(at("page.json"))) page = JSON.parse(readFileSync(at("page.json"), "utf8")) as Record<string, unknown>;
+  } catch {
+    page = null;
+  }
+  const png = fresh(at("page.png")) ? readFileSync(at("page.png")) : null;
+  const html = fresh(at("page.html")) ? readFileSync(at("page.html"), "utf8").slice(0, 5_000_000) : null;
+  return { page, pageScreenshot: png && png.length > 100 ? png.toString("base64") : null, html };
 }
 
 /** The screen as it is (JPEG, ≤1600 px), or null without the Screen Recording permission. */
@@ -142,6 +162,8 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       const proxy = appended === null ? proxies[String(next)] : row!.proxy;
       tail = [];
       full = [];
+      // The engine writes its page dump here when it fails: a dump of an earlier run must not pass for this one.
+      rmSync(join(dir, "failure"), { recursive: true, force: true });
       Object.assign(run, { running: true, startedAt: new Date().toISOString(), finishedAt: null, ok: null });
       // The engine reaches its providers through the server with the run's token; no key is on this Mac (ADR-0035).
       const env = { ...process.env, ...(token && { BAP_SERVER: opts.serverUrl, BAP_RUN_TOKEN: token, ...(opts.caCert && { BAP_CA_CERT: opts.caCert }) }) };
@@ -167,8 +189,9 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
           const log = full;
           const profile = log.map((l) => /новый профиль:\s*([0-9a-f-]{36})/i.exec(l)?.[1]).filter(Boolean).at(-1) ?? null;
           // The screen is taken before the run is reported finished: the server asks for the failure only then.
+          const startedAt = run.startedAt ?? finishedAt;
           void captureScreen().then((screenshot) => {
-            failure = { position: next, startedAt: run.startedAt ?? finishedAt, finishedAt, log, stage: stage(), lsProfile: profile, screenshot };
+            failure = { position: next, startedAt, finishedAt, log, stage: stage(), lsProfile: profile, screenshot, ...readPageDump(dir, Date.parse(startedAt) - 1000) };
             Object.assign(run, { running: false, finishedAt, ok });
           });
         } else Object.assign(run, { running: false, finishedAt, ok });

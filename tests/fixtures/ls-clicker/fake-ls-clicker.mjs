@@ -2,7 +2,7 @@
 // A stand-in for ls-clicker in tests: the same files and arguments, no browser and no real sites.
 // --signup --new-profile --go-live --fill-payments runs the next unprocessed input row (row N of output = row N of input).
 // FAKE_LS_MS sets how long a row takes; a row whose first cell is "fail" exits with code 1.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const arg = process.argv[2];
 const version = "fake-ls-clicker 1.0";
@@ -43,6 +43,11 @@ await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LS_MS ?? 300)));
 if (first === "fail") {
   console.log("• новый профиль: 0f0e0d0c-0b0a-4908-8706-050403020100");
   console.error("ОШИБКА: форма не принята");
+  // Like the real engine: a dump of the page it stopped on.
+  mkdirSync("failure", { recursive: true });
+  writeFileSync("failure/page.json", JSON.stringify({ url: "https://qbo.example/otp", title: "Verify", reason: "форма не принята", headings: ["Enter the code"], alerts: ["That code didn't work."], elements: [{ tag: "button", text: "Resend code", id: "", testid: "", role: "", type: "", name: "", disabled: false, invalid: false, x: 0, y: 0, w: 80, h: 20 }] }));
+  writeFileSync("failure/page.png", Buffer.alloc(200, 1));
+  writeFileSync("failure/page.html", "<html><body><h1>Enter the code</h1></body></html>");
   process.exit(1);
 }
 const out = existsSync("output.csv") ? readFileSync("output.csv", "utf8") : "who,result\n";

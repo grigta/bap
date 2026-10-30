@@ -354,14 +354,25 @@ function ClickerFailureRow({ failure: f, onResolve }: { failure: LsClickerFailur
               </ul>
             </div>
           )}
-          {f.screenshot && (
-            <figure className="grid gap-1">
-              <figcaption className="text-xs text-muted-foreground">Экран Mac в момент сбоя</figcaption>
-              <a href={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} target="_blank" rel="noreferrer">
-                <img src={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} alt={`Экран ${f.agentName} в момент сбоя`} className="max-h-96 rounded-md border" />
-              </a>
-            </figure>
-          )}
+          {f.page && <PageDump failure={f} />}
+          <div className="flex flex-wrap gap-4">
+            {f.pageScreenshot && (
+              <figure className="grid gap-1">
+                <figcaption className="text-xs text-muted-foreground">Страница в момент сбоя</figcaption>
+                <a href={`/api/v1/ls-clicker/failures/${f.id}/page`} target="_blank" rel="noreferrer">
+                  <img src={`/api/v1/ls-clicker/failures/${f.id}/page`} alt="Страница в момент сбоя" className="max-h-96 rounded-md border" />
+                </a>
+              </figure>
+            )}
+            {f.screenshot && (
+              <figure className="grid gap-1">
+                <figcaption className="text-xs text-muted-foreground">Экран Mac в момент сбоя</figcaption>
+                <a href={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} target="_blank" rel="noreferrer">
+                  <img src={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} alt={`Экран ${f.agentName} в момент сбоя`} className="max-h-96 rounded-md border" />
+                </a>
+              </figure>
+            )}
+          </div>
           <div className="grid gap-1">
             <h4 className="text-xs text-muted-foreground">Журнал прогона: {f.log.length} строк</h4>
             <pre data-testid="review-lsc-log" className="max-h-96 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap">
@@ -371,6 +382,72 @@ function ClickerFailureRow({ failure: f, onResolve }: { failure: LsClickerFailur
         </div>
       )}
     </li>
+  );
+}
+
+/** The page the engine stopped on, as it parsed it: what was on screen, to teach the engine the next step. */
+function PageDump({ failure: f }: { failure: LsClickerFailure }) {
+  const [all, setAll] = useState(false);
+  const p = f.page!;
+  const elements = p.elements ?? [];
+  return (
+    <div data-testid="review-lsc-page" className="grid gap-3">
+      <dl className="grid gap-3 sm:grid-cols-2">
+        <Field label="Адрес">{p.url || "—"}</Field>
+        <Field label="Заголовки">{p.headings?.join(" · ") || "—"}</Field>
+      </dl>
+      {!!p.alerts?.length && (
+        <div className="grid gap-1">
+          <h4 className="text-xs text-muted-foreground">Сообщения об ошибках на странице</h4>
+          <ul data-testid="review-lsc-alerts" className="list-inside list-disc text-xs text-fail">
+            {p.alerts.map((a, i) => (
+              <li key={i}>{a}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="grid gap-1">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs text-muted-foreground">Видимые элементы: {elements.length}</h4>
+          {f.html && (
+            <a href={`/api/v1/ls-clicker/failures/${f.id}/html`} className={buttonVariants({ size: "xs", variant: "outline" })}>
+              <Download aria-hidden />
+              HTML страницы
+            </a>
+          )}
+        </div>
+        <div className="max-h-80 overflow-auto rounded-md border">
+          <table data-testid="review-lsc-elements" className="w-full text-xs">
+            <thead className="sticky top-0 bg-muted text-left text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1 font-medium">Элемент</th>
+                <th className="px-2 py-1 font-medium">Текст</th>
+                <th className="px-2 py-1 font-medium">id / data-testid</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(all ? elements : elements.slice(0, ELEMENTS_SHOWN)).map((e, i) => (
+                <tr key={i} className={e.invalid ? "border-t text-fail" : "border-t"}>
+                  <td className="px-2 py-0.5 font-mono whitespace-nowrap">
+                    {e.tag}
+                    {e.type && `[${e.type}]`}
+                    {e.role && ` role=${e.role}`}
+                    {e.disabled && " · неактивен"}
+                  </td>
+                  <td className="px-2 py-0.5">{e.text}</td>
+                  <td className="px-2 py-0.5 font-mono break-all">{[e.id && `#${e.id}`, e.testid && `[data-testid=${e.testid}]`].filter(Boolean).join(" ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {elements.length > ELEMENTS_SHOWN && !all && (
+          <Button size="xs" variant="ghost" className="justify-self-start" onClick={() => setAll(true)}>
+            Показать все
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
