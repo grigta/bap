@@ -2,6 +2,7 @@
 // A stand-in for ls-clicker in tests: the same files and arguments, no browser and no real sites.
 // --signup --new-profile --go-live --fill-payments runs the next unprocessed input row (row N of output = row N of input).
 // FAKE_LS_MS sets how long a row takes; a row whose first cell is "fail" exits with code 1.
+import { Buffer } from "node:buffer";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const arg = process.argv[2];
