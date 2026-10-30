@@ -262,7 +262,8 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     await until("mac-c has the build", () => mac("mac-c"), (m) => m?.state.sha256 === build);
     const patch = (n: number, payload: object) => app.inject({ method: "PATCH", url: `/api/v1/pipeline/rows/${n}`, payload, cookies: { bap_session: cookie } });
     const auto = (name: string, enabled: boolean) => app.inject({ method: "PUT", url: `/api/v1/agents/${ids[name]}/ls-clicker/auto`, payload: { enabled }, cookies: { bap_session: cookie } });
-    await api("POST", "/api/v1/pipeline/import?name=wait.csv", Buffer.from("who,number\nnina,\nomar,555\n"), "text/csv");
+    process.env.FAKE_LS_STATUS = "bad";
+    await api("POST", "/api/v1/pipeline/import?name=wait.csv", Buffer.from("who,number,status\nnina,,\nomar,555,\n"), "text/csv");
     expect((await overview()).unsent).toBe(0); // no proxies yet
     expect((await patch(2, { proxy: PROXY })).statusCode).toBe(204);
     expect((await patch(1, { proxy: PROXY })).statusCode).toBe(204);
@@ -274,10 +275,14 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect((await mac("mac-c")).auto).toBe(true);
     await until("omar ran by itself", () => existsSync(join(dirs["mac-c"]!, "input.csv")) && readFileSync(join(dirs["mac-c"]!, "input.csv"), "utf8"), (t) => !!t && t.includes("omar"));
     // Once its number is filled in, nina goes too, with no button pressed.
-    expect((await patch(1, { cells: ["nina", "777"] })).statusCode).toBe(204);
+    expect((await patch(1, { cells: ["nina", "777", ""] })).statusCode).toBe(204);
     await until("nina ran by itself", () => readFileSync(join(dirs["mac-c"]!, "input.csv"), "utf8"), (t) => t.includes("nina"));
     await until("both done", () => mac("mac-c"), (m) => !m.state.run.running && m.state.inputRows === before + 2 && m.state.outputRows === before + 2);
     expect((await mac("mac-a")).sent).toBe(aSent); // mac-a is not ticked: it took nothing
+    // The engine's verdict becomes the table row's status: both rows are done (bad) and leave the working table.
+    const statuses = await until("verdicts came back", async () => (await api("GET", "/api/v1/pipeline")).json().rows.map((r: { cells: string[] }) => r.cells[2]), (v: string[]) => v.every((x) => x === "bad"));
+    expect(statuses).toEqual(["bad", "bad"]);
+    delete process.env.FAKE_LS_STATUS;
     expect((await auto("mac-c", false)).statusCode).toBe(204);
 
     // «Повторить»: the Mac has nothing left of its own; its last row goes to it again as a new line of input.csv.

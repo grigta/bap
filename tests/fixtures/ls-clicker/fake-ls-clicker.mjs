@@ -51,6 +51,8 @@ if (first === "fail") {
   writeFileSync("failure/page.html", "<html><body><h1>Enter the code</h1></body></html>");
   process.exit(1);
 }
-const out = existsSync("output.csv") ? readFileSync("output.csv", "utf8") : "who,result\n";
-writeFileSync("output.csv", `${out}${first},registered\n`);
+// FAKE_LS_STATUS: the engine's verdict in a status column, as the real one writes good or bad.
+const verdict = process.env.FAKE_LS_STATUS;
+const out = existsSync("output.csv") ? readFileSync("output.csv", "utf8") : verdict ? "who,result,status\n" : "who,result\n";
+writeFileSync("output.csv", `${out}${first},registered${verdict ? `,${verdict}` : ""}\n`);
 console.log(`строка ${done + 1}: готово`);

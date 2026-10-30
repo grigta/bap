@@ -91,6 +91,24 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
             .values({ agent_id: agentId, position, header: JSON.stringify(out.header), cells: JSON.stringify(cells) })
             .onConflict((oc) => oc.columns(["agent_id", "position"]).doUpdateSet({ header: JSON.stringify(out.header), cells: JSON.stringify(cells), updated_at: new Date() }))
             .execute();
+        // The engine's verdict (status good or bad) becomes the table row's status: the row moves to «result.csv».
+        const verdictAt = out.header.findIndex((c) => c.trim().toLowerCase() === "status");
+        const imp = await tx.selectFrom("pipeline_import").select(["id", "columns"]).orderBy("created_at", "desc").executeTakeFirst();
+        const tableAt = imp ? statusColumn(imp.columns as string[]) : -1;
+        if (verdictAt >= 0 && imp && tableAt >= 0)
+          for (const [position, cells] of out.rows.entries()) {
+            const verdict = (cells[verdictAt] ?? "").trim().toLowerCase();
+            if (verdict !== "good" && verdict !== "bad") continue;
+            const queued = await tx.selectFrom("lsclicker_queue").select("row_n").where("agent_id", "=", agentId).where("position", "=", position).where("import_id", "=", imp.id).executeTakeFirst();
+            if (queued?.row_n == null) continue;
+            await tx
+              .updateTable("pipeline_rows")
+              .set({ cells: sql`jsonb_set(cells, ${sql.lit(`{${tableAt}}`)}, to_jsonb(${verdict}::text))` })
+              .where("import_id", "=", imp.id)
+              .where("n", "=", queued.row_n)
+              .where(sql<string>`lower(trim(coalesce(cells->>${sql.lit(tableAt)}, '')))`, "not in", [...DONE_STATUSES])
+              .execute();
+          }
         await tx
           .insertInto("lsclicker_macs")
           .values({ agent_id: agentId, output_hash: state.outputHash })
