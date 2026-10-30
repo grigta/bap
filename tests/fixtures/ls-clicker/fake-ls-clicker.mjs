@@ -41,7 +41,8 @@ console.log(`строка ${done + 1}: начинаю`);
 writeFileSync("state.json", JSON.stringify({ node: "businessDetails", errors: [], ts: Date.now() / 1000, url: "https://qbo.example/businessdetails" }));
 await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LS_MS ?? 300)));
 if (first === "fail") {
-  console.log("ошибка: форма не принята");
+  console.log("• новый профиль: 0f0e0d0c-0b0a-4908-8706-050403020100");
+  console.error("ОШИБКА: форма не принята");
   process.exit(1);
 }
 const out = existsSync("output.csv") ? readFileSync("output.csv", "utf8") : "who,result\n";

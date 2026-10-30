@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Check, ClipboardCheck, Download, MonitorPlay } from "lucide-react";
+import { Check, ChevronDown, ClipboardCheck, Download, MonitorPlay, RotateCcw } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { EmptyState } from "@/components/empty-state";
@@ -14,7 +14,7 @@ import { PageHeader } from "@/layout/app-shell";
 import { api } from "@/lib/api";
 import { dateTime, shortId } from "@/lib/format";
 import { notifyDone, notifyError } from "@/lib/notify";
-import type { FailureSnapshot, Issue, ReviewQueue, RunDetail } from "@/lib/types";
+import type { FailureSnapshot, Issue, LsClickerFailure, ReviewQueue, RunDetail } from "@/lib/types";
 import { useRunActions } from "./runs";
 
 /** Elements shown before «показать все»: the page at the failure is usually long. */
@@ -292,12 +292,138 @@ function IssueRow({ issue, onResolve }: { issue: Issue; onResolve: (i: Issue) =>
 }
 
 /** «Недоработки»: runs that stopped on an error and need a person, with a precise picture of the failure. */
+/** One failed LS Clicker run: the error first, then everything needed to fix it or the engine. */
+function ClickerFailureRow({ failure: f, onResolve }: { failure: LsClickerFailure; onResolve: (f: LsClickerFailure) => void }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const retry = useMutation({
+    mutationFn: () => api(`/agents/${f.agentId}/ls-clicker/runs`, { method: "POST", body: JSON.stringify({ retry: true }) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+      notifyDone(`Повтор запущен на ${f.agentName}`);
+    },
+    onError: notifyError(`Повтор на ${f.agentName}`),
+  });
+  return (
+    <li data-testid="review-lsc" className="rounded-lg border bg-card">
+      <div className="flex flex-wrap items-start gap-3 p-3">
+        <button type="button" className="grid min-w-0 flex-1 gap-0.5 text-left" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <ChevronDown className={open ? "size-4" : "size-4 -rotate-90"} aria-hidden />
+            {f.rowN ? `Строка ${f.rowN}` : "Строка"} <span className="font-normal text-muted-foreground">на {f.agentName}</span>
+            <span className="text-xs font-normal text-muted-foreground tabular-nums">{dateTime(f.finishedAt)}</span>
+          </span>
+          <span data-testid="review-lsc-error" className="text-xs break-words text-fail">
+            {f.error}
+          </span>
+        </button>
+        {!f.resolvedAt && (
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" disabled={retry.isPending} onClick={() => retry.mutate()}>
+              <RotateCcw aria-hidden />
+              Повторить
+            </Button>
+            <Button size="sm" onClick={() => onResolve(f)}>
+              <Check aria-hidden />
+              Доработано
+            </Button>
+          </div>
+        )}
+        {f.resolvedAt && (
+          <p className="w-full text-xs text-muted-foreground">
+            Доработано {dateTime(f.resolvedAt)}
+            {f.resolvedBy && `, ${f.resolvedBy}`}: {f.resolvedNote}
+          </p>
+        )}
+      </div>
+      {open && (
+        <div data-testid="review-lsc-details" className="grid gap-4 border-t p-3">
+          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Этап">{f.stage?.node || "—"}</Field>
+            <Field label="Адрес страницы">{f.stage?.url || "—"}</Field>
+            <Field label="Профиль Linken Sphere">{f.lsProfile ? <code className="font-mono text-xs">{f.lsProfile}</code> : "не создан"}</Field>
+            <Field label="Mac">{[f.agentName, f.agentModel].filter(Boolean).join(" · ")}</Field>
+          </dl>
+          {!!f.stage?.errors.length && (
+            <div className="grid gap-1">
+              <h4 className="text-xs text-muted-foreground">Ошибки движка на этапе</h4>
+              <ul className="list-inside list-disc text-xs text-fail">
+                {f.stage.errors.map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {f.screenshot && (
+            <figure className="grid gap-1">
+              <figcaption className="text-xs text-muted-foreground">Экран Mac в момент сбоя</figcaption>
+              <a href={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} target="_blank" rel="noreferrer">
+                <img src={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} alt={`Экран ${f.agentName} в момент сбоя`} className="max-h-96 rounded-md border" />
+              </a>
+            </figure>
+          )}
+          <div className="grid gap-1">
+            <h4 className="text-xs text-muted-foreground">Журнал прогона: {f.log.length} строк</h4>
+            <pre data-testid="review-lsc-log" className="max-h-96 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap">
+              {f.log.join("\n")}
+            </pre>
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function ResolveClickerDialog({ failure: f, onClose }: { failure: LsClickerFailure; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [note, setNote] = useState("");
+  const resolve = useMutation({
+    mutationFn: () => api(`/ls-clicker/failures/${f.id}/resolve`, { method: "POST", body: JSON.stringify({ note }) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+      notifyDone("Отмечено как доработанное");
+      onClose();
+    },
+    onError: notifyError("Доработано"),
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <form
+          className="grid gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            resolve.mutate();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Сбой на {f.agentName} доработан?</DialogTitle>
+            <DialogDescription>Опишите, что сделали. Комментарий, журнал и снимок останутся для доработки движка.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="resolve-lsc-note">Что сделано</Label>
+            <Textarea id="resolve-lsc-note" value={note} onChange={(e) => setNote(e.target.value)} required rows={4} placeholder="Например: развернул окно Linken Sphere и повторил строку" />
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={!note.trim() || resolve.isPending}>
+              <Check aria-hidden />
+              Доработано
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function ReviewPage() {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [resolved, setResolved] = useState(false);
   const [resolving, setResolving] = useState<Issue | null>(null);
   const queue = useQuery({ queryKey: ["review", resolved], queryFn: () => api<ReviewQueue>(`/review${resolved ? "?resolved=true" : ""}`), refetchInterval: 2000 });
+  const clicker = useQuery({ queryKey: ["review-lsc", resolved], queryFn: () => api<LsClickerFailure[]>(`/ls-clicker/failures${resolved ? "?resolved=true" : ""}`), refetchInterval: 5000 });
+  const [resolvingClicker, setResolvingClicker] = useState<LsClickerFailure | null>(null);
   const release = useMutation({
     mutationFn: (id: string) => api(`/profiles/${id}/release-review`, { method: "POST" }),
     onSettled: () => queryClient.invalidateQueries(),
@@ -324,10 +450,21 @@ export function ReviewPage() {
   );
   if (!queue.data) return header;
   const { runs, profiles } = queue.data;
+  const failures = clicker.data ?? [];
   return (
     <>
       {header}
       {resolving && <ResolveDialog issue={resolving} onClose={() => setResolving(null)} />}
+      {resolvingClicker && <ResolveClickerDialog failure={resolvingClicker} onClose={() => setResolvingClicker(null)} />}
+      {failures.length > 0 && (
+        <Section title="LS Clicker" count={failures.length}>
+          <ul className="grid gap-2">
+            {failures.map((f) => (
+              <ClickerFailureRow key={f.id} failure={f} onResolve={setResolvingClicker} />
+            ))}
+          </ul>
+        </Section>
+      )}
       {!resolved && profiles.length > 0 && (
         <Section title="Профили на проверке" count={profiles.length}>
           <ul className="grid gap-2">
@@ -347,7 +484,7 @@ export function ReviewPage() {
           </ul>
         </Section>
       )}
-      {runs.length === 0 ? (
+      {runs.length === 0 && failures.length > 0 ? null : runs.length === 0 ? (
         <EmptyState icon={ClipboardCheck} title={resolved ? "Доработанных пока нет" : "Недоработок нет"} description={resolved ? undefined : "Сюда попадает каждый проход, остановившийся по ошибке."} />
       ) : (
         <Section title="Проходы" count={runs.length}>

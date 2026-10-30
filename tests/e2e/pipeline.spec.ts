@@ -147,7 +147,7 @@ test("[REQ-UI-012][REQ-UI-013][REQ-UI-014][REQ-LSC-007] the operator imports a t
   await evidence(page, "S18", "2-empty");
 });
 
-test("[REQ-LSC-007][REQ-LSC-008] rows with a good or bad status move to «result.csv» below; rows waiting for their number or proxy are on top", async ({ page }) => {
+test("[REQ-LSC-007][REQ-LSC-008] rows with a good or bad status (also set by hand) move to «result.csv» below; rows waiting for their number or proxy are on top", async ({ page }) => {
   await logIn(page);
   await page.request.delete("/api/v1/pipeline");
   // Made-up rows.
@@ -163,6 +163,13 @@ test("[REQ-LSC-007][REQ-LSC-008] rows with a good or bad status move to «result
   await expect(result).toHaveCount(2);
   await expect(result.nth(0)).toContainText("ann");
   await expect(result.nth(1)).toContainText("carl");
+
+  // By hand: bob is marked bad and joins them; «—» brings him back.
+  await rows.filter({ hasText: "bob" }).getByLabel(/^Итог строки/).selectOption("bad");
+  await expect(result).toHaveCount(3);
+  await result.filter({ hasText: "bob" }).getByLabel(/^Итог строки/).selectOption("");
+  await expect(result).toHaveCount(2);
+  await expect(rows.filter({ hasText: "bob" })).toHaveCount(1);
 
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Скачать result.csv" }).click();

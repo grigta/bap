@@ -199,6 +199,8 @@ export const agentRequestPayload = z.discriminatedUnion("method", [
   z.object({ method: z.literal("lsclicker.stop") }),
   /** The latest lines of the engine's output. */
   z.object({ method: z.literal("lsclicker.log") }),
+  /** The last failed run: its whole log, where the engine stood, the screen at the failure (for «Недоработки»). */
+  z.object({ method: z.literal("lsclicker.failure") }),
   /** The input plan for the next row (ls-clicker --plan → plan.json): for the operator only. */
   z.object({ method: z.literal("lsclicker.plan") }),
   /** output.csv as it is: header and rows; row N is the result of input row N. */

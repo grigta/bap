@@ -106,12 +106,12 @@ test("the chosen theme applies at once and survives a reload", async ({ page }) 
 test("the overview shows the same numbers as the API", async ({ page }) => {
   await logIn(page);
   const api = page.request;
-  const [agents, runs, review] = await Promise.all(["/api/v1/agents", "/api/v1/runs?limit=500", "/api/v1/review"].map(async (u) => (await api.get(u)).json()));
+  const [agents, runs, review, clicker] = await Promise.all(["/api/v1/agents", "/api/v1/runs?limit=500", "/api/v1/review", "/api/v1/ls-clicker/failures"].map(async (u) => (await api.get(u)).json()));
   const fleet = agents.filter((a: { status: string }) => a.status !== "REVOKED");
   const value = (id: string) => page.getByTestId(id).locator("[data-slot=value]");
   await expect(value("reading-online")).toHaveText(String(fleet.filter((a: { connection: string }) => a.connection === "ONLINE").length));
   await expect(value("reading-queued")).toHaveText(String(runs.filter((r: { status: string }) => r.status === "QUEUED").length));
-  await expect(value("reading-review")).toHaveText(String(review.runs.length + review.profiles.length));
+  await expect(value("reading-review")).toHaveText(String(review.runs.length + review.profiles.length + clicker.length));
 });
 
 /** WCAG 2 A/AA by axe-core: serious and critical findings fail the page. */

@@ -1,6 +1,7 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { parseCsv, toEngineCsv } from "@bap/csv";
@@ -18,6 +19,38 @@ export class LsClickerError extends Error {
 export const RUN_ARGS = ["--signup", "--new-profile", "--go-live", "--fill-payments"];
 /** Lines of the engine's output kept for the operator. */
 const TAIL = 200;
+/** Lines of a failed run kept for «Недоработки». */
+const FAILURE_LOG = 3000;
+
+/** What is left of a failed run for «Недоработки»: the whole log, where the engine stood, the screen at the failure. */
+export interface LsClickerFailure {
+  position: number;
+  startedAt: string;
+  finishedAt: string;
+  log: string[];
+  stage: NonNullable<LsClickerState>["stage"];
+  /** The Linken Sphere profile the run created, if it got that far. */
+  lsProfile: string | null;
+  /** The Mac's screen right after the failure (JPEG, base64), or null when it could not be taken. */
+  screenshot: string | null;
+}
+
+/** The screen as it is (JPEG, ≤1600 px), or null without the Screen Recording permission. */
+async function captureScreen(): Promise<string | null> {
+  // Tests run on a developer's Mac: its screen is not theirs to take.
+  if (process.env.BAP_NO_SCREENSHOT) return null;
+  const file = join(tmpdir(), `bap-lsc-failure-${process.pid}.jpg`);
+  try {
+    await promisify(execFile)("screencapture", ["-x", "-t", "jpg", file], { timeout: 15_000 });
+    await promisify(execFile)("sips", ["-Z", "1600", file], { timeout: 15_000 });
+    const data = readFileSync(file);
+    return data.length > 1000 ? data.toString("base64") : null;
+  } catch {
+    return null;
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
 const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : null);
 /** Data rows of a CSV the way the engine counts them; a file it cannot parse counts as empty. */
@@ -51,6 +84,8 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
   const output = join(dir, "output.csv");
   let child: ChildProcess | null = null;
   let tail: string[] = [];
+  let full: string[] = [];
+  let failure: LsClickerFailure | null = null;
   const run = { running: false, startedAt: null as string | null, finishedAt: null as string | null, ok: null as boolean | null };
   let build: { key: string; sha256: string; version: string | null } | null = null;
 
@@ -106,6 +141,7 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       // The row's proxy goes to its new Linken Sphere profile; the engine binds it before the start.
       const proxy = appended === null ? proxies[String(next)] : row!.proxy;
       tail = [];
+      full = [];
       Object.assign(run, { running: true, startedAt: new Date().toISOString(), finishedAt: null, ok: null });
       // The engine reaches its providers through the server with the run's token; no key is on this Mac (ADR-0035).
       const env = { ...process.env, ...(token && { BAP_SERVER: opts.serverUrl, BAP_RUN_TOKEN: token, ...(opts.caCert && { BAP_CA_CERT: opts.caCert }) }) };
@@ -115,15 +151,27 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
       const onData = (chunk: Buffer) => {
         const lines = (rest + chunk.toString("utf8")).split("\n");
         rest = lines.pop() ?? "";
-        tail = [...tail, ...lines.filter((l) => l.trim())].slice(-TAIL);
+        const kept = lines.filter((l) => l.trim());
+        tail = [...tail, ...kept].slice(-TAIL);
+        full = [...full, ...kept].slice(-FAILURE_LOG);
       };
       p.stdout.on("data", onData);
       p.stderr.on("data", onData);
       const done = (ok: boolean, line?: string) => {
         if (!run.running || child !== p) return;
-        if (rest.trim()) tail = [...tail, rest].slice(-TAIL);
-        if (line) tail = [...tail, line].slice(-TAIL);
-        Object.assign(run, { running: false, finishedAt: new Date().toISOString(), ok });
+        const last = [rest, line ?? ""].filter((l) => l.trim());
+        tail = [...tail, ...last].slice(-TAIL);
+        full = [...full, ...last].slice(-FAILURE_LOG);
+        const finishedAt = new Date().toISOString();
+        if (!ok) {
+          const log = full;
+          const profile = log.map((l) => /новый профиль:\s*([0-9a-f-]{36})/i.exec(l)?.[1]).filter(Boolean).at(-1) ?? null;
+          // The screen is taken before the run is reported finished: the server asks for the failure only then.
+          void captureScreen().then((screenshot) => {
+            failure = { position: next, startedAt: run.startedAt ?? finishedAt, finishedAt, log, stage: stage(), lsProfile: profile, screenshot };
+            Object.assign(run, { running: false, finishedAt, ok });
+          });
+        } else Object.assign(run, { running: false, finishedAt, ok });
         child = null;
         opts.log(`ls-clicker finished: ${ok ? "ok" : "failed"}`);
       };
@@ -141,6 +189,9 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
     },
 
     log: () => ({ lines: tail }),
+
+    /** The last failed run, for «Недоработки». */
+    failure: () => ({ failure }),
 
     /** ls-clicker --plan writes plan.json for the next row; it is read here and goes to the operator only. */
     async plan() {

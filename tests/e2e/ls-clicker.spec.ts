@@ -14,7 +14,7 @@ const fake = resolve(import.meta.dirname, "../fixtures/ls-clicker/fake-ls-clicke
 const agents: ChildProcess[] = [];
 test.afterAll(() => agents.forEach(killAgent));
 
-test("[REQ-LSC-004][REQ-LSC-008] LS Clicker is run from BAP: the build rolls out, every ticked Mac takes the next ready table row by itself, log, stage and plan are shown", async ({ page }) => {
+test("[REQ-LSC-004][REQ-LSC-008][REQ-LSC-009] LS Clicker is run from BAP: the build rolls out, every ticked Mac takes the next ready table row by itself, log, stage and plan are shown; a failed run lands on «Недоработки»", async ({ page }) => {
   test.setTimeout(120_000);
   await logIn(page);
   // Two Macs with an LS Clicker directory; the engine is a stand-in that registers nothing.
@@ -66,4 +66,23 @@ test("[REQ-LSC-004][REQ-LSC-008] LS Clicker is run from BAP: the build rolls out
   await evidence(page, "S19", "2-table-results");
   for (const name of names) await page.getByRole("checkbox", { name: `Использовать ${name} для прогонов` }).click();
   await expect(page.getByTestId("clicker-unsent")).toContainText("прогоны на Mac: 0 из 2");
+
+  // A failed run goes to «Недоработки»: its error, and on opening its log and stage.
+  await page.request.post("/api/v1/pipeline/rows", { data: { text: "fail,Omega" } });
+  const rows = (await (await page.request.get("/api/v1/pipeline")).json()).rows as { n: number; cells: string[] }[];
+  await page.request.patch(`/api/v1/pipeline/rows/${rows.find((r) => r.cells[0] === "fail")!.n}`, { data: { proxy: "10.9.9.9:1080" } });
+  await page.getByRole("checkbox", { name: `Использовать ${names[0]} для прогонов` }).click();
+  await expect(page.getByTestId(`clicker-${names[0]}`).getByTestId("clicker-run")).toHaveText("FAILED", { timeout: 15_000 });
+  await page.getByRole("checkbox", { name: `Использовать ${names[0]} для прогонов` }).click();
+  await goTo(page, "Недоработки");
+  const failure = page.getByTestId("review-lsc").filter({ hasText: names[0] });
+  await expect(failure.getByTestId("review-lsc-error")).toHaveText("ОШИБКА: форма не принята", { timeout: 15_000 });
+  await failure.getByRole("button", { name: /Строка/ }).click();
+  await expect(failure.getByTestId("review-lsc-log")).toContainText("строка 2: начинаю");
+  await expect(failure.getByTestId("review-lsc-details")).toContainText("businessDetails");
+  await evidence(page, "S22", "2-ls-clicker-failure");
+  await failure.getByRole("button", { name: "Доработано" }).click();
+  await page.getByLabel("Что сделано").fill("проверил форму");
+  await page.getByRole("dialog").getByRole("button", { name: "Доработано" }).click();
+  await expect(failure).toHaveCount(0);
 });

@@ -112,7 +112,142 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     void rollout(agentId, state.data).catch((e) => app.log.error(e, "ls-clicker rollout"));
     void syncOutput(agentId, state.data).catch((e) => app.log.error(e, "ls-clicker output sync"));
     void autoRun(agentId, state.data).catch((e) => app.log.error(e, "ls-clicker auto run"));
+    void recordFailure(agentId, state.data).catch((e) => app.log.error(e, "ls-clicker failure"));
   };
+
+  // ---- failures: every failed run goes to «Недоработки» with its error, log, stage and screen ----
+  const recording = new Set<string>();
+  const failureSchema = z.object({
+    position: z.number().int(),
+    startedAt: z.string(),
+    finishedAt: z.string(),
+    log: z.array(z.string()),
+    stage: lsClickerState.unwrap().shape.stage,
+    lsProfile: z.string().nullable(),
+    screenshot: z.string().nullable(),
+  });
+  const recordFailure = async (agentId: string, state: NonNullable<LsClickerState>) => {
+    const finishedAt = state.run.finishedAt;
+    if (state.run.running || state.run.ok !== false || !finishedAt || recording.has(agentId)) return;
+    if (await db.selectFrom("lsclicker_failures").select("id").where("agent_id", "=", agentId).where("finished_at", "=", new Date(finishedAt)).executeTakeFirst()) return;
+    recording.add(agentId);
+    try {
+      // An agent before this feature has no «failure»: its log tail and the reported stage are what is left.
+      const asked = await ask(agentId, { method: "lsclicker.failure" });
+      const parsed = asked.ok ? z.object({ failure: failureSchema.nullable() }).safeParse(asked.result) : null;
+      const full = parsed?.success && parsed.data.failure?.finishedAt === finishedAt ? parsed.data.failure : null;
+      const log = full?.log ?? (await (async () => {
+        const tail = await ask(agentId, { method: "lsclicker.log" });
+        return tail.ok ? z.object({ lines: z.array(z.string()) }).parse(tail.result).lines : [];
+      })());
+      const error = [...log].reverse().find((l) => l.startsWith("ОШИБКА")) ?? log.at(-1) ?? "прогон завершился с ошибкой";
+      const imp = await db.selectFrom("pipeline_import").select("id").orderBy("created_at", "desc").executeTakeFirst();
+      const queued = await db
+        .selectFrom("lsclicker_queue")
+        .select(["import_id", "row_n"])
+        .where("agent_id", "=", agentId)
+        .$if(!!full, (q) => q.where("position", "=", full!.position))
+        .$if(!!imp, (q) => q.where("import_id", "=", imp!.id))
+        .orderBy("position", "desc")
+        .executeTakeFirst();
+      const id = crypto.randomUUID();
+      const screenshotKey = full?.screenshot ? `ls-clicker-failures/${id}.jpg` : null;
+      if (screenshotKey) await store.put(screenshotKey, Buffer.from(full!.screenshot!, "base64"), "image/jpeg");
+      await db
+        .insertInto("lsclicker_failures")
+        .values({
+          id,
+          agent_id: agentId,
+          started_at: state.run.startedAt ? new Date(state.run.startedAt) : null,
+          finished_at: new Date(finishedAt),
+          import_id: queued?.import_id ?? null,
+          row_n: queued?.row_n ?? null,
+          error,
+          log: JSON.stringify(log),
+          stage: JSON.stringify(full?.stage ?? state.stage),
+          ls_profile: full?.lsProfile ?? log.map((l) => /новый профиль:\s*([0-9a-f-]{36})/i.exec(l)?.[1]).filter(Boolean).at(-1) ?? null,
+          screenshot_key: screenshotKey,
+        })
+        .onConflict((oc) => oc.columns(["agent_id", "finished_at"]).doNothing())
+        .execute();
+    } finally {
+      recording.delete(agentId);
+    }
+  };
+
+  const failureView = z.object({
+    id: z.string(),
+    agentId: z.string(),
+    agentName: z.string(),
+    agentModel: z.string().nullable(),
+    startedAt: z.string().nullable(),
+    finishedAt: z.string(),
+    rowN: z.number().nullable(),
+    error: z.string(),
+    log: z.array(z.string()),
+    stage: z.unknown(),
+    lsProfile: z.string().nullable(),
+    screenshot: z.boolean(),
+    resolvedAt: z.string().nullable(),
+    resolvedBy: z.string().nullable(),
+    resolvedNote: z.string().nullable(),
+  });
+  app.get(
+    "/api/v1/ls-clicker/failures",
+    { preHandler: operatorAuth, schema: { querystring: z.object({ resolved: z.enum(["true", "false"]).default("false") }), response: { 200: z.array(failureView), 401: errorSchema } } },
+    async (request) => {
+      const resolved = request.query.resolved === "true";
+      const rows = await db
+        .selectFrom("lsclicker_failures")
+        .innerJoin("agents", "agents.id", "lsclicker_failures.agent_id")
+        .selectAll("lsclicker_failures")
+        .select(["agents.name as agent_name", "agents.model as agent_model"])
+        .where("lsclicker_failures.resolved_at", resolved ? "is not" : "is", null)
+        .orderBy(resolved ? "lsclicker_failures.resolved_at" : "lsclicker_failures.finished_at", "desc")
+        .limit(200)
+        .execute();
+      return rows.map((r) => ({
+        id: r.id,
+        agentId: r.agent_id,
+        agentName: r.agent_name,
+        agentModel: r.agent_model,
+        startedAt: r.started_at?.toISOString() ?? null,
+        finishedAt: r.finished_at.toISOString(),
+        rowN: r.row_n,
+        error: r.error,
+        log: r.log as string[],
+        stage: r.stage,
+        lsProfile: r.ls_profile,
+        screenshot: !!r.screenshot_key,
+        resolvedAt: r.resolved_at?.toISOString() ?? null,
+        resolvedBy: r.resolved_by,
+        resolvedNote: r.resolved_note,
+      }));
+    },
+  );
+
+  app.get("/api/v1/ls-clicker/failures/:id/screenshot", { preHandler: operatorAuth, schema: { params: idParams } }, async (request, reply) => {
+    const row = await db.selectFrom("lsclicker_failures").select("screenshot_key").where("id", "=", request.params.id).executeTakeFirst();
+    const object = row?.screenshot_key ? await store.get(row.screenshot_key) : null;
+    if (!object) return sendError(reply, request, 404, "NOT_FOUND", "No screenshot for this failure");
+    return reply.header("cache-control", "private, max-age=86400").type(object.contentType).send(object.body);
+  });
+
+  app.post(
+    "/api/v1/ls-clicker/failures/:id/resolve",
+    { preHandler: operatorAuth, schema: { params: idParams, body: z.object({ note: z.string().trim().min(1).max(2000) }), response: { 204: z.null(), ...errors } } },
+    async (request, reply) => {
+      const operator = await db.selectFrom("operators").select("login").where("id", "=", request.operatorId!).executeTakeFirst();
+      const done = await db
+        .updateTable("lsclicker_failures")
+        .set({ resolved_at: new Date(), resolved_by: operator?.login ?? null, resolved_note: request.body.note })
+        .where("id", "=", request.params.id)
+        .where("resolved_at", "is", null)
+        .executeTakeFirst();
+      if (done.numUpdatedRows === 0n) return sendError(reply, request, 404, "NOT_FOUND", "No open failure with this id");
+      return reply.code(204).send(null);
+    },
+  );
 
   // ---- builds ----
   app.post(

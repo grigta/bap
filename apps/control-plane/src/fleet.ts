@@ -445,8 +445,10 @@ export function registerFleet(app: App, db: Db, config: FleetConfig, operatorAut
     let updateOffered = false;
     const offerUpdate = async () => {
       if (updateOffered) return;
-      const agent = await db.selectFrom("agents").select(["agent_version", "updatable"]).where("id", "=", agentId).executeTakeFirst();
+      const agent = await db.selectFrom("agents").select(["agent_version", "updatable", "last_heartbeat"]).where("id", "=", agentId).executeTakeFirst();
       if (!agent?.updatable) return;
+      // Nor in the middle of an LS Clicker run: restarting the agent would end it.
+      if ((agent.last_heartbeat as { lsClicker?: { run?: { running?: boolean } } } | null)?.lsClicker?.run?.running) return;
       const { sha256 } = await agentBundle();
       if (agent.agent_version === sha256.slice(0, 12)) return;
       const busy = await db.selectFrom("runs").select("id").where("agent_id", "=", agentId).where("status", "in", ["ASSIGNED", "ACCEPTED", "RUNNING", "CANCEL_REQUESTED"]).executeTakeFirst();

@@ -156,6 +156,25 @@ describe("LS Clicker in BAP, without a panel of its own", () => {
     expect((await api("POST", `/api/v1/agents/${a}/ls-clicker/runs`)).json().error.code).toBe("NO_ROWS");
   });
 
+  test("[REQ-LSC-009] every failed run goes to «Недоработки» with its error, whole log and stage; the operator closes it with a note", async () => {
+    // mac-b failed on «fail» (table row 5) in the test before.
+    const [f] = await until("recorded", async () => (await api("GET", "/api/v1/ls-clicker/failures")).json() as { id: string; agentName: string; rowN: number | null; error: string; log: string[]; stage: { node: string; url: string }; lsProfile: string | null; screenshot: boolean }[], (l) => l.some((x) => x.agentName === "mac-b"));
+    expect(f).toMatchObject({ agentName: "mac-b", rowN: 5, error: "ОШИБКА: форма не принята", lsProfile: "0f0e0d0c-0b0a-4908-8706-050403020100", screenshot: false, stage: { node: "businessDetails", url: "https://qbo.example/businessdetails" } });
+    expect(f!.log).toContain("ОШИБКА: форма не принята");
+    expect((await api("GET", `/api/v1/ls-clicker/failures/${f!.id}/screenshot`)).statusCode).toBe(404);
+    // A failure is recorded once, however many heartbeats report it.
+    await sleep(600);
+    expect((await api("GET", "/api/v1/ls-clicker/failures")).json().filter((x: { id: string }) => x.id === f!.id)).toHaveLength(1);
+
+    const resolve = (note: string) => app.inject({ method: "POST", url: `/api/v1/ls-clicker/failures/${f!.id}/resolve`, payload: { note }, cookies: { bap_session: cookie } });
+    expect((await resolve("")).statusCode).toBe(400);
+    expect((await resolve("повторил строку")).statusCode).toBe(204);
+    expect((await resolve("ещё раз")).statusCode).toBe(404);
+    expect((await api("GET", "/api/v1/ls-clicker/failures")).json().some((x: { id: string }) => x.id === f!.id)).toBe(false);
+    expect((await api("GET", "/api/v1/ls-clicker/failures?resolved=true")).json()[0]).toMatchObject({ id: f!.id, resolvedBy: "operator", resolvedNote: "повторил строку" });
+    expect((await app.inject({ method: "GET", url: "/api/v1/ls-clicker/failures" })).statusCode).toBe(401);
+  });
+
   test("[REQ-LSC-003] a run can be stopped; the plan of the next row is shown to the operator", async () => {
     process.env.FAKE_LS_MS = "20000";
     const started = Date.now();

@@ -1,10 +1,11 @@
 import type { Db } from "@bap/database";
 import type { preHandlerAsyncHookHandler } from "fastify";
+import { sql } from "kysely";
 import { z } from "zod";
 import type { App } from "./app.ts";
 import { errorSchema, sendError } from "./errors.ts";
 import { CsvError, parseCsv, toCsv, toEngineCsv } from "@bap/csv";
-import { normalizeProxy } from "@bap/protocol";
+import { normalizeProxy, statusColumn } from "@bap/protocol";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 /** Our columns, appended to the operator's own in the table and the export. */
@@ -213,7 +214,7 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       preHandler: operatorAuth,
       schema: {
         params: z.object({ n: z.coerce.number().int().positive() }),
-        body: z.object({ cells: z.array(z.string()).optional(), proxy: z.string().max(500).nullable().optional() }),
+        body: z.object({ cells: z.array(z.string()).optional(), proxy: z.string().max(500).nullable().optional(), status: z.enum(["good", "bad", ""]).optional() }),
         response: { 204: z.null(), ...errors, 409: errorSchema },
       },
     },
@@ -222,7 +223,7 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
       if (!imp) return sendError(reply, request, 404, "NOT_FOUND", "No table has been imported");
       const row = await db.selectFrom("pipeline_rows").select("n").where("import_id", "=", imp.id).where("n", "=", request.params.n).executeTakeFirst();
       if (!row) return sendError(reply, request, 404, "NOT_FOUND", "No such row");
-      const { cells } = request.body;
+      const { cells, status } = request.body;
       // Any common way of writing a proxy is stored in the one form ls-clicker takes; empty clears it.
       const proxy = request.body.proxy === undefined ? undefined : request.body.proxy?.trim() ? normalizeProxy(request.body.proxy) : "";
       if (proxy === null) return sendError(reply, request, 400, "PROXY_INVALID", "Not a proxy: ip:port, ip:port:login:pass, login:pass@ip:port or with socks5://, http:// or ssh://");
@@ -235,13 +236,25 @@ export function registerPipeline(app: App, { db, operatorAuth }: { db: Db; opera
         .where("lsclicker_queue.row_n", "=", row.n)
         .executeTakeFirst();
       if (cells && sent) return sendError(reply, request, 409, "ROW_SENT", "The row is already on a Mac: its cells can no longer change there");
+      // The operator's verdict (good, bad, or none): set even on a row already on a Mac — it only moves the row in BAP.
+      if (status !== undefined) {
+        const col = statusColumn(imp.columns as string[]);
+        if (col < 0) return sendError(reply, request, 400, "NO_STATUS_COLUMN", "The table has no status column");
+        await db
+          .updateTable("pipeline_rows")
+          .set({ cells: sql`jsonb_set(cells, ${sql.lit(`{${col}}`)}, to_jsonb(${status}::text))` })
+          .where("import_id", "=", imp.id)
+          .where("n", "=", row.n)
+          .execute();
+      }
       if (proxy !== undefined && sent && sent.done !== null) return sendError(reply, request, 409, "ROW_PROCESSED", "The row has been processed: its proxy is no longer used");
-      await db
-        .updateTable("pipeline_rows")
-        .set({ ...(cells && { cells: JSON.stringify(cells) }), ...(proxy !== undefined && { proxy: proxy || null }) })
-        .where("import_id", "=", imp.id)
-        .where("n", "=", row.n)
-        .execute();
+      if (cells || proxy !== undefined)
+        await db
+          .updateTable("pipeline_rows")
+          .set({ ...(cells && { cells: JSON.stringify(cells) }), ...(proxy !== undefined && { proxy: proxy || null }) })
+          .where("import_id", "=", imp.id)
+          .where("n", "=", row.n)
+          .execute();
       return reply.code(204).send(null);
     },
   );

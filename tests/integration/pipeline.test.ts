@@ -137,6 +137,20 @@ describe("the operator's table in «Конвейер»", () => {
     expect((await api("GET", "/api/v1/pipeline")).json().import.rowCount).toBe(before.import.rowCount + 2);
   });
 
+  test("[REQ-LSC-007] the operator sets a row's status to good or bad by hand, also on a row already on a Mac; none brings it back", async () => {
+    const patch = (n: number, payload: object) => app.inject({ method: "PATCH", url: `/api/v1/pipeline/rows/${n}`, payload, cookies: { bap_session: cookie } });
+    const { rows } = (await api("GET", "/api/v1/pipeline")).json();
+    expect((await patch(rows[0].n, { status: "good" })).json().error.code).toBe("NO_STATUS_COLUMN");
+    const upload = await app.inject({ method: "POST", url: "/api/v1/pipeline/import?name=verdict.csv", payload: "who,status\nann,\nbob,рег\n", headers: { "content-type": "text/csv" }, cookies: { bap_session: cookie } });
+    expect(upload.statusCode).toBe(201);
+    expect((await patch(1, { status: "good" })).statusCode).toBe(204);
+    expect((await patch(2, { status: "bad" })).statusCode).toBe(204);
+    expect((await api("GET", "/api/v1/pipeline")).json().rows.map((r: { cells: string[] }) => r.cells)).toEqual([["ann", "good"], ["bob", "bad"]]);
+    expect((await patch(2, { status: "" })).statusCode).toBe(204);
+    expect((await api("GET", "/api/v1/pipeline")).json().rows[1].cells).toEqual(["bob", ""]);
+    expect((await patch(1, { status: "maybe" })).statusCode).toBe(400);
+  });
+
   test("[REQ-UI-014] the operator deletes a row that has not gone to a Mac; the others keep their numbers", async () => {
     const remove = (n: number) => app.inject({ method: "DELETE", url: `/api/v1/pipeline/rows/${n}`, cookies: { bap_session: cookie } });
     const before = (await api("GET", "/api/v1/pipeline")).json();

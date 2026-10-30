@@ -192,6 +192,24 @@ export interface Pipeline {
     lsc: { agentName: string; result: { header: string[]; cells: string[] } | null } | null;
   }[];
 }
+/** A failed LS Clicker run on «Недоработки»: the error, the whole log, where the engine stood, the screen. */
+export interface LsClickerFailure {
+  id: string;
+  agentId: string;
+  agentName: string;
+  agentModel: string | null;
+  startedAt: string | null;
+  finishedAt: string;
+  rowN: number | null;
+  error: string;
+  log: string[];
+  stage: { node: string; errors: string[]; url: string } | null;
+  lsProfile: string | null;
+  screenshot: boolean;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolvedNote: string | null;
+}
 export interface ReviewQueue {
   runs: Issue[];
   profiles: { id: string; name: string; agentName: string; lastError: string | null; updatedAt: string }[];

@@ -155,6 +155,23 @@ export interface RemoteSessionsTable {
   urls: Generated<unknown>;
 }
 
+export interface LsClickerFailuresTable {
+  id: Generated<string>;
+  agent_id: string;
+  started_at: Timestamp | null;
+  finished_at: Timestamp;
+  import_id: string | null;
+  row_n: number | null;
+  error: string;
+  log: unknown;
+  stage: unknown;
+  ls_profile: string | null;
+  screenshot_key: string | null;
+  resolved_at: Timestamp | null;
+  resolved_by: string | null;
+  resolved_note: string | null;
+}
+
 export interface PipelineImportTable {
   id: Generated<string>;
   file_name: string;
@@ -371,6 +388,7 @@ export interface Database {
   llm_calls: LlmCallsTable;
   settings: SettingsTable;
   remote_sessions: RemoteSessionsTable;
+  lsclicker_failures: LsClickerFailuresTable;
   pipeline_import: PipelineImportTable;
   pipeline_rows: PipelineRowsTable;
   lsclicker_queue: LsClickerQueueTable;

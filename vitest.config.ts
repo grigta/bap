@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     // Agents started by tests keep their keys in files, never in the developer's login keychain.
     // ... and never touch a real LS Clicker in the developer's ~/Developer/ls-clicker.
-    env: { BAP_KEY_STORAGE: "file", BAP_LS_CLICKER_DIR: "" },
+    env: { BAP_KEY_STORAGE: "file", BAP_LS_CLICKER_DIR: "", BAP_NO_SCREENSHOT: "1" },
     projects: [
       {
         test: {

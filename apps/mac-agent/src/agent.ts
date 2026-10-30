@@ -168,6 +168,8 @@ export function startAgent(opts: AgentOptions): RunningAgent {
             return clicker.stop();
           case "lsclicker.log":
             return clicker.log();
+          case "lsclicker.failure":
+            return clicker.failure();
           case "lsclicker.plan":
             return await clicker.plan();
           case "lsclicker.output":
