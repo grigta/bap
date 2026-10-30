@@ -165,9 +165,9 @@ test("[REQ-LSC-007][REQ-LSC-008] rows with a good or bad status (also set by han
   await expect(result.nth(1)).toContainText("carl");
 
   // By hand: bob is marked bad and joins them; «—» brings him back.
-  await rows.filter({ hasText: "bob" }).getByLabel(/^Итог строки/).selectOption("bad");
+  await rows.filter({ hasText: "bob" }).getByLabel(/^Статус строки/).selectOption("bad");
   await expect(result).toHaveCount(3);
-  await result.filter({ hasText: "bob" }).getByLabel(/^Итог строки/).selectOption("");
+  await result.filter({ hasText: "bob" }).getByLabel(/^Статус строки/).selectOption("");
   await expect(result).toHaveCount(2);
   await expect(rows.filter({ hasText: "bob" })).toHaveCount(1);
 

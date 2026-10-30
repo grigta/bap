@@ -237,7 +237,7 @@ export function PipelineTable() {
   const collapsedColumns = chosen ? all.filter((i) => chosen.includes(name(i))) : all.slice(0, DEFAULT_COLLAPSED);
   const visible = expanded ? all : collapsedColumns;
   const status = statusColumn(imp.columns);
-  const span = visible.length + 4 + (status >= 0 ? 1 : 0);
+  const span = visible.length + 4;
   const number = numberColumn(imp.columns);
   /** Why LS Clicker will not take a row it has not taken: its status, or it is above the starting row. */
   const skipped = (r: Pipeline["rows"][number]) => {
@@ -264,7 +264,7 @@ export function PipelineTable() {
         <th scope="col" className="border-r px-2 py-1 text-left font-medium">
           #
         </th>
-        {[...visible.map(name), ...(status >= 0 ? ["Итог"] : []), "Прокси", "LS Clicker", "Статус профиля"].map((c, i) => (
+        {[...visible.map(name), "Прокси", "LS Clicker", "Статус профиля"].map((c, i) => (
           <th key={i} scope="col" title={c} className={cn("border-r px-0 py-0 text-left font-medium", i === visible.length && "border-l")}>
             <div className="w-36 truncate px-2 py-1">{c}</div>
           </th>
@@ -279,27 +279,23 @@ export function PipelineTable() {
           {r.n}
         </button>
       </td>
-      {visible.map((i) => (
-        <Cell key={i}>{r.cells[i]}</Cell>
-      ))}
-      {status >= 0 && (
-        <td className="border-r border-l px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
-          {/* The operator's verdict: good or bad moves the row to «result.csv», «—» brings it back. */}
-          <NativeSelect
-            size="sm"
-            aria-label={`Итог строки ${r.n}`}
-            data-testid="pipeline-verdict"
-            value={DONE_STATUSES.includes((r.cells[status] ?? "").trim().toLowerCase()) ? (r.cells[status] ?? "").trim().toLowerCase().replace("гуд", "good").replace("бед", "bad") : ""}
-            onChange={(e) => edit.mutate({ n: r.n, body: { status: e.target.value } })}
-            className="w-24"
-          >
-            <NativeSelectOption value="">—</NativeSelectOption>
-            <NativeSelectOption value="good">good</NativeSelectOption>
-            <NativeSelectOption value="bad">bad</NativeSelectOption>
-          </NativeSelect>
-        </td>
+      {visible.map((i) =>
+        i === status ? (
+          <td key={i} className="border-r px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
+            {/* The status itself is the operator's verdict: good or bad moves the row to «result.csv», empty brings it back. */}
+            <NativeSelect size="sm" aria-label={`Статус строки ${r.n}`} data-testid="pipeline-verdict" value={r.cells[i] ?? ""} onChange={(e) => edit.mutate({ n: r.n, body: { status: e.target.value } })} className="w-32">
+              {[...new Set(["", r.cells[i] ?? "", "good", "bad"])].map((v) => (
+                <NativeSelectOption key={v} value={v} disabled={v !== "" && v !== "good" && v !== "bad"}>
+                  {v || "—"}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </td>
+        ) : (
+          <Cell key={i}>{r.cells[i]}</Cell>
+        ),
       )}
-      <Cell className={cn("font-mono", status < 0 && "border-l")} data-testid="pipeline-proxy">
+      <Cell className="border-l font-mono" data-testid="pipeline-proxy">
         {r.proxy ? maskProxy(r.proxy) : <span className="text-muted-foreground">—</span>}
       </Cell>
       <Cell data-testid="pipeline-lsc" title={r.lsc ? `${r.lsc.agentName}: ${r.lsc.result ? "обработана" : "в очереди"}` : (skipped(r)?.title ?? "готова к прогону")}>
