@@ -55,7 +55,7 @@ export async function confirmDialog(page: Page) {
 /** Starts `bap-agent start` in its own process group, so killAgent also takes down its browsers. */
 export function spawnAgent(cli: string, env: NodeJS.ProcessEnv): ChildProcess {
   // The developer's Mac may hold the real LS Clicker (~/Developer/ls-clicker): test agents never touch it unless a test says so.
-  return spawn("node", [cli, "start"], { env: { BAP_LS_CLICKER_DIR: "", BAP_NO_SCREENSHOT: "1", ...env }, stdio: "ignore", detached: true });
+  return spawn("node", [cli, "start"], { env: { BAP_LS_CLICKER_DIR: "", ...env }, stdio: "ignore", detached: true });
 }
 
 export function killAgent(agent: ChildProcess | undefined): void {

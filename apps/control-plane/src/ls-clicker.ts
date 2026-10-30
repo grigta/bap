@@ -142,7 +142,7 @@ export function registerLsClicker(app: App, { db, fleet, fleetConfig, store, ope
     log: z.array(z.string()),
     stage: lsClickerState.unwrap().shape.stage,
     lsProfile: z.string().nullable(),
-    screenshot: z.string().nullable(),
+    screenshot: z.string().nullable().default(null),
     page: z.record(z.string(), z.unknown()).nullable().default(null),
     pageScreenshot: z.string().nullable().default(null),
     html: z.string().nullable().default(null),

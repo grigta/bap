@@ -1,7 +1,6 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { parseCsv, toEngineCsv } from "@bap/csv";
@@ -22,7 +21,7 @@ const TAIL = 200;
 /** Lines of a failed run kept for «Недоработки». */
 const FAILURE_LOG = 3000;
 
-/** What is left of a failed run for «Недоработки»: the whole log, where the engine stood, the screen at the failure. */
+/** What is left of a failed run for «Недоработки»: the whole log, where the engine stood, the page it stopped on. */
 export interface LsClickerFailure {
   position: number;
   startedAt: string;
@@ -31,8 +30,6 @@ export interface LsClickerFailure {
   stage: NonNullable<LsClickerState>["stage"];
   /** The Linken Sphere profile the run created, if it got that far. */
   lsProfile: string | null;
-  /** The Mac's screen right after the failure (JPEG, base64), or null when it could not be taken. */
-  screenshot: string | null;
   /** The engine's dump of the page it stopped on (failure/): address, headings, errors, visible controls, text. */
   page: Record<string, unknown> | null;
   /** That page as an image (PNG, base64) and as HTML. */
@@ -55,22 +52,6 @@ function readPageDump(dir: string, since: number) {
   return { page, pageScreenshot: png && png.length > 100 ? png.toString("base64") : null, html };
 }
 
-/** The screen as it is (JPEG, ≤1600 px), or null without the Screen Recording permission. */
-async function captureScreen(): Promise<string | null> {
-  // Tests run on a developer's Mac: its screen is not theirs to take.
-  if (process.env.BAP_NO_SCREENSHOT) return null;
-  const file = join(tmpdir(), `bap-lsc-failure-${process.pid}.jpg`);
-  try {
-    await promisify(execFile)("screencapture", ["-x", "-t", "jpg", file], { timeout: 15_000 });
-    await promisify(execFile)("sips", ["-Z", "1600", file], { timeout: 15_000 });
-    const data = readFileSync(file);
-    return data.length > 1000 ? data.toString("base64") : null;
-  } catch {
-    return null;
-  } finally {
-    rmSync(file, { force: true });
-  }
-}
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
 const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : null);
 /** Data rows of a CSV the way the engine counts them; a file it cannot parse counts as empty. */
@@ -188,13 +169,10 @@ export function lsClicker(dir: string, opts: { download: (sha256: string) => Pro
         if (!ok) {
           const log = full;
           const profile = log.map((l) => /новый профиль:\s*([0-9a-f-]{36})/i.exec(l)?.[1]).filter(Boolean).at(-1) ?? null;
-          // The screen is taken before the run is reported finished: the server asks for the failure only then.
           const startedAt = run.startedAt ?? finishedAt;
-          void captureScreen().then((screenshot) => {
-            failure = { position: next, startedAt, finishedAt, log, stage: stage(), lsProfile: profile, screenshot, ...readPageDump(dir, Date.parse(startedAt) - 1000) };
-            Object.assign(run, { running: false, finishedAt, ok });
-          });
-        } else Object.assign(run, { running: false, finishedAt, ok });
+          failure = { position: next, startedAt, finishedAt, log, stage: stage(), lsProfile: profile, ...readPageDump(dir, Date.parse(startedAt) - 1000) };
+        }
+        Object.assign(run, { running: false, finishedAt, ok });
         child = null;
         opts.log(`ls-clicker finished: ${ok ? "ok" : "failed"}`);
       };

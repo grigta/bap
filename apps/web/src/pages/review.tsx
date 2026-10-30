@@ -364,14 +364,6 @@ function ClickerFailureRow({ failure: f, onResolve }: { failure: LsClickerFailur
                 </a>
               </figure>
             )}
-            {f.screenshot && (
-              <figure className="grid gap-1">
-                <figcaption className="text-xs text-muted-foreground">Экран Mac в момент сбоя</figcaption>
-                <a href={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} target="_blank" rel="noreferrer">
-                  <img src={`/api/v1/ls-clicker/failures/${f.id}/screenshot`} alt={`Экран ${f.agentName} в момент сбоя`} className="max-h-96 rounded-md border" />
-                </a>
-              </figure>
-            )}
           </div>
           <div className="grid gap-1">
             <h4 className="text-xs text-muted-foreground">Журнал прогона: {f.log.length} строк</h4>

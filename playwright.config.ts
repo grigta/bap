@@ -8,8 +8,6 @@ const farmPort = 4330;
 process.env.BAP_KEY_STORAGE = "file";
 // ... and never touch a real LS Clicker in the developer's ~/Developer/ls-clicker (a test passes its own directory).
 process.env.BAP_LS_CLICKER_DIR = "";
-// ... nor take its screen when a fake run fails.
-process.env.BAP_NO_SCREENSHOT = "1";
 
 export default defineConfig({
   testDir: "tests/e2e",
